@@ -43,7 +43,6 @@ coverage.xml
 .project
 .pydevproject
 
-
 # Rope
 .ropeproject
 
@@ -51,4 +50,5 @@ coverage.xml
 *.log
 *.pot
 
-# Sphinx docume
+# Sphinx documentation
+docs/_build

@@ -1,5 +1,8 @@
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
 
 def get_ticker_in_folder(path:str='/Users/andrea/Downloads/Data_CME/', ticker:str='ES', cols:list=None):
 

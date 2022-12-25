@@ -41,7 +41,7 @@ def prepare_data(data:pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def get_tickers_in_folder(path:str, ticker:str='ES', cols:list=None, break_at:int=10000) -> pd.DataFrame:
+def get_tickers_in_folder(path:str, ticker:str='ES', cols:list=None, break_at:int=99999) -> pd.DataFrame:
 
     '''
     Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES)
@@ -72,7 +72,7 @@ def get_tickers_in_folder(path:str, ticker:str='ES', cols:list=None, break_at:in
     return pd.concat( stacked )
 
 
-def plot_half_hour_volume(data_path:str, data_name:str) -> None:
+def plot_half_hour_volume(data_already_read:bool, data:pd.DataFrame, data_path:str='', data_name:str='') -> None:
 
     '''
     This function helps understanding the "volume smile" so that the peak in volume given hal hours is the market open
@@ -81,10 +81,13 @@ def plot_half_hour_volume(data_path:str, data_name:str) -> None:
     :return: a plot in matplotlib with bars per half-hour (the bigger counting bar is the one that finds market opens)
     '''
 
-    try:
-        data = pd.read_csv( os.path.join(data_path, data_name), sep=';' )
-    except:
-        data = pd.read_csv(os.path.join(data_path, data_name), sep=',')
+    if not data_already_read:
+        try:
+            data = pd.read_csv( os.path.join(data_path, data_name), sep=';' )
+        except:
+            data = pd.read_csv(os.path.join(data_path, data_name), sep=',')
+    else:
+        data = data
 
     data = data[data.Price != 0] # Remove recording impurities...
     data = data.assign(Index    = np.arange(0, data.shape[0], 1))  # Set an index fro reference plotting...

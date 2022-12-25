@@ -30,12 +30,12 @@ def prepare_data(
     # es = es.assign(HalfHour = es.Hour.str.zfill(2) + es.Minute.apply(half_hour)) # Identifies half hours...
 
     data = (
-        data.assign(Index=np.arange(0, data.shape[0], 1))
-        .assign(Hour=data.Time.str[:2].astype(str))
-        .assign(Minute=data.Time.str[3:5].astype(int))
-        .assign(HalfHour=data.Hour.str.zfill(2) + data.Minute.apply(half_hour))
-        .assign(DateTime=data.Date.astype(str) + " " + data.Time.astype(str))
-        .assign(DateTime_TS=pd.to_datetime(data.DateTime))
+        data.assign(Index   = np.arange(0, data.shape[0], 1))
+        .assign(Hour        = data.Time.str[:2].astype(str))
+        .assign(Minute      = data.Time.str[3:5].astype(int))
+        .assign(HalfHour    = data.Hour.str.zfill(2) + data.Minute.apply(half_hour))
+        .assign(DateTime    = data.Date.astype(str) + " " + data.Time.astype(str))
+        .assign(DateTime_TS = pd.to_datetime(data.DateTime))
     )
 
     return data

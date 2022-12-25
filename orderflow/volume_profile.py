@@ -13,6 +13,7 @@ def get_dynamic_vp(data: pd.DataFrame) -> pd.DataFrame:
     :return: canonical dataframe with the addition of the column with Ask / Bid volume
     """
 
+    data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
     dates = data.Date.unique()
     datas = list()
 
@@ -44,10 +45,18 @@ def get_dynamic_vp_with_volume_filter(data: pd.DataFrame, volume_filter:int) -> 
 
     """
     Given the canonical dataframe recorded, this function returns a dataframe with volume in ASK / BID restarted at the
-    of a given day.
+    beginning of a given day.
     :param data: canonical dataframe recorded (tick-by-tick wth the DOM attached)
     :return: canonical dataframe with the addition of the column with Ask / Bid volume filtered
     """
+
+
+    # Check if index, as unique trade on the T&S key, is present in the DataFrame...
+    # ... this is crucial to have a unique key for every single trade recorded.
+    index_present = 'index'.upper() in [str(x).upper() for x in data.columns]
+    if not index_present:
+        data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
+        data['Index'] = np.arange(0, data.shape[0], 1)
 
     dates = data.Date.unique()
     datas = list()
@@ -72,12 +81,11 @@ def get_dynamic_vp_with_volume_filter(data: pd.DataFrame, volume_filter:int) -> 
 
     data = (data.
             merge(
-                    right = datas[['Date',
-                                   'Time',
-                                   'AskVolume_VP_f',
-                                   'BidVolume_VP_f']],
+                    right = datas[['AskVolume_VP_f',
+                                   'BidVolume_VP_f',
+                                   'Index']],
                     how   = 'left',
-                    on    = ['Date', 'Time']
+                    on    = 'Index' # index is the unique single trade
                 )
             )
 
@@ -85,7 +93,7 @@ def get_dynamic_vp_with_volume_filter(data: pd.DataFrame, volume_filter:int) -> 
     data['AskVolume_VP_f_' + str(volume_filter)] = data['AskVolume_VP_f'].replace(to_replace=0, method='ffill').astype(np.int64)  # Fill zeros with last cumulative value
     data['BidVolume_VP_f_' + str(volume_filter)] = data['BidVolume_VP_f'].replace(to_replace=0, method='ffill').astype(np.int64)  # Fill zeros with last cumulative value
 
-    return data.drop(['AskVolume_VP_f', 'BidVolume_VP_f'], axis=1)
+    return data.drop(['AskVolume_VP_f', 'BidVolume_VP_f', 'Index'], axis=1)
 
 
 def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
@@ -123,7 +131,4 @@ def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
     poc_[len_ - 1] = price[len_ - 1]
 
     return poc_
-
-
-
 

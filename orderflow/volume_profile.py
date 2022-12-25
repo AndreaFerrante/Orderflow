@@ -10,7 +10,7 @@ def get_dynamic_vp(data: pd.DataFrame) -> pd.DataFrame:
     Given the canonical dataframe recorded, this function returns a dataframe with volume in ASK / BID restarted at the
     of a given day.
     :param data: canonical dataframe recorded (tick-by-tick wth the DOM attached)
-    :return: ask and bid numpy array (respectively)
+    :return: canonical dataframe with the addition of the column with Ask / Bid volume
     """
 
     dates = data.Date.unique()
@@ -34,7 +34,58 @@ def get_dynamic_vp(data: pd.DataFrame) -> pd.DataFrame:
 
         datas.append(single_date)
 
-    return pd.concat(datas)
+    datas = pd.concat(datas)
+    datas.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
+
+    return datas
+
+
+def get_dynamic_vp_with_volume_filter(data: pd.DataFrame, volume_filter:int) -> pd.DataFrame:
+
+    """
+    Given the canonical dataframe recorded, this function returns a dataframe with volume in ASK / BID restarted at the
+    of a given day.
+    :param data: canonical dataframe recorded (tick-by-tick wth the DOM attached)
+    :return: canonical dataframe with the addition of the column with Ask / Bid volume filtered
+    """
+
+    dates = data.Date.unique()
+    datas = list()
+
+    for date in dates:
+
+        print(f'Dynamic VP filtered processing date {date}')
+        ask = data[ (data.Date == date) & (data.TradeType == 2) & (data.Volume >= volume_filter) ]  # get the ask per date...
+        bid = data[ (data.Date == date) & (data.TradeType == 1) & (data.Volume >= volume_filter) ]  # get the bid per date...
+
+        ask = ask.assign(AskVolume_VP_f = np.cumsum(ask.Volume))
+        ask = ask.assign(BidVolume_VP_f = [np.nan] * ask.shape[0])
+        bid = bid.assign(AskVolume_VP_f = [np.nan] * bid.shape[0])
+        bid = bid.assign(BidVolume_VP_f = np.cumsum(bid.Volume))
+
+        single_date = pd.concat([ask, bid], axis=0)
+        single_date.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
+        datas.append(single_date)
+
+    datas = pd.concat(datas)
+    datas.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
+
+    data = (data.
+            merge(
+                    right = datas[['Date',
+                                   'Time',
+                                   'AskVolume_VP_f',
+                                   'BidVolume_VP_f']],
+                    how   = 'left',
+                    on    = ['Date', 'Time']
+                )
+            )
+
+    data.fillna(0, inplace=True)
+    data['AskVolume_VP_f_' + str(volume_filter)] = data['AskVolume_VP_f'].replace(to_replace=0, method='ffill').astype(np.int64)  # Fill zeros with last cumulative value
+    data['BidVolume_VP_f_' + str(volume_filter)] = data['BidVolume_VP_f'].replace(to_replace=0, method='ffill').astype(np.int64)  # Fill zeros with last cumulative value
+
+    return data.drop(['AskVolume_VP_f', 'BidVolume_VP_f'], axis=1)
 
 
 def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
@@ -72,5 +123,7 @@ def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
     poc_[len_ - 1] = price[len_ - 1]
 
     return poc_
+
+
 
 

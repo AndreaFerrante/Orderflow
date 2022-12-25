@@ -40,3 +40,5 @@ def get_vwap(price: np.array, volume: np.array, date: np.array) -> np.array:
     vwap[-1:] = vwap[-2:-1]
 
     return np.array(vwap)
+
+

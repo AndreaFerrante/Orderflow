@@ -4,86 +4,37 @@ import operator
 from tqdm import tqdm
 
 
-def get_dynamic_vp(df: pd.DataFrame) -> pd.DataFrame:
+def get_dynamic_vp(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     Given the canonical dataframe recorded, this function returns a dataframe with volume in ASK / BID restarted at the
     of a given day.
-    :param df: canonical dataframe recorded (tick-by-tick wth the DOM attached)
-    :return: dataframe of
+    :param data: canonical dataframe recorded (tick-by-tick wth the DOM attached)
+    :return: ask and bid numpy array (respectively)
     """
 
-    volume = np.array(df.Volume)
-    price = np.array(df.Price)
-    side = np.array(df.TradeType)
-    sday = np.array(df.Index_DayShift)
+    dates = data.Date.unique()
+    datas = list()
 
-    volume_a = {}
-    volume_b = {}
-    len_final = df.shape[0]
-    voa = np.zeros(len_final)
-    vob = np.zeros(len_final)
+    for date in dates:
 
-    if side[0] == 2:
-        voa[0] = volume[0]
-        volume_a[price[0]] = volume[0]
-        volume_b[price[0]] = 0
-    elif side[0] == 1:
-        vob[0] = volume[0]
-        volume_a[price[0]] = 0
-        volume_b[price[0]] = volume[0]
+        print(f'Dynamic VP processing date {date}')
+        ask = data[(data.Date == date) & (data.TradeType == 2)]  # get the ask per date...
+        bid = data[(data.Date == date) & (data.TradeType == 1)]  # get the bid per date...
 
-    for idx in tqdm(range(1, len_final)):
+        ask['AskVolume_VP'] = np.cumsum(ask.Volume)
+        ask['BidVolume_VP'] = np.zeros(ask.shape[0])
+        bid['AskVolume_VP'] = np.zeros(bid.shape[0])
+        bid['BidVolume_VP'] = np.cumsum(bid.Volume)
 
-        if sday[idx]:
-            if side[idx] == 2:
-                if price[idx] in volume_a:
-                    volume_a[price[idx]] += volume[idx]
-                    voa[idx] = volume_a[price[idx]]
-                    try:
-                        vob[idx] = volume_b[price[idx]]
-                    except Exception as ex:
-                        print(ex)
-                else:
-                    volume_a[price[idx]] = volume[idx]
-                    voa[idx] = volume[idx]
-                    try:
-                        vob[idx] = volume_b[price[idx]]
-                    except Exception as ex:
-                        print(ex)
-            elif side[idx] == 1:
-                if price[idx] in volume_b:
-                    volume_b[price[idx]] += volume[idx]
-                    vob[idx] = volume_b[price[idx]]
-                    try:
-                        voa[idx] = volume_a[price[idx]]
-                    except Exception as ex:
-                        print(ex)
-                else:
-                    volume_b[price[idx]] = volume[idx]
-                    vob[idx] = volume[idx]
-                    try:
-                        voa[idx] = volume_a[price[idx]]
-                    except Exception as ex:
-                        print(ex)
-            else:
-                print("no side")
-        else:
-            volume_a = {}
-            volume_b = {}
-            if side[idx] == 2:
-                volume_a[price[idx]] = volume[idx]
-                voa[idx] = volume_a[price[idx]]
-            elif side[idx] == 1:
-                volume_b[price[idx]] = volume[idx]
-                vob[idx] = volume_b[price[idx]]
-            else:
-                print("no side")
+        single_date = pd.concat([ask, bid], axis=0)
+        single_date.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
+        single_date['AskVolume_VP'] = single_date['AskVolume_VP'].replace(to_replace=0, method='ffill').astype(np.int64)  # Fill zeros with last cumulative value
+        single_date['BidVolume_VP'] = single_date['BidVolume_VP'].replace(to_replace=0, method='ffill').astype(np.int64)  # Fill zeros with last cumulative value
 
-    df = df.assign(VP_Ask=pd.Series(voa, dtype=int).reset_index(drop=True))
-    df = df.assign(VP_Bid=pd.Series(vob, dtype=int).reset_index(drop=True))
+        datas.append(single_date)
 
-    return df
+    return pd.concat(datas)
 
 
 def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
@@ -121,3 +72,5 @@ def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
     poc_[len_ - 1] = price[len_ - 1]
 
     return poc_
+
+

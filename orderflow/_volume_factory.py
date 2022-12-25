@@ -41,48 +41,6 @@ def prepare_data(
     return data
 
 
-def identify_WG_position(
-        data:pd.DataFrame
-) -> (np.array, np.array):
-
-    '''
-    Given usual recordedd data for analysis, this function tells us if the biggest volume on the DOM was on the
-    first level of the Depth of the Market (DOM)
-    :param data: dataframe with all DOM columns
-    :return:
-    '''
-
-    dom_cols = [x for x in data.columns if 'DOM_' in x]
-    if len(dom_cols) == 0:
-        raise Exception('Dataframe passed has no DOM columns ! Provide a dataframe with DOM columns.')
-        return
-    else:
-        dom_cols_ask = [x for x in data.columns if 'AskDOM_' in x]
-        dom_cols_bid = [x for x in data.columns if 'BidDOM_' in x]
-
-        ask_WG = np.array(data[ dom_cols_ask ].idxmax(axis=1))
-        bid_WG = np.array(data[ dom_cols_bid ].idxmax(axis=1))
-
-    return ask_WG, bid_WG
-
-
-def remove_DOM_columns(
-        data:pd.DataFrame
-) -> pd.DataFrame:
-
-    '''
-    Given the usual recorded data for analysis, this functions removes all DOM columns for better performance.
-    DOM columns can be identified by removing columns with "DOM_" in it.
-    :param data: dataframe racorded data
-    :return: recorded dataframe with no DOM columns
-    '''
-
-    dom_cols = [x for x in data.columns if 'DOM_' in x]
-    return ( data.drop( dom_cols, axis=1 ) )
-
-    pass
-
-
 def get_tickers_in_folder(
     path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999
 ) -> pd.DataFrame:
@@ -157,43 +115,5 @@ def plot_half_hour_volume(
     plt.ylabel("Volume")
     plt.xticks(rotation=90)
     plt.tight_layout()
-
-
-def filter_big_prints_on_ask(
-    data: pd.DataFrame, volume_filter: int = 100
-) -> pd.DataFrame:
-
-    """
-    Given the canonical dataframe recorded, this functions returns filtered volume dataframe on the ASK
-    :param data: canonical dataframe recorded
-    :param volume_filter: time and sales dataframe recorded volume filter
-    :return: dataframe with the given filter
-    """
-
-    filtered_on_ask = data.query("TradeType == 2").query(
-        "Volume >= " + str(volume_filter) + ""
-    )
-
-    return filtered_on_ask
-
-
-def filter_big_prints_on_bid(
-    data: pd.DataFrame, volume_filter: int = 100
-) -> pd.DataFrame:
-
-    """
-    Given the canonical dataframe recorded, this functions returns filtered volume dataframe on the BID
-    :param data: canonical dataframe recorded
-    :param volume_filter: time and sales dataframe recorded volume filter
-    :return: dataframe with the given filter
-    """
-
-    filtered_on_bid = data.query("TradeType == 1").query(
-        "Volume >= " + str(volume_filter) + ""
-    )
-
-    return filtered_on_bid
-
-
 
 

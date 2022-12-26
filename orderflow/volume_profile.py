@@ -17,7 +17,7 @@ def get_dynamic_vp(data: pd.DataFrame) -> pd.DataFrame:
     dates = data.Date.unique()
     datas = list()
 
-    for date in dates:
+    for date in tqdm(dates):
 
         print(f'Dynamic VP processing date {date}')
         ask = data[(data.Date == date) & (data.TradeType == 2)]  # get the ask per date...

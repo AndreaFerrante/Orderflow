@@ -47,7 +47,3 @@ def get_vwap(data:pd.DataFrame) -> np.array:
     return np.array(vwap)
 
 
-
-
-
-

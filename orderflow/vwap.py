@@ -1,8 +1,9 @@
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 
-def get_vwap(price: np.array, volume: np.array, date: np.array) -> np.array:
+def get_vwap(data:pd.DataFrame) -> np.array:
 
     """
     VWAP ( Volume Weighted Average Price ) := sum( Volume(i) * Price(i) ) / sum( Volume(i) )
@@ -13,6 +14,10 @@ def get_vwap(price: np.array, volume: np.array, date: np.array) -> np.array:
     :param date: this is the date in which volume calculation is recorded
     :return: numpy array of the VWAP
     """
+
+    price  = np.array(data.Price)
+    volume = np.array(data.Volume)
+    date   = np.array(data.Date)
 
     len_ = len(price)
     vwap = np.zeros(len_)
@@ -40,5 +45,9 @@ def get_vwap(price: np.array, volume: np.array, date: np.array) -> np.array:
     vwap[-1:] = vwap[-2:-1]
 
     return np.array(vwap)
+
+
+
+
 
 

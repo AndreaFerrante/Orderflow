@@ -1,11 +1,16 @@
 import os
+
+import datatable
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from datatable import fread, f
 from tqdm import tqdm
 
 
-def half_hour(x):
+def half_hour(
+        x
+) -> str:
 
     if x >= 30:
         return "30"
@@ -14,7 +19,7 @@ def half_hour(x):
 
 
 def prepare_data(
-        data: pd.DataFrame
+    data: pd.DataFrame
 ) -> pd.DataFrame:
 
     """
@@ -41,39 +46,60 @@ def prepare_data(
     return data
 
 
+def get_longest_columns_dataframe(
+    path: str, ticker: str = "ES"
+) -> list:
+
+    files = os.listdir(path)
+    files = [x for x in files if x.startswith(ticker)]
+    cols  = [x for x in range(99999)] # Dummy list for having the cols as big as possible...
+
+    for file in files:
+
+        single = pd.read_csv( os.path.join(path, file), sep=';', nrows=2 ) # Read only first two rows to read teh columns !
+        if len(single.columns) < len(cols):
+            cols = single.columns
+
+    return list(cols)
+
+
 def get_tickers_in_folder(
     path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999
 ) -> pd.DataFrame:
 
     """
-    Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES)
+    Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES).
+    This package leverages a ot datatable speed !
     :param path: path to ticker data to read
-    :param ticker: ticker to read in the form of ES, ZN, ZB . . .
+    :param ticker: ticker to read in the form of ES, ZN, ZB, AAPL, MSFT. . .
     :param cols: columns to import...
-    :param break_at: how many ticker files to read ?
+    :param break_at: how many ticker files do we have to read ?
     :return: DataFrame of all read ticker files
+
+    Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
     """
 
-    files = os.listdir(path)
-    stacked = []
-    counter = 0
-    for file in tqdm.tqdm(files):
+    if cols is None:
+        cols = get_longest_columns_dataframe(path = path, ticker = ticker)
 
-        if file.startswith(ticker):
+    files   = [x for x in os.listdir(path) if x.startswith(ticker)]
+    stacked = datatable.Frame()
 
-            print(f"Reading file named {file} ...")
-            if cols is None:
-                stacked.append(pd.read_csv(os.path.join(path, file), sep=";"))
-            else:
-                stacked.append(
-                    pd.read_csv(os.path.join(path, file), sep=";", usecols=cols)
-                )
+    for idx, file in tqdm(enumerate(files)):
 
-            counter += 1
-            if counter >= break_at:
-                return pd.concat(stacked)
+        print(f"Reading file {file} ...")
 
-    return pd.concat(stacked)
+        read_file           = fread( os.path.join(path, file), sep=";", fill=True )     # Read using datatable for fast performance...
+        read_file           = read_file[:, list(cols)]                                  # Select all rows and specific columns...
+        read_file['Date']   = datatable.str64                                           # Convert string for filtering...
+        read_file['Price']  = datatable.float64                                         # Convert float for filtering...
+        read_file           = read_file[ (f.Date != '1899-12-30') & (f.Price != 0), : ] # Filter impurities...
+        stacked.rbind( read_file )
+
+        if idx >= break_at:
+            return stacked.sort(['Date', 'Time']).to_pandas()
+
+    return stacked.sort(['Date', 'Time']).to_pandas()
 
 
 def plot_half_hour_volume(
@@ -115,5 +141,7 @@ def plot_half_hour_volume(
     plt.ylabel("Volume")
     plt.xticks(rotation=90)
     plt.tight_layout()
+
+
 
 

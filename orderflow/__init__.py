@@ -3,6 +3,7 @@ from orderflow._volume_factory import (
     get_tickers_in_folder,
     plot_half_hour_volume,
     get_volume_distribution,
+    get_new_start_date
 )
 
 from orderflow.dom import (

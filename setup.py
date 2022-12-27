@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="Orderflow",
-    version="0.0.1",
+    version="0.0.2",
     description="Orderflow trading data manager and reshaper",
     author="Andrea Ferrante",
     author_email="nonicknamethankyou@gmail.com",
@@ -22,6 +22,6 @@ setup(
     keywords="datetime, setuptools",
     packages=find_packages(where="src"),
     python_requires=">=3.6, <4",
-    install_requires=["pandas", "numpy", "datatable"],
+    install_requires=["pandas", "numpy", "datatable", "matplotlib"],
     py_modules=["orderflow"],
 )

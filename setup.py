@@ -6,7 +6,7 @@ setup(
     version="0.0.1",
     description="Orderflow trading data manager and reshaper",
     author="Andrea Ferrante",
-    author_email="andreaferrante1986@gmail.com",
+    author_email="nonicknamethankyou@gmail.com",
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

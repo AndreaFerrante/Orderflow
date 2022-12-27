@@ -45,3 +45,5 @@ def get_vwap(data: pd.DataFrame) -> np.array:
     vwap[-1:] = vwap[-2:-1]
 
     return np.array(vwap)
+
+

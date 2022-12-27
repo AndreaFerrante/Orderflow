@@ -77,9 +77,58 @@ def sum_first_n_DOM_levels(
     elif l1_side_to_sum == 'BID':
         data['DOMSumBid_' + str(l1_level_to_sum)]   = data[dom_cols].sum(axis=1)
     else:
-        raise Exception('No correct side provided !')
+        raise Exception('No correct DOM side provided !')
 
     return data
+
+
+def get_dom_shape_for_n_levels(
+    data:pd.DataFrame, l1_level_to_watch:int=5
+) -> pd.DataFrame:
+
+    '''
+    This function, given the canonical dataframe, tells if the DOM shape has a "rectangular" form:
+    rectangular_shape := { get_sum_of_n_levels_on_the_dom } / { ( get_max_volume_on_first_n_levels ) * ( l1_level_to_watch ) }
+
+    The closer this function is to one, the more robust and "thick" the DOM is. This function can spot DOM outliers.
+    The closer the value is to 1, the thicker the DOM is...
+
+    :param data: dataframe recorded data
+    :param l1_side_to_sum: side of levels to be sum up (use str ask for summing the ASK, bid for summing the BID)
+    :param l1_level_to_watch: number of levels to be sum up (default is 10 levels)
+    :return: dataframe of levels summed up for both side (Ask / Bid)
+    '''
+
+    ask_dom_columns = [x for x in data.columns if 'AskDOM_' in x]
+    bid_dom_columns = [x for x in data.columns if 'BidDOM_' in x]
+
+    if l1_level_to_watch > len(ask_dom_columns) or l1_level_to_watch > len(bid_dom_columns):
+        raise Exception('Data provided has less DOM levels then the ones to sum up.')
+    else:
+        ask_dom_columns = ask_dom_columns[:l1_level_to_watch]
+        bid_dom_columns = bid_dom_columns[:l1_level_to_watch]
+
+    data[ 'DOMSumAsk_' + str(l1_level_to_watch) + '_Shape' ] = ( data[ ask_dom_columns ].sum(axis=1) ) / \
+                                                               ( np.max(data[ask_dom_columns], axis=1 ) * l1_level_to_watch )
+    data[ 'DOMSumBid_' + str(l1_level_to_watch) + '_Shape' ] = ( data[ bid_dom_columns ].sum(axis=1) ) / \
+                                                               ( np.max(data[bid_dom_columns], axis=1 ) * l1_level_to_watch )
+
+    return data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

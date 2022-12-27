@@ -20,4 +20,4 @@ The structure of the data is the following:
 Main tools in development for data fun and research are <b>VWAP, Volume Profile, Imbalances</b>.
 <br>Please, keep in mind that this is not a module for trading but <b>just</b> for research for those that love data !
 
-<br> This module uses pandas and datatable for <b>amazing</b> speed in managing the data.
+<br> This module uses pandas and datatable for <b>amazing</b> speed in managing the data and it is PEP-8 compliant by using black https://github.com/psf/black.

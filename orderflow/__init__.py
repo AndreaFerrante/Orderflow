@@ -19,8 +19,8 @@ from orderflow.footprint import (
 )
 
 from orderflow.volume_profile import (
-    get_dynamic_vp,
-    get_dynamic_vp_with_volume_filter,
+    get_dynamic_cumulative_delta,
+    get_dynamic_cumulative_delta_with_volume_filter,
     get_daily_moving_POC,
 )
 

@@ -82,22 +82,19 @@ def get_tickers_in_folder(
     if cols is None:
         cols = get_longest_columns_dataframe(path=path, ticker=ticker)
 
-    files = [x for x in os.listdir(path) if x.startswith(ticker)]
+    ticker  = str(ticker).upper()
+    files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
     stacked = datatable.Frame()
 
     for idx, file in tqdm(enumerate(files)):
 
         print(f"Reading file {file} ...")
 
-        read_file = fread(
-            os.path.join(path, file), sep=";", fill=True
-        )  # Read using datatable for fast performance...
-        read_file = read_file[:, list(cols)]  # Select all rows and specific columns...
-        read_file["Date"] = datatable.str64  # Convert string for filtering...
+        read_file = fread(os.path.join(path, file), sep=";", fill=True)
+        read_file = read_file[:, list(cols)]    # Select all rows and specific columns...
+        read_file["Date"] = datatable.str64     # Convert string for filtering...
         read_file["Price"] = datatable.float64  # Convert float for filtering...
-        read_file = read_file[
-            (f.Date != "1899-12-30") & (f.Price != 0), :
-        ]  # Filter impurities...
+        read_file = read_file[(f.Date != "1899-12-30") & (f.Price != 0), :]  # Filter impurities...
         stacked.rbind(read_file)
 
         if idx >= break_at:

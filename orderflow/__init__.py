@@ -5,9 +5,17 @@ from orderflow._volume_factory import (
     get_volume_distribution,
 )
 
-from orderflow.dom import identify_WG_position, remove_DOM_columns
+from orderflow.dom import (
+    identify_WG_position,
+    remove_DOM_columns,
+    sum_first_n_DOM_levels,
+    get_dom_shape_for_n_levels
+)
 
-from orderflow.footprint import filter_big_prints_on_ask, filter_big_prints_on_bid
+from orderflow.footprint import (
+    filter_big_prints_on_ask,
+    filter_big_prints_on_bid
+)
 
 from orderflow.volume_profile import (
     get_dynamic_vp,
@@ -15,4 +23,6 @@ from orderflow.volume_profile import (
     get_daily_moving_POC,
 )
 
-from orderflow.vwap import get_vwap
+from orderflow.vwap import (
+    get_vwap
+)

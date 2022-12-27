@@ -5,7 +5,7 @@ This is a short Python module to analyze tick-by-tick data.
 The structure of the data is the following:
 
 - <b>Date</b>: date of trade execution (YYYY-MM-DD)
-- <b>Time</b>: time of trade execution (%H:%M:%S.ffffff)
+- <b>Time</b>: time of trade execution (%H:%M:%S.ffffff, market time)
 - <b>Price</b>: price of execution trade
 - <b>Volume</b>: volume executed
 - <b>TradeType</b>: 1 if trade has been executed on the BID, 2 if the trade has been executed on the ASK

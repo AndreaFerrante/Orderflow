@@ -172,7 +172,7 @@ def get_volume_distribution(
 
 
 def get_new_start_date(
-    data:pd.DataFrame
+    data:pd.DataFrame, sort_values:bool=False
 ) -> pd.DataFrame:
 
     '''
@@ -183,7 +183,8 @@ def get_new_start_date(
 
     ########################################################################
     # Sort by date and time for clarity...
-    data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
+    if sort_values:
+        data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
     ########################################################################
 
     data['Date_Shift']   = data.Date.shift(1)

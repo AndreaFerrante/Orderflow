@@ -144,7 +144,9 @@ def plot_half_hour_volume(
     plt.tight_layout()
 
 
-def get_volume_distribution(data: pd.DataFrame) -> pd.DataFrame:
+def get_volume_distribution(
+    data: pd.DataFrame
+) -> pd.DataFrame:
 
     value_counts_num = pd.DataFrame(data["Volume"].value_counts()).reset_index()
     value_counts_num = value_counts_num.rename(
@@ -169,6 +171,27 @@ def get_volume_distribution(data: pd.DataFrame) -> pd.DataFrame:
     return stats
 
 
+def get_new_start_date(
+    data:pd.DataFrame
+) -> pd.DataFrame:
+
+    '''
+    This function marks with one the start of a new date
+    :param data: canonical dataframe
+    :return: canonical dataframe with the addition of the column for new day start
+    '''
+
+    ########################################################################
+    # Sort by date and time for clarity...
+    data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
+    ########################################################################
+
+    data['Date_Shift']   = data.Date.shift(1)
+    data_last_date_notna = data['Date_Shift'].head(2).values[1] # Take first two elements and the second one must be not empty...
+    data['Date_Shift']   = data['Date_Shift'].fillna( data_last_date_notna )
+    data['DayStart']     = np.where(data.Date != data.Date_Shift, 1, 0)
+
+    return data.drop(['Date_Shift'], axis=1)
 
 
 

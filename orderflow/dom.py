@@ -2,9 +2,7 @@ import pandas as pd
 import numpy as np
 
 
-def identify_WG_position(
-        data: pd.DataFrame
-) -> (np.array, np.array):
+def identify_WG_position(data: pd.DataFrame) -> (np.array, np.array):
 
     """
     Given usual recordedd data for analysis, this function tells us if the biggest volume on the DOM was on the
@@ -29,9 +27,7 @@ def identify_WG_position(
     return ask_WG, bid_WG
 
 
-def remove_DOM_columns(
-        data: pd.DataFrame
-) -> pd.DataFrame:
+def remove_DOM_columns(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     Given the usual recorded data for analysis, this functions removes all DOM columns for better performance.
@@ -47,10 +43,10 @@ def remove_DOM_columns(
 
 
 def sum_first_n_DOM_levels(
-    data:pd.DataFrame, l1_side_to_sum:str='ask', l1_level_to_sum:int=5
+    data: pd.DataFrame, l1_side_to_sum: str = "ask", l1_level_to_sum: int = 5
 ) -> pd.DataFrame:
 
-    '''
+    """
     This function, given the canonical dataframe, sums the first N levels of the DOM
     :param data: dataframe recorded data
     :param l1_side_to_sum: side of levels to be sum up (use str ask for summing the ASK, bid for summing the BID)
@@ -58,35 +54,35 @@ def sum_first_n_DOM_levels(
     :return: dataframe of levels summed up per side choose (Ask / Bid)
 
     Attention ! Using str().upper() function to prevent capital letter error...
-    '''
+    """
 
     # 1. Convert summation...
     # 2. Select only relevant ASK / BID columns inside the data...
     # 3. Filter only relevant ASK / BID columns inside the data...
     l1_side_to_sum = str(l1_side_to_sum).upper()
-    dom_side       = 'AskDOM_' if l1_side_to_sum == 'ASK' else 'BidDOM_'
-    dom_cols       = [x for x in data.columns if dom_side in x]
+    dom_side = "AskDOM_" if l1_side_to_sum == "ASK" else "BidDOM_"
+    dom_cols = [x for x in data.columns if dom_side in x]
 
     if l1_level_to_sum > len(dom_cols):
-        raise Exception('Data provided has less DOM levels then the ones to sum up.')
+        raise Exception("Data provided has less DOM levels then the ones to sum up.")
     else:
         dom_cols = dom_cols[:l1_level_to_sum]
 
-    if l1_side_to_sum == 'ASK':
-        data[ 'DOMSumAsk_' + str(l1_level_to_sum) ] = data[ dom_cols ].sum(axis=1)
-    elif l1_side_to_sum == 'BID':
-        data['DOMSumBid_' + str(l1_level_to_sum)]   = data[dom_cols].sum(axis=1)
+    if l1_side_to_sum == "ASK":
+        data["DOMSumAsk_" + str(l1_level_to_sum)] = data[dom_cols].sum(axis=1)
+    elif l1_side_to_sum == "BID":
+        data["DOMSumBid_" + str(l1_level_to_sum)] = data[dom_cols].sum(axis=1)
     else:
-        raise Exception('No correct DOM side provided !')
+        raise Exception("No correct DOM side provided !")
 
     return data
 
 
 def get_dom_shape_for_n_levels(
-    data:pd.DataFrame, l1_level_to_watch:int=5
+    data: pd.DataFrame, l1_level_to_watch: int = 5
 ) -> pd.DataFrame:
 
-    '''
+    """
     This function, given the canonical dataframe, tells if the DOM shape has a "rectangular" form:
     rectangular_shape := { get_sum_of_n_levels_on_the_dom } / { ( get_max_volume_on_first_n_levels ) * ( l1_level_to_watch ) }
 
@@ -97,39 +93,24 @@ def get_dom_shape_for_n_levels(
     :param l1_side_to_sum: side of levels to be sum up (use str ask for summing the ASK, bid for summing the BID)
     :param l1_level_to_watch: number of levels to be sum up (default is 10 levels)
     :return: dataframe of levels summed up for both side (Ask / Bid)
-    '''
+    """
 
-    ask_dom_columns = [x for x in data.columns if 'AskDOM_' in x]
-    bid_dom_columns = [x for x in data.columns if 'BidDOM_' in x]
+    ask_dom_columns = [x for x in data.columns if "AskDOM_" in x]
+    bid_dom_columns = [x for x in data.columns if "BidDOM_" in x]
 
-    if l1_level_to_watch > len(ask_dom_columns) or l1_level_to_watch > len(bid_dom_columns):
-        raise Exception('Data provided has less DOM levels then the ones to sum up.')
+    if l1_level_to_watch > len(ask_dom_columns) or l1_level_to_watch > len(
+        bid_dom_columns
+    ):
+        raise Exception("Data provided has less DOM levels then the ones to sum up.")
     else:
         ask_dom_columns = ask_dom_columns[:l1_level_to_watch]
         bid_dom_columns = bid_dom_columns[:l1_level_to_watch]
 
-    data[ 'DOMSumAsk_' + str(l1_level_to_watch) + '_Shape' ] = ( data[ ask_dom_columns ].sum(axis=1) ) / \
-                                                               ( np.max(data[ask_dom_columns], axis=1 ) * l1_level_to_watch )
-    data[ 'DOMSumBid_' + str(l1_level_to_watch) + '_Shape' ] = ( data[ bid_dom_columns ].sum(axis=1) ) / \
-                                                               ( np.max(data[bid_dom_columns], axis=1 ) * l1_level_to_watch )
+    data["DOMSumAsk_" + str(l1_level_to_watch) + "_Shape"] = (
+        data[ask_dom_columns].sum(axis=1)
+    ) / (np.max(data[ask_dom_columns], axis=1) * l1_level_to_watch)
+    data["DOMSumBid_" + str(l1_level_to_watch) + "_Shape"] = (
+        data[bid_dom_columns].sum(axis=1)
+    ) / (np.max(data[bid_dom_columns], axis=1) * l1_level_to_watch)
 
     return data
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

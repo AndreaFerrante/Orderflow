@@ -15,9 +15,7 @@ def half_hour(x) -> str:
         return "00"
 
 
-def prepare_data(
-    data: pd.DataFrame
-) -> pd.DataFrame:
+def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     Given usual data recorded, this function returns it corrected since its CSV recoding so it adds pandas datatypes
@@ -43,9 +41,7 @@ def prepare_data(
     return data
 
 
-def get_longest_columns_dataframe(
-    path: str, ticker: str = "ES"
-) -> list:
+def get_longest_columns_dataframe(path: str, ticker: str = "ES") -> list:
 
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
     cols = [
@@ -147,9 +143,7 @@ def plot_half_hour_volume(
     plt.tight_layout()
 
 
-def get_volume_distribution(
-    data: pd.DataFrame
-) -> pd.DataFrame:
+def get_volume_distribution(data: pd.DataFrame) -> pd.DataFrame:
 
     value_counts_num = pd.DataFrame(data["Volume"].value_counts()).reset_index()
     value_counts_num = value_counts_num.rename(

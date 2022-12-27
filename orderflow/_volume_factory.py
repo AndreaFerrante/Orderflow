@@ -1,5 +1,4 @@
 import os
-
 import datatable
 import pandas as pd
 import numpy as np
@@ -8,9 +7,7 @@ from datatable import fread, f
 from tqdm import tqdm
 
 
-def half_hour(
-        x
-) -> str:
+def half_hour(x) -> str:
 
     if x >= 30:
         return "30"
@@ -18,9 +15,7 @@ def half_hour(
         return "00"
 
 
-def prepare_data(
-    data: pd.DataFrame
-) -> pd.DataFrame:
+def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     Given usual data recorded, this function returns it corrected since its CSV recoding so it adds pandas datatypes
@@ -35,27 +30,29 @@ def prepare_data(
     # es = es.assign(HalfHour = es.Hour.str.zfill(2) + es.Minute.apply(half_hour)) # Identifies half hours...
 
     data = (
-        data.assign(Index   = np.arange(0, data.shape[0], 1))
-        .assign(Hour        = data.Time.str[:2].astype(str))
-        .assign(Minute      = data.Time.str[3:5].astype(int))
-        .assign(HalfHour    = data.Hour.str.zfill(2) + data.Minute.apply(half_hour))
-        .assign(DateTime    = data.Date.astype(str) + " " + data.Time.astype(str))
-        .assign(DateTime_TS = pd.to_datetime(data.DateTime))
+        data.assign(Index=np.arange(0, data.shape[0], 1))
+        .assign(Hour=data.Time.str[:2].astype(str))
+        .assign(Minute=data.Time.str[3:5].astype(int))
+        .assign(HalfHour=data.Hour.str.zfill(2) + data.Minute.apply(half_hour))
+        .assign(DateTime=data.Date.astype(str) + " " + data.Time.astype(str))
+        .assign(DateTime_TS=pd.to_datetime(data.DateTime))
     )
 
     return data
 
 
-def get_longest_columns_dataframe(
-    path: str, ticker: str = "ES"
-) -> list:
+def get_longest_columns_dataframe(path: str, ticker: str = "ES") -> list:
 
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
-    cols  = [x for x in range(99999)] # Dummy list for having the cols as big as possible...
+    cols = [
+        x for x in range(99999)
+    ]  # Dummy list for having the cols as big as possible...
 
     for file in files:
 
-        single = pd.read_csv( os.path.join(path, file), sep=';', nrows=2 ) # Read only first two rows to read teh columns !
+        single = pd.read_csv(
+            os.path.join(path, file), sep=";", nrows=2
+        )  # Read only first two rows to read teh columns !
         if len(single.columns) < len(cols):
             cols = single.columns
 
@@ -79,26 +76,30 @@ def get_tickers_in_folder(
     """
 
     if cols is None:
-        cols = get_longest_columns_dataframe(path = path, ticker = ticker)
+        cols = get_longest_columns_dataframe(path=path, ticker=ticker)
 
-    files   = [x for x in os.listdir(path) if x.startswith(ticker)]
+    files = [x for x in os.listdir(path) if x.startswith(ticker)]
     stacked = datatable.Frame()
 
     for idx, file in tqdm(enumerate(files)):
 
         print(f"Reading file {file} ...")
 
-        read_file           = fread( os.path.join(path, file), sep=";", fill=True )     # Read using datatable for fast performance...
-        read_file           = read_file[:, list(cols)]                                  # Select all rows and specific columns...
-        read_file['Date']   = datatable.str64                                           # Convert string for filtering...
-        read_file['Price']  = datatable.float64                                         # Convert float for filtering...
-        read_file           = read_file[ (f.Date != '1899-12-30') & (f.Price != 0), : ] # Filter impurities...
-        stacked.rbind( read_file )
+        read_file = fread(
+            os.path.join(path, file), sep=";", fill=True
+        )  # Read using datatable for fast performance...
+        read_file = read_file[:, list(cols)]  # Select all rows and specific columns...
+        read_file["Date"] = datatable.str64  # Convert string for filtering...
+        read_file["Price"] = datatable.float64  # Convert float for filtering...
+        read_file = read_file[
+            (f.Date != "1899-12-30") & (f.Price != 0), :
+        ]  # Filter impurities...
+        stacked.rbind(read_file)
 
         if idx >= break_at:
-            return stacked.sort(['Date', 'Time']).to_pandas()
+            return stacked.sort(["Date", "Time"]).to_pandas()
 
-    return stacked.sort(['Date', 'Time']).to_pandas()
+    return stacked.sort(["Date", "Time"]).to_pandas()
 
 
 def plot_half_hour_volume(
@@ -142,28 +143,26 @@ def plot_half_hour_volume(
     plt.tight_layout()
 
 
-def get_volume_distribution(
-    data:pd.DataFrame
-) -> pd.DataFrame:
+def get_volume_distribution(data: pd.DataFrame) -> pd.DataFrame:
 
-    value_counts_num = pd.DataFrame( data['Volume'].value_counts() ).reset_index()
-    value_counts_num = value_counts_num.rename(columns = {'Volume':'VolumeCount', 'index':'VolumeSize'})
-    value_counts_per = pd.DataFrame( data['Volume'].value_counts(normalize=True) ).reset_index()
-    value_counts_per = value_counts_per.rename(columns = {'Volume':'VolumePerc', 'index':'VolumeSize'})
-    value_counts_per = value_counts_per.assign(VolumePerc = value_counts_per.VolumePerc * 100)
+    value_counts_num = pd.DataFrame(data["Volume"].value_counts()).reset_index()
+    value_counts_num = value_counts_num.rename(
+        columns={"Volume": "VolumeCount", "index": "VolumeSize"}
+    )
+    value_counts_per = pd.DataFrame(
+        data["Volume"].value_counts(normalize=True)
+    ).reset_index()
+    value_counts_per = value_counts_per.rename(
+        columns={"Volume": "VolumePerc", "index": "VolumeSize"}
+    )
+    value_counts_per = value_counts_per.assign(
+        VolumePerc=value_counts_per.VolumePerc * 100
+    )
 
-    stats = (
-             value_counts_num.
-             merge(right    = value_counts_per,
-                   how      = 'left',
-                   on       = 'VolumeSize').
-             reset_index(drop=True)
-            )
-    stats.sort_values(['VolumeSize'], ascending=True, inplace=True)
-    stats = stats.assign(VolumePercCumultaive = np.cumsum( stats.VolumePerc ))
+    stats = value_counts_num.merge(
+        right=value_counts_per, how="left", on="VolumeSize"
+    ).reset_index(drop=True)
+    stats.sort_values(["VolumeSize"], ascending=True, inplace=True)
+    stats = stats.assign(VolumePercCumultaive=np.cumsum(stats.VolumePerc))
 
     return stats
-
-
-
-

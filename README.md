@@ -18,4 +18,4 @@ The structure of the data is the following:
 - <b>AskDOM_XX / BidDOM_XX</b>: ask and bid values till level XX
 
 Main tools in development for data fun and research are <b>VWAP, Volume Profile, Imbalances</b>.
-Please, keep in mind that this is not a module for trading but <b>just</b> for research for those that love data !
+<br>Please, keep in mind that this is not a module for trading but <b>just</b> for research for those that love data !

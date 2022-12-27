@@ -50,8 +50,7 @@ def get_longest_columns_dataframe(
     path: str, ticker: str = "ES"
 ) -> list:
 
-    files = os.listdir(path)
-    files = [x for x in files if x.startswith(ticker)]
+    files = [x for x in os.listdir(path) if x.startswith(ticker)]
     cols  = [x for x in range(99999)] # Dummy list for having the cols as big as possible...
 
     for file in files:
@@ -141,6 +140,29 @@ def plot_half_hour_volume(
     plt.ylabel("Volume")
     plt.xticks(rotation=90)
     plt.tight_layout()
+
+
+def get_volume_distribution(
+    data:pd.DataFrame
+) -> pd.DataFrame:
+
+    value_counts_num = pd.DataFrame( data['Volume'].value_counts() ).reset_index()
+    value_counts_num = value_counts_num.rename(columns = {'Volume':'VolumeCount', 'index':'VolumeSize'})
+    value_counts_per = pd.DataFrame( data['Volume'].value_counts(normalize=True) ).reset_index()
+    value_counts_per = value_counts_per.rename(columns = {'Volume':'VolumePerc', 'index':'VolumeSize'})
+    value_counts_per = value_counts_per.assign(VolumePerc = value_counts_per.VolumePerc * 100)
+
+    stats = (
+             value_counts_num.
+             merge(right    = value_counts_per,
+                   how      = 'left',
+                   on       = 'VolumeSize').
+             reset_index(drop=True)
+            )
+    stats.sort_values(['VolumeSize'], ascending=True, inplace=True)
+    stats = stats.assign(VolumePercCumultaive = np.cumsum( stats.VolumePerc ))
+
+    return stats
 
 
 

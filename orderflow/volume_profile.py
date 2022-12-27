@@ -148,3 +148,7 @@ def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
     poc_[len_ - 1] = price[len_ - 1]
 
     return poc_
+
+
+
+

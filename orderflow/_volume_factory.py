@@ -15,7 +15,9 @@ def half_hour(x) -> str:
         return "00"
 
 
-def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
+def prepare_data(
+    data: pd.DataFrame
+) -> pd.DataFrame:
 
     """
     Given usual data recorded, this function returns it corrected since its CSV recoding so it adds pandas datatypes
@@ -41,7 +43,9 @@ def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def get_longest_columns_dataframe(path: str, ticker: str = "ES") -> list:
+def get_longest_columns_dataframe(
+    path: str, ticker: str = "ES"
+) -> list:
 
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
     cols = [
@@ -166,3 +170,9 @@ def get_volume_distribution(data: pd.DataFrame) -> pd.DataFrame:
     stats = stats.assign(VolumePercCumultaive=np.cumsum(stats.VolumePerc))
 
     return stats
+
+
+
+
+
+

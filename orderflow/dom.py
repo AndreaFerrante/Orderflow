@@ -39,8 +39,6 @@ def remove_DOM_columns(data: pd.DataFrame) -> pd.DataFrame:
     dom_cols = [x for x in data.columns if "DOM_" in x]
     return data.drop(dom_cols, axis=1)
 
-    pass
-
 
 def sum_first_n_DOM_levels(
     data: pd.DataFrame, l1_side_to_sum: str = "ask", l1_level_to_sum: int = 5
@@ -56,9 +54,6 @@ def sum_first_n_DOM_levels(
     Attention ! Using str().upper() function to prevent capital letter error...
     """
 
-    # 1. Convert summation...
-    # 2. Select only relevant ASK / BID columns inside the data...
-    # 3. Filter only relevant ASK / BID columns inside the data...
     l1_side_to_sum = str(l1_side_to_sum).upper()
     dom_side = "AskDOM_" if l1_side_to_sum == "ASK" else "BidDOM_"
     dom_cols = [x for x in data.columns if dom_side in x]
@@ -106,11 +101,9 @@ def get_dom_shape_for_n_levels(
         ask_dom_columns = ask_dom_columns[:l1_level_to_watch]
         bid_dom_columns = bid_dom_columns[:l1_level_to_watch]
 
-    data["DOMSumAsk_" + str(l1_level_to_watch) + "_Shape"] = (
-        data[ask_dom_columns].sum(axis=1)
-    ) / (np.max(data[ask_dom_columns], axis=1) * l1_level_to_watch)
-    data["DOMSumBid_" + str(l1_level_to_watch) + "_Shape"] = (
-        data[bid_dom_columns].sum(axis=1)
-    ) / (np.max(data[bid_dom_columns], axis=1) * l1_level_to_watch)
+    data["DOMSumAsk_" + str(l1_level_to_watch) + "_Shape"] = ( data[ask_dom_columns].sum(axis=1)) / (np.max(data[ask_dom_columns], axis=1) * l1_level_to_watch)
+    data["DOMSumBid_" + str(l1_level_to_watch) + "_Shape"] = ( data[bid_dom_columns].sum(axis=1)) / (np.max(data[bid_dom_columns], axis=1) * l1_level_to_watch)
 
     return data
+
+

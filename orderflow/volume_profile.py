@@ -4,7 +4,9 @@ import operator
 from tqdm import tqdm
 
 
-def get_dynamic_vp(data: pd.DataFrame) -> pd.DataFrame:
+def get_dynamic_cumulative_delta(
+    data: pd.DataFrame
+) -> pd.DataFrame:
 
     """
     Given the canonical dataframe recorded, this function returns a dataframe with volume in ASK / BID restarted at the
@@ -53,7 +55,7 @@ def get_dynamic_vp(data: pd.DataFrame) -> pd.DataFrame:
     return datas
 
 
-def get_dynamic_vp_with_volume_filter(
+def get_dynamic_cumulative_delta_with_volume_filter(
     data: pd.DataFrame, volume_filter: int
 ) -> pd.DataFrame:
 
@@ -113,7 +115,9 @@ def get_dynamic_vp_with_volume_filter(
     return data.drop(["AskVolume_VP_f", "BidVolume_VP_f", "Index"], axis=1)
 
 
-def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
+def get_daily_moving_POC(
+    df: pd.DataFrame
+) -> np.array:
 
     """
     Given the canonical dataframe recorded, this function returns the Point of Control (i.e. POC) that is moving during

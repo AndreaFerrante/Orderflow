@@ -143,7 +143,9 @@ def plot_half_hour_volume(
     plt.tight_layout()
 
 
-def get_volume_distribution(data: pd.DataFrame) -> pd.DataFrame:
+def get_volume_distribution(
+    data: pd.DataFrame
+) -> pd.DataFrame:
 
     value_counts_num = pd.DataFrame(data["Volume"].value_counts()).reset_index()
     value_counts_num = value_counts_num.rename(

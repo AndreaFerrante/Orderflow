@@ -5,7 +5,7 @@ import numpy as np
 def identify_WG_position(data: pd.DataFrame) -> pd.DataFrame:
 
     """
-    Given usual recordedd data for analysis, this function tells us if the biggest volume on the DOM was on the
+    Given usual recorded data for analysis, this function tells us if the biggest volume on the DOM was on the
     first level of the Depth of the Market (DOM)
     :param data: dataframe with all DOM columns
     :return: given dataframe with WG on ask and bid addition

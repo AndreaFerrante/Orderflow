@@ -9,6 +9,9 @@ def get_tick_size(price: np.array):
 
 
 def update_datetime_signal_index(datetime_all, datetime_signal, index_, signal_idx_):
+
+    # ---> We do not enter if a trade is already in place.
+
     while True:
         try:
             if datetime_signal[signal_idx_] > datetime_all[index_]:
@@ -20,44 +23,58 @@ def update_datetime_signal_index(datetime_all, datetime_signal, index_, signal_i
 
 
 def backtester(
-    datetime_all: np.array,
-    datetime_signal: np.array,
-    price_array: np.array,
-    len_: int,
+    data: pd.DataFrame,
+    signal: pd.DataFrame,
     tp: int,
     sl: int,
-    tick_size: float,
-    tick_value: int,
-    n_contacts: int,
-    commission: int,
-) -> pd.DataFrame:
+    tick_value: float,
+    commission: float = 4,
+    n_contacts: int   = 1
+) -> (pd.DataFrame, pd.DataFrame):
 
-    entry_time_ = []
-    exit_time_ = []
-    entry_price_ = []
-    exit_price_ = []
-    success = 0
-    loss = 0
-    signal_idx = 0
-    entry_counter = 0
-    entry_price = 0
+    if not 'Index' in data.columns:
+        raise Exception('Please, provide DataFrame with Index column !')
 
-    entries_times = np.where(np.isin(datetime_all, datetime_signal), True, False)
+    ############################################
+    len_            = data.shape[0]
+    tick_size       = get_tick_size(data.Price)
+    price_array     = np.array(data.Price)
+    datetime_all    = np.array(data.Index)
+    datetime_signal = np.array(signal.Index)
+    ############################################
+
+    entry_time_     = []
+    exit_time_      = []
+    entry_index_    = []
+    exit_index_     = []
+    entry_price_    = []
+    exit_price_     = []
+    success         = 0
+    loss            = 0
+    signal_idx      = 0
+    entry_counter   = 0
+    entry_price     = 0
+
+    #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
+    entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
+    ###############################################################################
 
     for i in tqdm(range(len_)):
 
-        # if datetime_all[i] == datetime_signal[signal_idx] and entry_price == 0:
         if entries_times[i] and entry_price == 0:
 
             entry_counter += 1
-            entry_price = price_array[i]
-            entry_time_.append(datetime_signal[signal_idx])
-            entry_price_.append(entry_price)
+            entry_price    = price_array[i]
+            entry_index_.append( datetime_signal[signal_idx] )
+            entry_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+            entry_price_.append( entry_price )
 
         elif entry_price != 0:
+
             if entry_price - price_array[i] >= sl * tick_size:
-                exit_time_.append(datetime_all[i])
-                exit_price_.append(price_array[i])
+                exit_index_.append( datetime_all[i] )
+                exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                exit_price_.append( price_array[i] )
                 entry_price = 0
                 loss += 1
 
@@ -67,8 +84,9 @@ def backtester(
                     )
 
             elif price_array[i] - entry_price >= tp * tick_size:
-                exit_time_.append(datetime_all[i])
-                exit_price_.append(price_array[i])
+                exit_index_.append( datetime_all[i] )
+                exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                exit_price_.append( price_array[i] )
                 entry_price = 0
                 success += 1
 
@@ -77,20 +95,20 @@ def backtester(
                         datetime_all, datetime_signal, i, signal_idx
                     )
 
-    profit_ = success * tp * n_contacts * tick_value
-    loss_ = loss * sl * n_contacts * tick_value
+    profit_     = success * tp * n_contacts * tick_value
+    loss_       = loss * sl * n_contacts * tick_value
     commission_ = entry_counter * n_contacts * commission
     net_profit_ = profit_ - loss_ - commission_
 
     print("\n")
     print(
-        "-- SUCCESS PROFIT",
+        "-- PROFIT:",
         profit_,
         "\n",
-        "-- LOSS PROFIT",
+        "-- LOSS: ",
         loss_,
         "\n",
-        "-- COMMISSIONS",
+        "-- COMMISSIONS: ",
         commission_,
         "\n",
         "-- NET PROFIT",
@@ -100,11 +118,38 @@ def backtester(
         entry_counter,
     )
 
-    return pd.DataFrame(
-        {
-            "ENTRY_TIMES": entry_time_,
-            "EXIT_TIMES": exit_time_,
-            "ENTRY_PRICES": entry_price_,
-            "EXIT_PRICES": exit_price_,
-        }
-    )
+    backtest =  pd.DataFrame(
+                {
+                    "ENTRY_TIMES":  entry_time_,
+                    "EXIT_TIMES":   exit_time_,
+                    "ENTRY_PRICES": entry_price_,
+                    "EXIT_PRICES":  exit_price_,
+                    "ENTRY_INDEX":  entry_index_,
+                    "EXIT_INDEX":   exit_index_
+                }
+            )
+
+    trades = list()
+    for idx, price in enumerate(backtest.ENTRY_PRICES):
+
+        single_trade = data[ (data.Index >= backtest.ENTRY_INDEX[idx]) & (data.Index <= backtest.EXIT_INDEX[idx]) ]
+        single_trade.insert(0, 'TRADE_INDEX', idx)
+        single_trade.insert(1, 'MAE', price - np.min(single_trade.Price))
+        single_trade.insert(2, 'MFE', np.max(single_trade.Price) - price)
+        trades.append( single_trade )
+
+    return backtest, pd.concat( trades, axis=0 )
+
+
+
+
+#############################################
+# DRIVER CODE
+
+data = ticker
+backtest, trades   = backtester(data,
+                                long,
+                                tp = 3,
+                                sl = 8,
+                                tick_value = 12.5,
+                                n_contacts = 5)

@@ -1,3 +1,7 @@
+from backtester import (
+    backtester
+)
+
 from orderflow._volume_factory import (
     prepare_data,
     get_tickers_in_folder,

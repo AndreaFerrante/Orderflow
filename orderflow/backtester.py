@@ -32,6 +32,19 @@ def backtester(
     n_contacts: int   = 1
 ) -> (pd.DataFrame, pd.DataFrame):
 
+    '''
+    This function is a high speed for loop to tick by tick check all the trades given take profit and stop loss.
+
+    :param data: canonical tick by tick recorder dataset
+    :param signal: dataframe of the all signals occured
+    :param tp: take profit in ticks
+    :param sl: stop loss in ticks
+    :param tick_value: single tick value (e.g. for the ES ticker, tick_value=12.5 dollars)
+    :param commission: commission value per dollars
+    :param n_contacts: number of contracts per entry
+    :return: 2 dataframes: one for the backtest, and one with all single dataframes ticks
+    '''
+
     if not 'Index' in data.columns:
         raise Exception('Please, provide DataFrame with Index column !')
 

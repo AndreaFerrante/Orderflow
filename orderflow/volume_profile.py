@@ -113,7 +113,7 @@ def get_dynamic_cumulative_delta_with_volume_filter(
     return data.drop(["AskVolume_VP_f", "BidVolume_VP_f", "Index"], axis=1)
 
 
-def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
+def get_daily_moving_POC(df: pd.DataFrame) -> pd.DataFrame:
 
     """
     Given the canonical dataframe recorded, this function returns the Point of Control (i.e. POC) that is moving during
@@ -122,12 +122,12 @@ def get_daily_moving_POC(df: pd.DataFrame) -> np.array:
     :return: numpy array for the daily moving poc
     """
 
-    volume = np.array(df.Volume)
-    price = np.array(df.Price)
-    date = np.array(df.Date)
+    volume    = np.array(df.Volume)
+    price     = np.array(df.Price)
+    date      = np.array(df.Date)
     poc_final = {}
-    len_ = len(price)
-    poc_ = np.zeros(len_)
+    len_      = len(price)
+    poc_      = np.zeros(len_)
 
     poc_final[price[0]] = volume[0]
     poc_[0] = price[0]

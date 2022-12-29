@@ -28,7 +28,7 @@ def backtester(
     tp: int,
     sl: int,
     tick_value: float,
-    commission: float = 4,
+    commission: float = 4.5,
     n_contacts: int   = 1
 ) -> (pd.DataFrame, pd.DataFrame):
 
@@ -83,7 +83,7 @@ def backtester(
                         datetime_all, datetime_signal, i, signal_idx
                     )
 
-            elif price_array[i] - entry_price >= tp * tick_size:
+            elif price_array[i] - entry_price > tp * tick_size:
                 exit_index_.append( datetime_all[i] )
                 exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
                 exit_price_.append( price_array[i] )
@@ -116,6 +116,9 @@ def backtester(
         "\n",
         "-- TOTAL TRADES",
         entry_counter,
+        "\n",
+        "-- PROFIT NET FACTOR",
+        round( net_profit_ / loss_, 2 ),
     )
 
     backtest =  pd.DataFrame(
@@ -132,10 +135,11 @@ def backtester(
     trades = list()
     for idx, price in enumerate(backtest.ENTRY_PRICES):
 
-        single_trade = data[ (data.Index >= backtest.ENTRY_INDEX[idx]) & (data.Index <= backtest.EXIT_INDEX[idx]) ]
+        single_trade = data[ ( data.Index >= backtest.ENTRY_INDEX[idx] ) & ( data.Index <= backtest.EXIT_INDEX[idx] ) ]
         single_trade.insert(0, 'TRADE_INDEX', idx)
         single_trade.insert(1, 'MAE', price - np.min(single_trade.Price))
         single_trade.insert(2, 'MFE', np.max(single_trade.Price) - price)
+        single_trade.insert(3, 'TRADE_DIRECTION', 'Long')
         trades.append( single_trade )
 
     return backtest, pd.concat( trades, axis=0 )
@@ -143,13 +147,3 @@ def backtester(
 
 
 
-#############################################
-# DRIVER CODE
-
-data = ticker
-backtest, trades   = backtester(data,
-                                long,
-                                tp = 3,
-                                sl = 8,
-                                tick_value = 12.5,
-                                n_contacts = 5)

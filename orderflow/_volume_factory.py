@@ -104,7 +104,7 @@ def get_tickers_in_folder(
 
 
 def get_orders_in_row(
-    trades: pd.DataFrame, seconds_split: int=2
+    trades: pd.DataFrame, seconds_split: int=1
 ) -> pd.DataFrame:
 
     '''
@@ -113,9 +113,6 @@ def get_orders_in_row(
     :param seconds_split: seconds to measure the speed of the tape
     :return: anxiety over the market on both ask/bid sides
     '''
-
-    # seconds_split = 2
-    # trades = pd.concat([big_shoot_ask, big_shoot_bid], axis=0)
 
     present = 0
     for el in ['Date', 'Time']:

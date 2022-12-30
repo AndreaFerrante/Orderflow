@@ -103,6 +103,94 @@ def get_tickers_in_folder(
     return stacked.sort(["Date", "Time"]).to_pandas()
 
 
+def get_orders_in_row(
+    trades: pd.DataFrame, seconds_split: int=2
+) -> pd.DataFrame:
+
+    '''
+    This function gets prints "anxiety" over the tape :-)
+    :param trades: canonical trades executed
+    :param seconds_split: seconds to measure the speed of the tape
+    :return: anxiety over the market on both ask/bid sides
+    '''
+
+    # seconds_split = 2
+    # trades = pd.concat([big_shoot_ask, big_shoot_bid], axis=0)
+
+    present = 0
+    for el in ['Date', 'Time']:
+        if el in trades.columns:
+            present += 1
+
+    if present < 2:
+        raise Exception('Please, provide a trade dataframe that has Date and Time columns')
+
+    if 'Datetime' not in trades.columns:
+        trades.insert( 0, 'Datetime', pd.to_datetime( trades['Date'] + ' ' + trades['Time'] ) )
+        trades.sort_values(['Datetime'], ascending=True, inplace=True)
+    elif 'Datetime' in trades.columns:
+        trades.sort_values(['Datetime'], ascending=True, inplace=True)
+
+    def manage_speed_of_tape(trades_on_on_side:pd.DataFrame,
+                             side: int = 2) -> pd.DataFrame:
+
+        trades_on_on_side = trades_on_on_side[ (trades_on_on_side.TradeType == side) ]
+        trades_on_on_side.sort_values(['Datetime'], ascending=True, inplace=True)
+
+        vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
+        len_ = trades_on_on_side.shape[0]
+        i    = 0
+
+        while i < len_:
+
+            start_time = trades_on_on_side.Datetime[i]
+            start_vol  = trades_on_on_side.Volume[i]
+            counter    = 0
+
+            for j in range(i + 1, len_):
+                delta_time = trades_on_on_side.Datetime[j] - start_time
+                ##############################################
+                if delta_time.total_seconds() <= seconds_split:
+                    start_vol += trades_on_on_side.Volume[j]
+                    counter   += 1
+                else:
+                    break
+                ##############################################
+
+            if counter:
+                vol_.append(   start_vol)
+                dt_.append(    trades_on_on_side.Datetime[j - 1])
+                price_.append( trades_on_on_side.Price[j - 1])
+                idx_.append(   trades_on_on_side.Index[j - 1])
+                count_.append( counter + 1)
+                i = i + counter + 1
+            else:
+                i += 1
+
+        res = pd.DataFrame({'LastDatetime': dt_,
+                            'Volume':       vol_,
+                            'Counter':      count_,
+                            'Price':        price_,
+                            'Side':         [side] * len(price_),
+                            'Index':        idx_})
+
+        return res
+
+    # Manage speed of tape on the ASK, first
+    try:
+        ask = manage_speed_of_tape(trades, 2)
+    except Exception as e:
+        print(e)
+
+    # Manage speed of tape on the BID, secondly.
+    try:
+        bid = manage_speed_of_tape(trades, 1)
+    except Exception as e:
+        print(e)
+
+    return pd.concat( [ask, bid], axis=0).sort_values(['LastDatetime'], ascending=True)
+
+
 def plot_half_hour_volume(
     data_already_read: bool,
     data: pd.DataFrame,

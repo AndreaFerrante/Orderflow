@@ -196,12 +196,9 @@ def backtester(
         single_trade.insert(0, 'TRADE_INDEX', idx + 1)
         single_trade.insert(1, 'MAE', price - np.min(single_trade.Price))
         single_trade.insert(2, 'MFE', np.max(single_trade.Price) - price)
-        single_trade.insert(3, 'TRADE_DIRECTION', 'Long')
+        single_trade.insert(3, 'TRADE_DIRECTION', backtest.TRADE_GAIN[idx])
         trades.append( single_trade )
 
-    return backtest, pd.concat( trades, axis=0 )
-
-
-
+    return backtest, trades
 
 

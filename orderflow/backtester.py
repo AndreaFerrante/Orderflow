@@ -48,6 +48,14 @@ def backtester(
     if not 'Index' in data.columns:
         raise Exception('Please, provide DataFrame with Index column !')
 
+    present = 0
+    for el in ['Date', 'Time']:
+        if el in data.columns:
+            present += 1
+
+    if present < 2:
+        raise Exception('Please, provide a dataset with Date and Time columns.')
+
     ############################################
     len_             = data.shape[0]
     tick_size        = get_tick_size(data.Price)
@@ -74,6 +82,7 @@ def backtester(
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
     ###############################################################################
 
+    print('\n')
     for i in tqdm(range(len_)):
 
         if entries_times[i] and not entry_price:
@@ -143,7 +152,6 @@ def backtester(
                         datetime_all, datetime_signal, i, signal_idx
                     )
 
-
     profit_     = success * tp * n_contacts * tick_value
     loss_       = loss * sl * n_contacts * tick_value
     commission_ = entry_counter * n_contacts * commission
@@ -168,6 +176,15 @@ def backtester(
         "\n",
         "-- PROFIT NET FACTOR",
         round( net_profit_ / loss_, 2 ),
+        "\n",
+        "-- MIN DATE",
+        data.Date.min(),
+        "\n",
+        "-- MAX DATE",
+        data.Date.max(),
+        "\n",
+        "-- NUM. DATES",
+        len( data.Date.unique() ),
     )
 
     # Define backtest results here...

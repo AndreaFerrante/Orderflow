@@ -160,22 +160,25 @@ def backtester(
     print("\n")
     print(
         "-- PROFIT:",
-        profit_,
+        round(profit_, 2),
         "\n",
         "-- LOSS: ",
-        loss_,
+        round(loss_, 2),
         "\n",
         "-- COMMISSIONS: ",
-        commission_,
+        round(commission_, 2),
         "\n",
         "-- NET PROFIT",
-        net_profit_,
+        round(net_profit_, 2),
         "\n",
         "-- TOTAL TRADES",
         entry_counter,
         "\n",
         "-- PROFIT NET FACTOR",
         round( net_profit_ / loss_, 2 ),
+        "\n",
+        "-- PROFIT RATE",
+        round( success / (success + loss), 2),
         "\n",
         "-- MIN DATE",
         data.Date.min(),
@@ -185,6 +188,9 @@ def backtester(
         "\n",
         "-- NUM. DATES",
         len( data.Date.unique() ),
+        "\n",
+        "-- NUM. CONTRACTS",
+        n_contacts,
     )
 
     # Define backtest results here...
@@ -213,9 +219,11 @@ def backtester(
         single_trade.insert(0, 'TRADE_INDEX', idx + 1)
         single_trade.insert(1, 'MAE', price - np.min(single_trade.Price))
         single_trade.insert(2, 'MFE', np.max(single_trade.Price) - price)
-        single_trade.insert(3, 'TRADE_DIRECTION', backtest.TRADE_GAIN[idx])
+        single_trade.insert(3, 'TRADE_DIRECTION', backtest.ORDER_TYPE[idx])
         trades.append( single_trade )
 
     return backtest, trades
+
+
 
 

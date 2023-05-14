@@ -1,4 +1,5 @@
 from tqdm import tqdm
+import random
 import numpy as np
 import pandas as pd
 
@@ -29,7 +30,8 @@ def backtester(
     sl: int,
     tick_value: float,
     commission: float = 4.5,
-    n_contacts: int   = 1
+    n_contacts: int   = 1,
+    slippage_max: int = 0
 ) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -88,8 +90,16 @@ def backtester(
         if entries_times[i] and not entry_price:
 
             entry_counter += 1
-            entry_price    = price_array[i]
             trade_type     = signal_tradetype[signal_idx]
+
+            ####################################################################
+            # Let's add slippage given the type of entry (1 == short, 2 == long)
+            if trade_type == 1:
+                entry_price = price_array[i] - tick_size * random.randint(0, slippage_max)
+            else:
+                entry_price = price_array[i] + tick_size * random.randint(0, slippage_max)
+            ####################################################################
+
             entry_index_.append( datetime_signal[signal_idx] )
             entry_time_.append(  data.Date[i] + ' ' + data.Time[i] )
             entry_price_.append( entry_price )

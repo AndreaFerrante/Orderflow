@@ -3,7 +3,6 @@ import random
 import numpy as np
 import pandas as pd
 
-
 def get_tick_size(price: np.array):
     prices = pd.Series(price).unique()
     return abs(prices[0] - prices[1])
@@ -67,18 +66,19 @@ def backtester(
     signal_tradetype = np.array(signal.TradeType)
     ############################################
 
-    entry_time_     = []
-    exit_time_      = []
-    entry_index_    = []
-    exit_index_     = []
-    entry_price_    = []
-    entry_type_     = []
-    exit_price_     = []
-    success         = 0
-    loss            = 0
-    signal_idx      = 0
-    entry_counter   = 0
-    entry_price     = 0
+    entry_time_      = []
+    exit_time_       = []
+    entry_index_     = []
+    exit_index_      = []
+    entry_price_     = []
+    entry_price_pure = []
+    entry_type_      = []
+    exit_price_      = []
+    success          = 0
+    loss             = 0
+    signal_idx       = 0
+    entry_counter    = 0
+    entry_price      = 0.0
 
     #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
@@ -95,14 +95,19 @@ def backtester(
             ####################################################################
             # Let's add slippage given the type of entry (1 == short, 2 == long)
             if trade_type == 1:
-                entry_price = price_array[i] - tick_size * random.randint(0, slippage_max)
+                slippage    = float(tick_size * random.randint(0, slippage_max))
+                entry_price = float(price_array[i]) - slippage
+                print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             else:
-                entry_price = price_array[i] + tick_size * random.randint(0, slippage_max)
+                slippage    = float(tick_size * random.randint(0, slippage_max))
+                entry_price = float(price_array[i]) + slippage
+                print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             ####################################################################
 
             entry_index_.append( datetime_signal[signal_idx] )
             entry_time_.append(  data.Date[i] + ' ' + data.Time[i] )
             entry_price_.append( entry_price )
+            entry_price_pure.append( price_array[i] )
 
         # ---> Long trade...
         elif entry_price != 0 and trade_type == 2:
@@ -206,24 +211,25 @@ def backtester(
     # Define backtest results here...
     backtest =  pd.DataFrame(
                 {
-                    "ENTRY_TIMES":  entry_time_,
-                    "EXIT_TIMES":   exit_time_,
-                    "ENTRY_PRICES": entry_price_,
-                    "EXIT_PRICES":  exit_price_,
-                    "ENTRY_INDEX":  entry_index_,
-                    "EXIT_INDEX":   exit_index_,
-                    "ORDER_TYPE":   entry_type_
+                    "ENTRY_TIMES":           entry_time_,
+                    "EXIT_TIMES":            exit_time_,
+                    "ENTRY_PRICES_SLIPPAGE": entry_price_,
+                    "ENTRY_PRICES_PURE":     entry_price_pure,
+                    "EXIT_PRICES":           exit_price_,
+                    "ENTRY_INDEX":           entry_index_,
+                    "EXIT_INDEX":            exit_index_,
+                    "ORDER_TYPE":            entry_type_
                 }
             )
     backtest.insert(0, 'TRADE_INDEX', np.arange(1, backtest.shape[0] + 1, 1))
     backtest = backtest.assign(TRADE_GAIN = np.where( backtest.ORDER_TYPE == 'LONG',
-                                                      backtest.EXIT_PRICES  - backtest.ENTRY_PRICES,
-                                                      backtest.ENTRY_PRICES - backtest.EXIT_PRICES))
+                                                      backtest.EXIT_PRICES  - backtest.ENTRY_PRICES_SLIPPAGE,
+                                                      backtest.ENTRY_PRICES_SLIPPAGE - backtest.EXIT_PRICES))
 
 
     # Define single trade snapshots here...
     trades = list()
-    for idx, price in enumerate(backtest.ENTRY_PRICES):
+    for idx, price in enumerate(backtest.ENTRY_PRICES_SLIPPAGE):
 
         single_trade = data[ ( data.Index >= backtest.ENTRY_INDEX[idx] ) & ( data.Index <= backtest.EXIT_INDEX[idx] ) ]
         single_trade.insert(0, 'TRADE_INDEX', idx + 1)

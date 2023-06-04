@@ -97,11 +97,11 @@ def backtester(
             if trade_type == 1:
                 slippage    = float(tick_size * random.randint(0, slippage_max))
                 entry_price = float(price_array[i]) - slippage
-                print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
+                #print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             else:
                 slippage    = float(tick_size * random.randint(0, slippage_max))
                 entry_price = float(price_array[i]) + slippage
-                print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
+                #print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             ####################################################################
 
             entry_index_.append( datetime_signal[signal_idx] )

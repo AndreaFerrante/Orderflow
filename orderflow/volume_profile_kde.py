@@ -3,6 +3,18 @@ import numpy as np
 from tqdm import tqdm
 
 
+def get_vol_dict(p_, v_):
+    dict_vp = dict()
+    all_el = len(p_)
+
+    for i in tqdm(range(all_el)):
+
+        if p_[i] in dict_vp.keys():
+            dict_vp[p_[i]] += v_[i]
+        else:
+            dict_vp[p_[i]] = v_[i]
+
+
 def gaussian_kde(source:np.array, weight:np.array, h:float=1.0):
 
     '''
@@ -46,7 +58,7 @@ def gaussian_kde(source:np.array, weight:np.array, h:float=1.0):
 
 
 
-def get_peak_valleys():
+def get_peak_valleys(kde_price):
 
     '''
     A peak is where both on the left and on the right of the KDE curve is smaller than the peak itself.

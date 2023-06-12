@@ -3,16 +3,19 @@ import numpy as np
 from tqdm import tqdm
 
 
-def get_vol_dict(p_, v_):
+def get_vol_dict(p_:np.array, v_:np.array):
+
     dict_vp = dict()
     all_el = len(p_)
 
-    for i in tqdm(range(all_el)):
+    for i in range(all_el):
 
         if p_[i] in dict_vp.keys():
             dict_vp[p_[i]] += v_[i]
         else:
             dict_vp[p_[i]] = v_[i]
+
+    return dict_vp
 
 
 def gaussian_kde(source:np.array, weight:np.array, h:float=1.0):
@@ -57,7 +60,6 @@ def gaussian_kde(source:np.array, weight:np.array, h:float=1.0):
     return kde_result
 
 
-
 def get_peak_valleys(kde_price):
 
     '''
@@ -66,6 +68,7 @@ def get_peak_valleys(kde_price):
     '''
 
     pass
+
 
 
 

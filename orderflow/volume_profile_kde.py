@@ -1,5 +1,7 @@
+import math
 from collections import deque
 import numpy as np
+from pytictoc import TicToc
 from tqdm import tqdm
 
 
@@ -31,13 +33,12 @@ def gaussian_kde(source:np.array, weight:np.array, h:float=1.0):
     h: standard deviation (i.e. the "length") of the Gaussian Kernel (e.g. 1 for white noise)
     '''
 
-    kde_result = deque()
+    len_source = len(source)
+    kde_result = np.zeros(len_source)
 
-    if len(source) == 0:
+    if len_source == 0:
         return kde_result
 
-    len_source = len(source)
-    len_weight = len(weight)
     jelem, ielem, expo = 0, 0, 0
 
     ###############################################
@@ -45,30 +46,42 @@ def gaussian_kde(source:np.array, weight:np.array, h:float=1.0):
     g_const *= 1 / (len_source * h)
     ###############################################
 
-    print(f'\nPerforming Gaussian KDE, please wait.\n')
-
-    for j in tqdm(range(len_source)):
-        for i in range(len_weight):
-            expo  = (source[j] - source[i]) / h
-            ielem = g_const * np.exp(-0.5 * (expo ** 2))
+    t = TicToc()
+    t.tic()
+    for j in range(len_source):
+        for i in range(len_source):
+            expo = (source[j] - source[i]) / h
+            ielem = g_const * math.exp(-0.5 * pow(expo, 2))
             if weight[i]:
                 ielem *= weight[i]
             jelem += ielem
-        kde_result.append(jelem)
+        kde_result[j] = (jelem)
         jelem = 0
+    t.toc()
 
     return kde_result
 
 
-def get_peak_valleys(kde_price):
+def gaussian_kde_2(source: np.array, weight: np.array, h: float = 1.0):
+    len_source = len(source)
+    kde_result = np.zeros(len_source)
 
-    '''
-    A peak is where both on the left and on the right of the KDE curve is smaller than the peak itself.
-    A valley is where both on the left and on the right of the KDE curve is bigger than the peak itself.
-    '''
+    if len_source == 0:
+        return kde_result
 
-    pass
+    g_const = 1 / (np.sqrt(2 * np.pi))
+    g_const *= 1 / (len_source * h)
 
+    # crea una matrice di tutte le differenze possibili tra gli elementi di source divise per h.
+    # L'uso di np.newaxis crea un'asse aggiuntiva per consentire il broadcasting.
+    expo = (source[:, np.newaxis] - source) / h
+    # applica l'esponenziale a tutti gli elementi della matrice
+    ielem = g_const * np.exp(-0.5 * np.power(expo, 2))
+    # Broadcasting weight array
+    ielem *= weight[:, np.newaxis]
+    # somma gli elementi lungo l'asse delle colonne
+    jelem = np.sum(ielem, axis=1)
 
+    kde_result = jelem
 
-
+    return kde_result

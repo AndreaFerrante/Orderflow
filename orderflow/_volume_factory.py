@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datatable import fread, f
 from tqdm import tqdm
+from orderflow.configuration import *
 
 
 def half_hour(x) -> str:
@@ -64,7 +65,7 @@ def get_longest_columns_dataframe(
 
 
 def get_tickers_in_folder(
-    path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999
+    path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999, offset:int = 0
 ) -> pd.DataFrame:
 
     """
@@ -74,6 +75,7 @@ def get_tickers_in_folder(
     :param ticker: ticker to read in the form of ES, ZN, ZB, AAPL, MSFT. . .
     :param cols: columns to import...
     :param break_at: how many ticker files do we have to read ?
+    :param offset: offset to a created datetime column
     :return: DataFrame of all read ticker files
 
     Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
@@ -90,17 +92,32 @@ def get_tickers_in_folder(
 
         print(f"Reading file {file} ...")
 
-        read_file = fread(os.path.join(path, file), sep=";", fill=True)
-        read_file = read_file[:, list(cols)]    # Select all rows and specific columns...
-        read_file["Date"] = datatable.str64     # Convert string for filtering...
-        read_file["Price"] = datatable.float64  # Convert float for filtering...
-        read_file = read_file[(f.Date != "1899-12-30") & (f.Price != 0), :]  # Filter impurities...
+        read_file          = fread(os.path.join(path, file), sep=";", fill=True)
+        read_file          = read_file[:, list(cols)]    # Select all rows and specific columns...
+        read_file["Date"]  = datatable.str64             # Convert string for filtering...
+        read_file["Price"] = datatable.float64           # Convert float for filtering...
+        read_file          = read_file[(f.Date != "1899-12-30") & (f.Price != 0), :]  # Filter impurities...
         stacked.rbind(read_file)
 
         if idx >= break_at:
-            return stacked.sort(["Date", "Time"]).to_pandas()
+            break
 
-    return stacked.sort(["Date", "Time"]).to_pandas()
+    if offset:
+        stacked['Date'] = datatable.Type.str32
+        stacked['Time'] = datatable.Type.str32
+        stacked[:, 'Datetime'] = stacked[:, datatable.f.Date + ' ' + datatable.f.Time]
+        stacked['Datetime'] = datatable.Type.time64
+        ########################################################################
+        date_time = np.array(stacked['Datetime'].to_list(), dtype='datetime64')
+        date_time = date_time - np.timedelta64(offset, 'h')
+
+        del stacked[:, 'Datetime'] # Let's leave only the datetime offset...
+        stacked[:, 'Datetime_Offset'] = date_time[0]
+        stacked.names = {'Datetime_Offset':'Datetime'}
+        ########################################################################
+        return stacked.sort(["Date", "Time"]).to_pandas()
+    else:
+        return stacked.sort(["Date", "Time"]).to_pandas()
 
 
 def get_orders_in_row(
@@ -277,6 +294,35 @@ def get_new_start_date(
     data['DayStart']     = np.where(data.Date != data.Date_Shift, 1, 0)
 
     return data.drop(['Date_Shift'], axis=1)
+
+
+def get_market_evening_session(data:pd.DataFrame):
+
+    '''
+    This function defines session start and end given Chicago Time.
+    Pass to this function a DataFrame with Datetime offset !
+    '''
+
+    condlist   = [(data.Datetime.dt.time >= SESSION_START_TIME) & (data.Datetime.dt.time <= SESSION_END_TIME),
+                  (data.Datetime.dt.time <= SESSION_START_TIME) | (data.Datetime.dt.time >= SESSION_END_TIME)]
+    choicelist = ['RTH', 'ETH']
+
+    return np.select(condlist, choicelist)
+
+
+def print_constants():
+
+    print(SESSION_START_TIME)
+    print(SESSION_END_TIME)
+    print(EVENING_START_TIME)
+    print(EVENING_END_TIME)
+    print(KDE_VARIANCE_VALUE)
+    print(VALUE_AREA)
+    print(VWAP_BAND_OFFSET_1)
+    print(VWAP_BAND_OFFSET_2)
+    print(VWAP_BAND_OFFSET_3)
+    print(VWAP_BAND_OFFSET_4)
+
 
 
 

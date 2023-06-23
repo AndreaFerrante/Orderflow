@@ -29,6 +29,13 @@ from orderflow.volume_profile import (
     get_dynamic_cumulative_delta,
     get_dynamic_cumulative_delta_with_volume_filter,
     get_daily_moving_POC,
+    get_volume_profile_areas,
+    get_volume_profile_peaks_valleys
+)
+
+from orderflow.volume_profile_kde import (
+    gaussian_kde_2,
+    gaussian_kde
 )
 
 from orderflow.vwap import (

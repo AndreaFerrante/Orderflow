@@ -26,7 +26,7 @@ SESSION_START_TIME     = pd.to_datetime('08:30:00', format='%H:%M:%S').time() # 
 SESSION_END_TIME       = pd.to_datetime('15:14:59', format='%H:%M:%S').time() # Chicago timezone
 EVENING_START_TIME     = pd.to_datetime('15:15:00', format='%H:%M:%S').time() # Chicago timezone
 EVENING_END_TIME       = pd.to_datetime('08:29:59', format='%H:%M:%S').time() # Chicago timezone
-KDE_VARIANCE_VALUE     = 0.5
+KDE_VARIANCE_VALUE     = 0.9
 VALUE_AREA             = 0.68
 VWAP_BAND_OFFSET_1     = 1
 VWAP_BAND_OFFSET_2     = 2

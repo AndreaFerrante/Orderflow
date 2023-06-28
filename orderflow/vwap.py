@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import math
 from tqdm import tqdm
-from orderflow.configuration import *
-
+from .configuration import *
+from .exceptions import SessionTypeAbsent
 
 
 def get_vwap(data: pd.DataFrame) -> pd.DataFrame:
@@ -15,6 +15,9 @@ def get_vwap(data: pd.DataFrame) -> pd.DataFrame:
     must be the following: SessionType)
     :return: DataFrame of the VWAP and 4 VWAP bands via variance.
     """
+
+    if 'SessionType' not in data.columns:
+        raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
     price     = np.array(data.Price)
     volume    = np.array(data.Volume)
@@ -40,7 +43,6 @@ def get_vwap(data: pd.DataFrame) -> pd.DataFrame:
 
         ########################################################################################################
         if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
-            vwap[i]      = price[i]
             sum_pri_vol  = 0
             sum_vol      = 0
             sum_price_vwap_difference_squared_times_volume = 0
@@ -81,10 +83,12 @@ def get_vwap(data: pd.DataFrame) -> pd.DataFrame:
     vwap_sd4_top[0]    = price[0]
     vwap_sd4_bottom[0] = price[0]
 
+
     result_df = pd.DataFrame({'vwap': vwap,
                               'vwap_sd1_top': vwap_sd1_top, 'vwap_sd1_bottom': vwap_sd1_bottom,
                               'vwap_sd2_top': vwap_sd2_top, 'vwap_sd2_bottom': vwap_sd2_bottom,
                               'vwap_sd3_top': vwap_sd3_top, 'vwap_sd3_bottom': vwap_sd3_bottom,
                               'vwap_sd4_top': vwap_sd4_top, 'vwap_sd4_bottom': vwap_sd4_bottom})
+
 
     return result_df

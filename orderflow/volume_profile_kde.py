@@ -1,7 +1,6 @@
 import math
-from collections import deque
+from numba import jit
 import numpy as np
-from pytictoc import TicToc
 from tqdm import tqdm
 
 
@@ -46,8 +45,6 @@ def gaussian_kde(source:np.array, weight:np.array, h:float=1.0):
     g_const *= 1 / (len_source * h)
     ###############################################
 
-    t = TicToc()
-    t.tic()
     for j in range(len_source):
         for i in range(len_source):
             expo = (source[j] - source[i]) / h
@@ -57,19 +54,25 @@ def gaussian_kde(source:np.array, weight:np.array, h:float=1.0):
             jelem += ielem
         kde_result[j] = (jelem)
         jelem = 0
-    t.toc()
 
     return kde_result
 
 
-def gaussian_kde_2(source: np.array, weight: np.array, h: float = 1.0):
+def gaussian_kde_vectorized(source: np.array, weight: np.array, h: float = 1.0):
+
+    '''
+    source : lista dei prezzi
+    weight : lista volume
+    h : banda (i.e. varianza)
+    '''
+
     len_source = len(source)
     kde_result = np.zeros(len_source)
 
     if len_source == 0:
         return kde_result
 
-    g_const = 1 / (np.sqrt(2 * np.pi))
+    g_const  = 1 / (np.sqrt(2 * np.pi))
     g_const *= 1 / (len_source * h)
 
     # crea una matrice di tutte le differenze possibili tra gli elementi di source divise per h.
@@ -78,10 +81,30 @@ def gaussian_kde_2(source: np.array, weight: np.array, h: float = 1.0):
     # applica l'esponenziale a tutti gli elementi della matrice
     ielem = g_const * np.exp(-0.5 * np.power(expo, 2))
     # Broadcasting weight array
-    ielem *= weight[:, np.newaxis]
+    # ielem *= weight[:, np.newaxis]
+    ielem = np.multiply(ielem, weight)
     # somma gli elementi lungo l'asse delle colonne
     jelem = np.sum(ielem, axis=1)
 
     kde_result = jelem
 
     return kde_result
+
+
+@jit(nopython=True, fastmath=True)
+def gaussian_kde_numba(source: np.array, weight: np.array, h: float = 1.0):
+
+    len_source = np.shape(source)[0]
+
+    g_const  = 1 / (np.sqrt(2 * np.pi))
+    g_const *= 1 / (len_source * h)
+
+    expo  = (source[:, np.newaxis] - source) / h
+    ielem = g_const * np.exp(-0.5 * np.power(expo, 2))
+    ielem = np.multiply(ielem, weight)
+    jelem = np.sum(ielem, axis=1)
+
+    return jelem
+
+
+

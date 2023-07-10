@@ -5,6 +5,7 @@ from orderflow.backtester import (
 from orderflow._volume_factory import (
     prepare_data,
     get_tickers_in_folder,
+    get_tickers_in_pg_table,
     plot_half_hour_volume,
     get_volume_distribution,
     get_new_start_date,
@@ -37,7 +38,8 @@ from orderflow.volume_profile import (
 from orderflow.volume_profile_kde import (
     gaussian_kde,
     gaussian_kde_vectorized,
-    gaussian_kde_numba
+    gaussian_kde_numba,
+    get_kde_high_low_price_peaks
 )
 
 from orderflow.vwap import (

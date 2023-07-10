@@ -93,18 +93,37 @@ def gaussian_kde_vectorized(source: np.array, weight: np.array, h: float = 1.0):
 
 @jit(nopython=True, fastmath=True)
 def gaussian_kde_numba(source: np.array, weight: np.array, h: float = 1.0):
-
     len_source = np.shape(source)[0]
 
-    g_const  = 1 / (np.sqrt(2 * np.pi))
+    g_const = 1 / (np.sqrt(2 * np.pi))
     g_const *= 1 / (len_source * h)
 
-    expo  = (source[:, np.newaxis] - source) / h
+    expo = (source[:, np.newaxis] - source) / h
     ielem = g_const * np.exp(-0.5 * np.power(expo, 2))
     ielem = np.multiply(ielem, weight)
     jelem = np.sum(ielem, axis=1)
 
     return jelem
 
+
+@jit(nopython=True, fastmath=True)
+def get_kde_high_low_price_peaks(kde: np.array):
+
+    kde_len = np.shape(kde)[0]
+    if kde_len < 2:
+        return
+
+    begin_end          = np.array([0, kde_len - 1])
+    kde_forward        = np.roll(kde, 1)
+    kde_back           = np.roll(kde, -1)
+    high_peaks_indexes = np.where((kde > kde_forward) & (kde > kde_back))[0]
+    low_peaks_indexes  = np.where((kde < kde_forward) & (kde < kde_back))[0]
+    peaks_indexes      = np.concatenate((begin_end, low_peaks_indexes, high_peaks_indexes))
+
+    #################################################
+    peaks_indexes = np.unique(np.sort(peaks_indexes))
+    #################################################
+
+    return peaks_indexes
 
 

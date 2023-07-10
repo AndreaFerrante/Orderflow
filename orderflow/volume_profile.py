@@ -4,7 +4,7 @@ import operator
 from tqdm import tqdm
 from .exceptions import SessionTypeAbsent
 from .configuration import *
-from .volume_profile_kde import gaussian_kde_numba
+from .volume_profile_kde import gaussian_kde_numba, get_kde_high_low_price_peaks
 
 
 def get_dynamic_cumulative_delta(data: pd.DataFrame) -> pd.DataFrame:
@@ -312,8 +312,7 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
     return value_area
 
 
-def get_volume_profile_peaks_valleys(data: pd.DataFrame) -> np.array:
-
+def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25) -> np.array:
     """
     Given the canonical dataframe recorded, this function returns an array with info if the price is in a peak or valley
     of volumes
@@ -321,16 +320,17 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame) -> np.array:
     :return: numpy array with values: High Peak = 2, High Peak Area = 1, Valley Peak = -2, Valley Peak Area = -1
     """
 
+    print(f"Assign Value Areas peaks and valleys...")
+
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
-    price          = np.array(data.Price)
-    volume         = np.array(data.Volume)
-    session        = np.array(data.SessionType)
-    len_           = len(price)
-    peaks_valleys  = np.zeros(len_)
-    volume_profile = dict()
-
+    price = np.array(data.Price)
+    volume = np.array(data.Volume)
+    session = np.array(data.SessionType)
+    len_ = len(price)
+    peaks_valleys = np.zeros(len_)
+    volume_profile = {}
 
     for i in tqdm(range(len_ - 1)):
 
@@ -344,66 +344,51 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame) -> np.array:
 
         source = np.array(sorted(volume_profile.keys()))
         weight = np.array([volume_profile[key] for key in source])
-        kde    = gaussian_kde_numba(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
+        kde = gaussian_kde_numba(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
+        peaks_indexes = get_kde_high_low_price_peaks(kde)
 
-        if len(kde) > 2:
+        if np.any(peaks_indexes):
 
-            ii             = 0
-            peaks         = []
-            peaks_weight  = []
-            peaks_indexes = []
+            # tick_size           = abs(source[1] - source[0])
+            peaks_volumes = weight[peaks_indexes]
+            peaks_prices = source[peaks_indexes]
+            curr_price_position = np.searchsorted(peaks_prices, price[i])
 
-            for it in source:
+            if curr_price_position == 0 and peaks_volumes[0] >= peaks_volumes[1]:
+                peaks_valleys[i] = 2
+            elif curr_price_position == 0 and peaks_volumes[0] < peaks_volumes[1]:
+                peaks_valleys[i] = -2
+            elif curr_price_position == len(peaks_prices) - 1 and peaks_volumes[-2] > peaks_volumes[-1]:
+                peaks_valleys[i] = -2
+            elif curr_price_position == len(peaks_prices) - 1 and peaks_volumes[-2] <= peaks_volumes[-1]:
+                peaks_valleys[i] = 2
+            elif peaks_prices[curr_price_position] == price[i] and peaks_volumes[curr_price_position] < peaks_volumes[
+                curr_price_position + 1]:
+                peaks_valleys[i] = -2
+            elif peaks_prices[curr_price_position] == price[i] and peaks_volumes[curr_price_position] > peaks_volumes[
+                curr_price_position + 1]:
+                peaks_valleys[i] = 2
+            else:
+                distance_in_element = (peaks_prices[curr_price_position] - peaks_prices[curr_price_position - 1]) / tick_size
+                half_distance_in_element = int(distance_in_element / 2)
 
-                if ii == 0 or ii == len(kde) - 1:
-                    peaks.append(source[ii])
-                    peaks_weight.append(weight[ii])
-                    peaks_indexes.append(ii)
-
+                if price[i] >= source[curr_price_position - half_distance_in_element] and \
+                    peaks_volumes[curr_price_position] > peaks_volumes[curr_price_position - 1]:
+                    peaks_valleys[i] = 1
                 else:
-                    if kde[ii] > kde[ii - 1] and kde[ii] > kde[ii + 1]:
-                        peaks.append(it)
-                        peaks_weight.append(weight[ii])
-                        peaks_indexes.append(ii)
-                        if price[i] == it:
-                            peaks_valleys[i] = 2
-                            break
-                        if price[i] < it:
-                            break
-                    if kde[ii] < kde[ii - 1] and kde[ii] < kde[ii + 1]:
-                        peaks.append(it)
-                        peaks_weight.append(weight[ii])
-                        peaks_indexes.append(ii)
-                        if price[i] == it:
-                            peaks_valleys[i] = -2
-                            break
-                        if price[i] < it:
-                            break
-
-                ii += 1
-
-            if peaks_valleys[i] not in [-2, 2]:
-                tick_size = source[1] - source[0]
-                distance_in_element = (peaks[len(peaks) - 1] - peaks[len(peaks) - 2]) / tick_size
-                if distance_in_element > 0:
-                    half_distance_in_element = int(distance_in_element / 2)
-                    if (price[i] >= source[peaks_indexes[(len(peaks_indexes) - 1)] - half_distance_in_element] and
-                        peaks_weight[len(peaks_weight) - 1] < peaks_weight[len(peaks_weight) - 2]) \
-                            or \
-                            (price[i] < source[peaks_indexes[(len(peaks_indexes) - 1)] - half_distance_in_element] and
-                             peaks_weight[len(peaks_weight) - 1] > peaks_weight[len(peaks_weight) - 2]):
-                        peaks_valleys[i] = -1
-                    elif (price[i] >= source[peaks_indexes[(len(peaks_indexes) - 1)] - half_distance_in_element] and
-                          peaks_weight[len(peaks_weight) - 1] > peaks_weight[len(peaks_weight) - 2]) \
-                            or \
-                            (price[i] < source[peaks_indexes[(len(peaks_indexes) - 1)] - half_distance_in_element] and
-                             peaks_weight[len(peaks_weight) - 1] < peaks_weight[len(peaks_weight) - 2]):
-                        peaks_valleys[i] = 1
-                    else:
-                        peaks_valleys[i] = 0
-
+                    peaks_valleys[i] = -1
 
     return peaks_valleys
+
+
+
+
+
+
+
+
+
+
 
 
 

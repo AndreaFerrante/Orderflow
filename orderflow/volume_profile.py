@@ -313,23 +313,22 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
 
 
 def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25) -> np.array:
+
     """
-    Given the canonical dataframe recorded, this function returns an array with info if the price is in a peak or valley
-    of volumes
+    Given the canonical dataframe recorded, this function returns an array with info if the price is in a
+    peak or valley of volumes
     :param df: canonical dataframe recorded
     :return: numpy array with values: High Peak = 2, High Peak Area = 1, Valley Peak = -2, Valley Peak Area = -1
     """
 
-    print(f"Assign Value Areas peaks and valleys...")
-
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
-    price = np.array(data.Price)
-    volume = np.array(data.Volume)
-    session = np.array(data.SessionType)
-    len_ = len(price)
-    peaks_valleys = np.zeros(len_)
+    price          = np.array(data.Price)
+    volume         = np.array(data.Volume)
+    session        = np.array(data.SessionType)
+    len_           = len(price)
+    peaks_valleys  = np.zeros(len_)
     volume_profile = {}
 
     for i in tqdm(range(len_ - 1)):
@@ -342,9 +341,9 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
         else:
             volume_profile[price[i]] = volume[i]
 
-        source = np.array(sorted(volume_profile.keys()))
-        weight = np.array([volume_profile[key] for key in source])
-        kde = gaussian_kde_numba(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
+        source        = np.array(sorted(volume_profile.keys()))
+        weight        = np.array([volume_profile[key] for key in source])
+        kde           = gaussian_kde_numba(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
         peaks_indexes = get_kde_high_low_price_peaks(kde)
 
         if np.any(peaks_indexes):
@@ -381,14 +380,30 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
     return peaks_valleys
 
 
+def get_daily_high_and_low_by_date(data: pd.DataFrame):
 
+    '''
+    This function returns highs / lows for a given date in an incremental manner for every
+    progression of Prices in a single date (not in a single session !)
+    '''
 
+    if 'SessionType' not in data.columns:
+        raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
+    dates    = data['Date'].astype(str).unique()
+    highs    = list()
+    lows     = list()
 
+    for date in dates:
 
+        single_date = data[ data['Date'] == date ]
+        highs.append( np.maximum.accumulate(single_date['Price'], axis=0) )
+        lows.append(  np.minimum.accumulate(single_date['Price'], axis=0) )
 
+    highs = np.hstack(highs)
+    lows  = np.hstack(lows)
 
-
+    return lows, highs
 
 
 

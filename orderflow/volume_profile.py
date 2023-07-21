@@ -406,4 +406,31 @@ def get_daily_high_and_low_by_date(data: pd.DataFrame):
     return lows, highs
 
 
+def get_daily_high_and_low_by_session(data: pd.DataFrame):
 
+    if 'SessionType' not in data.columns:
+        raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
+
+    price       = np.array(data.Price)
+    session     = np.array(data.SessionType)
+    len_        = len(price)
+    lows        = np.zeros(len_)
+    highs       = np.zeros(len_)
+    current_low = current_high = price[0]
+
+    for i in tqdm(range(1, len_)):
+
+        ########################################################################################################
+        if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
+            current_low = current_high = price[i]
+        ########################################################################################################
+
+        if price[i] > current_high:
+            current_high = price[i]
+        highs[i] = current_high
+
+        if price[i] < current_low:
+            current_low = price[i]
+        lows[i] = current_low
+
+    return lows, highs

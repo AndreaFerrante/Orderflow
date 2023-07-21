@@ -3,10 +3,6 @@ import random
 import numpy as np
 import pandas as pd
 
-def get_tick_size(price: np.array):
-    prices = pd.Series(price).unique()
-    return abs(prices[0] - prices[1])
-
 
 def update_datetime_signal_index(datetime_all, datetime_signal, index_, signal_idx_):
 
@@ -28,6 +24,7 @@ def backtester(
     tp: int,
     sl: int,
     tick_value: float,
+    tick_size: float  = 0.25,
     commission: float = 4.5,
     n_contacts: int   = 1,
     slippage_max: int = 0
@@ -40,6 +37,7 @@ def backtester(
     :param signal: dataframe of the all signals occured
     :param tp: take profit in ticks
     :param sl: stop loss in ticks
+    :param tick_size: single tick size (e.g. for the ES ticker, tick_value=0.25)
     :param tick_value: single tick value (e.g. for the ES ticker, tick_value=12.5 dollars)
     :param commission: commission value per dollars
     :param n_contacts: number of contracts per entry
@@ -59,7 +57,6 @@ def backtester(
 
     ############################################
     len_             = data.shape[0]
-    tick_size        = get_tick_size(data.Price)
     price_array      = np.array(data.Price)
     datetime_all     = np.array(data.Index)
     datetime_signal  = np.array(signal.Index)
@@ -223,7 +220,7 @@ def backtester(
             )
     backtest.insert(0, 'TRADE_INDEX', np.arange(1, backtest.shape[0] + 1, 1))
     backtest = backtest.assign(TRADE_GAIN = np.where( backtest.ORDER_TYPE == 'LONG',
-                                                      backtest.EXIT_PRICES  - backtest.ENTRY_PRICES_SLIPPAGE,
+                                                      backtest.EXIT_PRICES - backtest.ENTRY_PRICES_SLIPPAGE,
                                                       backtest.ENTRY_PRICES_SLIPPAGE - backtest.EXIT_PRICES))
 
 

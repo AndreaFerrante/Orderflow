@@ -10,6 +10,9 @@ from dateutil.parser import parse
 
 
 def half_hour(x) -> str:
+
+    print(f"Half hour...")
+
     if x >= 30:
         return "30"
     else:
@@ -19,9 +22,10 @@ def half_hour(x) -> str:
 def prepare_data(
         data: pd.DataFrame
 ) -> pd.DataFrame:
+
     """
     Given usual data recorded, this function returns it corrected since its CSV recoding so it adds pandas datatypes
-    fro data reshaping and data plotting
+    for data reshaping and data plotting
     :param data: given usual data recorded
     :return: dataframe corrected
     """
@@ -30,6 +34,8 @@ def prepare_data(
     # es = es.assign(Hour     = es.Time.str[:2].astype(str))   # Extract the hour...
     # es = es.assign(Minute   = es.Time.str[3:5].astype(int))  # Extract the minute...
     # es = es.assign(HalfHour = es.Hour.str.zfill(2) + es.Minute.apply(half_hour)) # Identifies half hours...
+
+    print(f"Prepare data...")
 
     data = (
         data.assign(Index=np.arange(0, data.shape[0], 1))
@@ -46,16 +52,13 @@ def prepare_data(
 def get_longest_columns_dataframe(
         path: str, ticker: str = "ES"
 ) -> list:
+
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
-    cols = [
-        x for x in range(99999)
-    ]  # Dummy list for having the cols as big as possible...
+    cols  = [x for x in range(99999)]  # Dummy list for having the cols as big as possible...
 
     for file in files:
 
-        single = pd.read_csv(
-            os.path.join(path, file), sep=";", nrows=2
-        )  # Read only first two rows to read teh columns !
+        single = pd.read_csv(os.path.join(path, file), sep=";", nrows=2)  # Read only first two rows to read teh columns !
         if len(single.columns) < len(cols):
             cols = single.columns
 
@@ -63,8 +66,14 @@ def get_longest_columns_dataframe(
 
 
 def get_tickers_in_pg_table(
-        connection, schema: str, table_name: str, start_date: str, end_date: str, date_column: str,
+        connection,
+        schema: str,
+        table_name: str,
+        start_date: str,
+        end_date: str,
+        date_column: str,
         offset: int = 0) -> pd.DataFrame:
+
     """
     Given a connection to a Database PostgreSQL and a table read all the ticker data
     :param connection: a psycopg2 object connection
@@ -77,7 +86,9 @@ def get_tickers_in_pg_table(
     :return: DataFrame of all read ticker data
     """
 
-    colum_dict = {
+    print(f"Get longest column in dataframes...")
+
+    colum_dict     = {
         'original_date': 'Date',
         'original_time': 'Time',
         'sequence': 'Sequence',
@@ -134,18 +145,21 @@ def get_tickers_in_pg_table(
         'askdom_19': 'AskDOM_19',
         'biddom_19': 'BidDOM_19'
     }
-
-    chunk_size = 500000
+    chunk_size     = 500000
     records_offset = 0
-    df_list = []
+    df_list        = []
+
     while True:
+
         sql = "SELECT * FROM " + schema + "." + table_name + " WHERE " + date_column + " >= '" + start_date + \
               "' AND " + date_column + " <= '" + end_date + "' LIMIT " + str(chunk_size) + \
               " OFFSET " + str(records_offset) + ";"
 
         chunk_df = pd.read_sql(sql=sql, con=connection)
+
         if len(chunk_df) == 0:
             break  # Exit the loop when no more data is returned
+
         df_list.append(chunk_df)
         records_offset += chunk_size
 
@@ -165,6 +179,7 @@ def get_tickers_in_pg_table(
 def get_tickers_in_folder(
         path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999, offset: int = 0
 ) -> pd.DataFrame:
+
     """
     Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES).
     This package leverages a ot datatable speed !
@@ -178,6 +193,8 @@ def get_tickers_in_folder(
     Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
     """
 
+    print(f"Get tickers in folder...")
+
     if cols is None:
         cols = get_longest_columns_dataframe(path=path, ticker=ticker)
 
@@ -189,21 +206,21 @@ def get_tickers_in_folder(
 
         print(f"Reading file {file} ...")
 
-        read_file = fread(os.path.join(path, file), sep=";", fill=True)
-        read_file = read_file[:, list(cols)]  # Select all rows and specific columns...
-        read_file["Date"] = datatable.str64  # Convert string for filtering...
+        read_file          = fread(os.path.join(path, file), sep=";", fill=True)
+        read_file          = read_file[:, list(cols)]  # Select all rows and specific columns...
+        read_file["Date"]  = datatable.str64  # Convert string for filtering...
         read_file["Price"] = datatable.float64  # Convert float for filtering...
-        read_file = read_file[(f.Date != "1899-12-30") & (f.Price != 0), :]  # Filter impurities...
+        read_file          = read_file[(f.Date != "1899-12-30") & (f.Price != 0), :]  # Filter impurities...
         stacked.rbind(read_file)
 
         if idx >= break_at:
             break
 
     if offset:
-        stacked['Date'] = datatable.Type.str32
-        stacked['Time'] = datatable.Type.str32
+        stacked['Date']        = datatable.Type.str32
+        stacked['Time']        = datatable.Type.str32
         stacked[:, 'Datetime'] = stacked[:, datatable.f.Date + ' ' + datatable.f.Time]
-        stacked['Datetime'] = datatable.Type.time64
+        stacked['Datetime']    = datatable.Type.time64
         ########################################################################
         date_time = np.array(stacked['Datetime'].to_list(), dtype='datetime64')
         date_time = date_time - np.timedelta64(offset, 'h')
@@ -220,12 +237,15 @@ def get_tickers_in_folder(
 def get_orders_in_row(
         trades: pd.DataFrame, seconds_split: int = 1
 ) -> (pd.DataFrame, pd.DataFrame):
+
     '''
     This function gets prints "anxiety" over the tape :-)
     :param trades: canonical trades executed
     :param seconds_split: seconds to measure the speed of the tape
     :return: anxiety over the market on both ask/bid sides
     '''
+
+    print(f"Get orders in row...")
 
     present = 0
     for el in ['Date', 'Time']:
@@ -278,12 +298,12 @@ def get_orders_in_row(
             else:
                 i += 1
 
-        return pd.DataFrame({'Datetime': dt_,
-                             'Volume': vol_,
-                             'Counter': count_,
-                             'Price': price_,
-                             'TradeType': [side] * len(price_),
-                             'Index': idx_})
+        return pd.DataFrame({'Datetime':   dt_,
+                             'Volume':     vol_,
+                             'Counter':    count_,
+                             'Price':      price_,
+                             'TradeType':  [side] * len(price_),
+                             'Index':      idx_})
 
     # Manage speed of tape on the ASK, first
     try:
@@ -306,12 +326,15 @@ def plot_half_hour_volume(
         data_path: str = "",
         data_name: str = "",
 ) -> None:
+
     """
-    This function helps understanding the "volume smile" so that the peak in volume given hal hours is the market open
+    This function helps to understand the "volume smile" so that the peak in volume given hal hours is the market open
     :param data_path: file system path to the data
     :param data_name: file name to import
     :return: a plot in matplotlib with bars per half-hour (the bigger counting bar is the one that finds market opens)
     """
+
+    print(f"Plot half hour volume...")
 
     if not data_already_read:
         try:
@@ -322,14 +345,10 @@ def plot_half_hour_volume(
         data = data
 
     data = data[data.Price != 0]  # Remove recording impurities...
-    data = data.assign(
-        Index=np.arange(0, data.shape[0], 1)
-    )  # Set an index fro reference plotting...
+    data = data.assign(Index=np.arange(0, data.shape[0], 1))  # Set an index fro reference plotting...
     data = data.assign(Hour=data.Time.str[:2].astype(str))  # Extract the hour...
     data = data.assign(Minute=data.Time.str[3:5].astype(int))  # Extract the minute...
-    data = data.assign(
-        HalfHour=data.Hour.str.zfill(2) + data.Minute.apply(half_hour)
-    )  # Identifies half hours...
+    data = data.assign(HalfHour=data.Hour.str.zfill(2) + data.Minute.apply(half_hour))  # Identifies half hours...
 
     # Plot bar chart in which the
     max_volume = data.groupby(["HalfHour"]).agg({"Volume": "sum"}).reset_index()
@@ -343,23 +362,14 @@ def plot_half_hour_volume(
 def get_volume_distribution(
         data: pd.DataFrame
 ) -> pd.DataFrame:
-    value_counts_num = pd.DataFrame(data["Volume"].value_counts()).reset_index()
-    value_counts_num = value_counts_num.rename(
-        columns={"Volume": "VolumeCount", "index": "VolumeSize"}
-    )
-    value_counts_per = pd.DataFrame(
-        data["Volume"].value_counts(normalize=True)
-    ).reset_index()
-    value_counts_per = value_counts_per.rename(
-        columns={"Volume": "VolumePerc", "index": "VolumeSize"}
-    )
-    value_counts_per = value_counts_per.assign(
-        VolumePerc=value_counts_per.VolumePerc * 100
-    )
 
-    stats = value_counts_num.merge(
-        right=value_counts_per, how="left", on="VolumeSize"
-    ).reset_index(drop=True)
+    value_counts_num = pd.DataFrame(data["Volume"].value_counts()).reset_index()
+    value_counts_num = value_counts_num.rename(columns={"Volume": "VolumeCount", "index": "VolumeSize"})
+    value_counts_per = pd.DataFrame(data["Volume"].value_counts(normalize=True)).reset_index()
+    value_counts_per = value_counts_per.rename(columns={"Volume": "VolumePerc", "index": "VolumeSize"})
+    value_counts_per = value_counts_per.assign(VolumePerc=value_counts_per.VolumePerc * 100)
+
+    stats = value_counts_num.merge(right=value_counts_per, how="left", on="VolumeSize").reset_index(drop=True)
     stats.sort_values(["VolumeSize"], ascending=True, inplace=True)
     stats = stats.assign(VolumePercCumultaive=np.cumsum(stats.VolumePerc))
 
@@ -381,23 +391,25 @@ def get_new_start_date(
         data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
     ########################################################################
 
-    data['Date_Shift'] = data.Date.shift(1)
-    data_last_date_notna = data['Date_Shift'].head(2).values[
-        1]  # Take first two elements and the second one must be not empty...
-    data['Date_Shift'] = data['Date_Shift'].fillna(data_last_date_notna)
-    data['DayStart'] = np.where(data.Date != data.Date_Shift, 1, 0)
+    data['Date_Shift']   = data.Date.shift(1)
+    data_last_date_notna = data['Date_Shift'].head(2).values[1]  # Take first two elements and the second one must be not empty...
+    data['Date_Shift']   = data['Date_Shift'].fillna(data_last_date_notna)
+    data['DayStart']     = np.where(data.Date != data.Date_Shift, 1, 0)
 
     return data.drop(['Date_Shift'], axis=1)
 
 
-def get_market_evening_session(data: pd.DataFrame):
+def get_market_evening_session(
+        data: pd.DataFrame
+):
     '''
     This function defines session start and end given Chicago Time.
     Pass to this function a DataFrame with Datetime offset !
     '''
 
     print(f"Assign sessions labels...")
-    condlist = [(data.Datetime.dt.time >= SESSION_START_TIME) & (data.Datetime.dt.time <= SESSION_END_TIME),
+
+    condlist   = [(data.Datetime.dt.time >= SESSION_START_TIME) & (data.Datetime.dt.time <= SESSION_END_TIME),
                 (data.Datetime.dt.time <= SESSION_START_TIME) | (data.Datetime.dt.time >= SESSION_END_TIME)]
     choicelist = ['RTH', 'ETH']
 

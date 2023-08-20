@@ -27,7 +27,8 @@ def backtester(
     tick_size: float  = 0.25,
     commission: float = 4.5,
     n_contacts: int   = 1,
-    slippage_max: int = 0
+    slippage_max: int = 0,
+    save_path: str    = ''
 ) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -41,24 +42,26 @@ def backtester(
     :param tick_value: single tick value (e.g. for the ES ticker, tick_value=12.5 dollars)
     :param commission: commission value per dollars
     :param n_contacts: number of contracts per entry
-    :return: 2 dataframes: one for the backtest, and one with all single dataframes ticks
+    :param slippage_max: max number of random ticks of slippage to pick
+    :param save_path: if not empty, path where to save the final trades
+    :return: 2 dataframes: one for the backtest, and one with all single trades ticks
     '''
 
 
-    ##########################################
-    ##########################################
-    # Uncomment below to test this function...
-    data          = ticker
-    signal        = all_trades
-    tp            = 9
-    sl            = 9
-    tick_value    = 12.5
-    tick_size     = 0.25
-    commission    = 4.0
-    n_contacts    = 1
-    slippage_max  = 1
-    ##########################################
-    ##########################################
+    # ##########################################
+    # ##########################################
+    # # Uncomment below to test this function...
+    # data          = ticker
+    # signal        = all_trades
+    # tp            = 9
+    # sl            = 9
+    # tick_value    = 12.5
+    # tick_size     = 0.25
+    # commission    = 4.0
+    # n_contacts    = 1
+    # slippage_max  = 1
+    # ###########################################
+    # ###########################################
 
 
     if not 'Index' in data.columns:
@@ -231,7 +234,8 @@ def backtester(
     if len(entry_time_) != len(exit_time_):
 
         '''
-        If we are still in position once 
+        If we are still in position once the main backtest is looping, we have a pending position open.
+        We fix this here assuming that we close it with ending values.
         '''
 
         exit_index_.append( datetime_all[ len_ - 1 ])
@@ -269,6 +273,9 @@ def backtester(
         single_trade.insert(2, 'MFE', np.max(single_trade.Price) - price)
         single_trade.insert(3, 'TRADE_DIRECTION', backtest.ORDER_TYPE[idx])
         trades.append( single_trade )
+
+    if save_path != '':
+        backtest.to_csv(save_path, sep=';')
 
     return backtest, trades
 

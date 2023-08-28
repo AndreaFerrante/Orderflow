@@ -240,6 +240,8 @@ def get_orders_in_row(
 
     '''
     This function gets prints "anxiety" over the tape :-)
+    !!! Attention !!! Pass to this function a dataset in which the  the "Datetime" columns is in datetime format.
+
     :param trades: canonical trades executed
     :param seconds_split: seconds to measure the speed of the tape
     :return: anxiety over the market on both ask/bid sides
@@ -270,20 +272,20 @@ def get_orders_in_row(
 
         vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
         len_ = trades_on_side.shape[0]
-        i = 0
+        i    = 0
 
         while i < len_:
 
             start_time = trades_on_side.Datetime[i]
-            start_vol = trades_on_side.Volume[i]
-            counter = 0
+            start_vol  = trades_on_side.Volume[i]
+            counter    = 0
 
             for j in range(i + 1, len_):
                 delta_time = trades_on_side.Datetime[j] - start_time
                 ##############################################
                 if delta_time.total_seconds() <= seconds_split:
                     start_vol += trades_on_side.Volume[j]
-                    counter += 1
+                    counter   += 1
                 else:
                     break
                 ##############################################
@@ -304,6 +306,9 @@ def get_orders_in_row(
                              'Price':      price_,
                              'TradeType':  [side] * len(price_),
                              'Index':      idx_})
+
+    ask = None
+    bid = None
 
     # Manage speed of tape on the ASK, first
     try:

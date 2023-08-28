@@ -32,14 +32,13 @@ def get_montecarlo_analysis(trades:pd.DataFrame, n_rows_sample:int, n_simulation
         raise Exception('Attention, trades Dataframe has no Datetime column.')
 
 
-    n_simulations  = 150
-    n_rows_sample  = 150
+    n_simulations  = 500
+    n_rows_sample  = 100
     date_time      = pd.date_range(start='2022-01-01', end='2022-07-31', freq='h')
-    gain_pod       = [-1, 3]
+    gain_pod       = [-2, 3]
     gains          = [np.random.choice(gain_pod) for x in range(len(date_time))]
     trades         = pd.DataFrame({'Datetime': date_time, 'Entry_Gains': gains})
     entry_col_name = 'Entry_Gains'
-
 
     equity_patterns = list()
     ec_results      = list()
@@ -47,9 +46,25 @@ def get_montecarlo_analysis(trades:pd.DataFrame, n_rows_sample:int, n_simulation
     print('\n Performing MonteCarlo sampling...')
     for simulation in tqdm(range(n_simulations)):
 
-        sample = trades.sample(n=n_rows_sample).sort_values(['Datetime'], ascending=True)
+        sample = trades.sample(n = n_rows_sample).sort_values(['Datetime'], ascending=True)
         equity_patterns.append( sample[ entry_col_name ].cumsum() )
         ec_results.append( sample[ entry_col_name ].sum() )
+
+
+
+    min_       = min(ec_results)
+    max_       = max(ec_results)
+    ec_results = pd.DataFrame({'EcPattern': ec_results})
+
+    bins_      = [x for x in range(min_ - 1, max_ + 1, 5)]
+    labels_    = [f'{i + 1}-{j}' for i, j in zip(bins_[:-1], bins_[1:])]
+    s          = pd.cut(ec_results['EcPattern'], bins=bins_, labels=labels_)
+    ec_results = ec_results.assign(s = s)
+    df         = ec_results.groupby('s')['EcPattern'].sum().reset_index()
+    df         = df.assign(CumPatterns = df.EcPattern.cumsum())
+    plt.plot(df.CumPatterns); plt.show()
+
+
 
     print('\n Performing MonteCarlo plotting...')
     for simulation in tqdm(range(n_simulations)):
@@ -59,7 +74,7 @@ def get_montecarlo_analysis(trades:pd.DataFrame, n_rows_sample:int, n_simulation
         plt.ylabel('Cumulative Gain per Pattern')
         plt.title('Montecarlo Chart')
 
-
+    plt.show()
 
 
 

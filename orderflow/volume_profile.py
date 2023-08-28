@@ -373,11 +373,16 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
                 distance_in_element      = (peaks_prices[curr_price_position] - peaks_prices[curr_price_position - 1]) / tick_size
                 half_distance_in_element = int(distance_in_element / 2)
 
-                if price[i] >= source[curr_price_position - half_distance_in_element] and \
-                    peaks_volumes[curr_price_position] > peaks_volumes[curr_price_position - 1]:
-                    peaks_valleys[i] = 1
-                else:
+                try:
+                    if price[i] >= source[curr_price_position - half_distance_in_element] and \
+                        peaks_volumes[curr_price_position] > peaks_volumes[curr_price_position - 1]:
+                        peaks_valleys[i] = 1
+                    else:
+                        peaks_valleys[i] = -1
+                except Exception as ex:
                     peaks_valleys[i] = -1
+                    print(f'Issue, i = {i}, curr_price_position = {curr_price_position}, half_distance_in_element = {half_distance_in_element}')
+                    print(f'Exception equal to {ex}')
 
     return peaks_valleys
 

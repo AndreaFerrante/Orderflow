@@ -1,0 +1,4 @@
+This folder called "data" has an example of CSV used for the module to process computations (e.g. VWAP).
+Since tick by tick data requires a lot of space, just one hour at the CME market open for ES future is presented here.
+
+This files contains the first 25_000 trades occured at market open at 2023-06-29 trading day.

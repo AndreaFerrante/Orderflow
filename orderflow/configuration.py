@@ -32,5 +32,29 @@ VWAP_BAND_OFFSET_1     = 1
 VWAP_BAND_OFFSET_2     = 2
 VWAP_BAND_OFFSET_3     = 3
 VWAP_BAND_OFFSET_4     = 4
+FUTURE_LETTERS         = pd.DataFrame({'Expiry_Month':['January',
+                                               'February',
+                                               'March',
+                                               'April',
+                                               'May',
+                                               'June',
+                                               'July',
+                                               'August',
+                                               'September',
+                                               'October',
+                                               'November',
+                                               'December'],
+                                       'Letters':     ['F',
+                                           'G',
+                                           'H',
+                                           'J',
+                                           'K',
+                                           'M',
+                                           'N',
+                                           'Q',
+                                           'U',
+                                           'V',
+                                           'X',
+                                           'Z']})
 
 

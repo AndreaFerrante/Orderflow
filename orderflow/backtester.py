@@ -27,7 +27,8 @@ def backtester(
     tick_size: float  = 0.25,
     commission: float = 4.5,
     n_contacts: int   = 1,
-    slippage_max: int = 0
+    slippage_max: int = 0,
+    save_path: str    = ''
 ) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -41,8 +42,27 @@ def backtester(
     :param tick_value: single tick value (e.g. for the ES ticker, tick_value=12.5 dollars)
     :param commission: commission value per dollars
     :param n_contacts: number of contracts per entry
-    :return: 2 dataframes: one for the backtest, and one with all single dataframes ticks
+    :param slippage_max: max number of random ticks of slippage to pick
+    :param save_path: if not empty, path where to save the final trades
+    :return: 2 dataframes: one for the backtest, and one with all single trades ticks
     '''
+
+
+    # ##########################################
+    # ##########################################
+    # # Uncomment below to test this function...
+    # data          = ticker
+    # signal        = all_trades
+    # tp            = 9
+    # sl            = 9
+    # tick_value    = 12.5
+    # tick_size     = 0.25
+    # commission    = 4.0
+    # n_contacts    = 1
+    # slippage_max  = 1
+    # ###########################################
+    # ###########################################
+
 
     if not 'Index' in data.columns:
         raise Exception('Please, provide DataFrame with Index column !')
@@ -76,6 +96,7 @@ def backtester(
     signal_idx       = 0
     entry_counter    = 0
     entry_price      = 0.0
+    position         = '' # This string keeps track if we are LONG or SHORT.
 
     #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
@@ -109,6 +130,8 @@ def backtester(
         # ---> Long trade...
         elif entry_price != 0 and trade_type == 2:
 
+            position = 'LONG'
+
             if entry_price - price_array[i] >= sl * tick_size:
                 exit_index_.append( datetime_all[i] )
                 exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
@@ -126,7 +149,7 @@ def backtester(
                 exit_index_.append( datetime_all[i] )
                 exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
                 exit_price_.append( price_array[i] )
-                entry_type_.append('LONG')
+                entry_type_.append( 'LONG' )
                 entry_price = 0
                 success += 1
 
@@ -137,6 +160,8 @@ def backtester(
 
         # ---> Short trade...
         elif entry_price != 0 and trade_type == 1:
+
+            position = 'SHORT'
 
             if entry_price - price_array[i] > tp * tick_size:
                 exit_index_.append( datetime_all[i])
@@ -205,6 +230,20 @@ def backtester(
         n_contacts,
     )
 
+    # Manage we are in a position not closed at the end of the dataframe...
+    if len(entry_time_) != len(exit_time_):
+
+        '''
+        If we are still in position once the main backtest is looping, we have a pending position open.
+        We fix this here assuming that we close it with ending values.
+        '''
+
+        exit_index_.append( datetime_all[ len_ - 1 ])
+        exit_time_.append( data.Date[ len_ - 1 ] + ' ' + data.Time[ len_ - 1 ])
+        exit_price_.append( price_array[ len_ - 1 ])
+        entry_type_.append( position )
+
+
     # Define backtest results here...
     backtest =  pd.DataFrame(
                 {
@@ -234,6 +273,9 @@ def backtester(
         single_trade.insert(2, 'MFE', np.max(single_trade.Price) - price)
         single_trade.insert(3, 'TRADE_DIRECTION', backtest.ORDER_TYPE[idx])
         trades.append( single_trade )
+
+    if save_path != '':
+        backtest.to_csv(save_path, sep=';')
 
     return backtest, trades
 

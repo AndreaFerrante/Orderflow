@@ -75,15 +75,15 @@ def gaussian_kde_vectorized(source: np.array, weight: np.array, h: float = 1.0):
     g_const  = 1 / (np.sqrt(2 * np.pi))
     g_const *= 1 / (len_source * h)
 
-    # crea una matrice di tutte le differenze possibili tra gli elementi di source divise per h.
-    # L'uso di np.newaxis crea un'asse aggiuntiva per consentire il broadcasting.
+    # creates a matrix of all possible differences between the source elements divided by h.
+    # Using np.newaxis creates an additional axis to allow for broadcasting.
     expo = (source[:, np.newaxis] - source) / h
-    # applica l'esponenziale a tutti gli elementi della matrice
+    # applies the exponential to all elements of the matrix
     ielem = g_const * np.exp(-0.5 * np.power(expo, 2))
     # Broadcasting weight array
     # ielem *= weight[:, np.newaxis]
     ielem = np.multiply(ielem, weight)
-    # somma gli elementi lungo l'asse delle colonne
+    # sums the elements along the column axis
     jelem = np.sum(ielem, axis=1)
 
     kde_result = jelem

@@ -235,7 +235,7 @@ def get_tickers_in_folder(
 
 
 def get_orders_in_row(
-        trades: pd.DataFrame, seconds_split: int = 1
+        trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False
 ) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -244,6 +244,7 @@ def get_orders_in_row(
 
     :param trades: canonical trades executed
     :param seconds_split: seconds to measure the speed of the tape
+    :param orders_on_same_price_level: if True, the anxiety is considered on orders at same price level
     :return: anxiety over the market on both ask/bid sides
     '''
 
@@ -263,14 +264,15 @@ def get_orders_in_row(
     elif 'Datetime' in trades.columns:
         trades.sort_values(['Datetime'], ascending=True, inplace=True)
 
-    def manage_speed_of_tape(trades_on_side: pd.DataFrame, side: int = 2) -> pd.DataFrame:
+    def manage_speed_of_tape(trades_on_side: pd.DataFrame, side: int = 2,
+                             same_price_level: bool = False) -> pd.DataFrame:
 
         ############################## EXECUTE TRADES ON SIDE SEPARATELY ####################################
         trades_on_side = trades_on_side[(trades_on_side.TradeType == side)].reset_index(drop=True)
         trades_on_side.sort_values(['Datetime'], ascending=True, inplace=True)
         #####################################################################################################
 
-        vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
+        vol_, dt_, count_, price_, idx_, = list(), list(), list(), list(), list()
         len_ = trades_on_side.shape[0]
         i    = 0
 
@@ -278,12 +280,15 @@ def get_orders_in_row(
 
             start_time = trades_on_side.Datetime[i]
             start_vol  = trades_on_side.Volume[i]
+            start_price = trades_on_side.Price[i]
             counter    = 0
 
             for j in range(i + 1, len_):
                 delta_time = trades_on_side.Datetime[j] - start_time
                 ##############################################
-                if delta_time.total_seconds() <= seconds_split:
+                if delta_time.total_seconds() <= seconds_split and \
+                        ((not same_price_level)
+                        or (same_price_level and start_price == trades_on_side.Price[j])):
                     start_vol += trades_on_side.Volume[j]
                     counter   += 1
                 else:
@@ -312,13 +317,13 @@ def get_orders_in_row(
 
     # Manage speed of tape on the ASK, first
     try:
-        ask = manage_speed_of_tape(trades, 2).sort_values(['Datetime'], ascending=True)
+        ask = manage_speed_of_tape(trades, 2, orders_on_same_price_level).sort_values(['Datetime'], ascending=True)
     except Exception as e:
         print(e)
 
     # Manage speed of tape on the BID, secondly.
     try:
-        bid = manage_speed_of_tape(trades, 1).sort_values(['Datetime'], ascending=True)
+        bid = manage_speed_of_tape(trades, 1, orders_on_same_price_level).sort_values(['Datetime'], ascending=True)
     except Exception as e:
         print(e)
 

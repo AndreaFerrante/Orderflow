@@ -272,7 +272,7 @@ def get_orders_in_row(
         trades_on_side.sort_values(['Datetime'], ascending=True, inplace=True)
         #####################################################################################################
 
-        vol_, dt_, count_, price_, idx_, = list(), list(), list(), list(), list()
+        vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
         len_ = trades_on_side.shape[0]
         i    = 0
 

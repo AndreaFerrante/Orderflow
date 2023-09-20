@@ -32,7 +32,9 @@ from orderflow.volume_profile import (
     get_dynamic_cumulative_delta_per_session,
     get_daily_session_moving_POC,
     get_volume_profile_areas,
-    get_volume_profile_peaks_valleys
+    get_volume_profile_peaks_valleys,
+    get_daily_high_and_low_by_session,
+    get_daily_high_and_low_by_date
 )
 
 from orderflow.volume_profile_kde import (

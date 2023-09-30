@@ -1,0 +1,9 @@
+datatable==1.0.0
+matplotlib==3.7.2
+numba==0.57.0
+numpy==1.24.3
+pandas==2.0.3
+plotly==5.9.0
+python_dateutil==2.8.2
+setuptools==68.0.0
+tqdm==4.65.0

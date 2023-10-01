@@ -3,8 +3,8 @@ from setuptools import setup, find_packages
 
 setup(
     name="Orderflow",
-    version="0.0.2",
-    description="Orderflow trading data manager and reshaper",
+    version="0.0.5",
+    description="Orderflow trading data manager and data reshaper",
     author="Andrea Ferrante",
     author_email="nonicknamethankyou@gmail.com",
     classifiers=[
@@ -17,11 +17,12 @@ setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3 :: Only",
     ],
     keywords="datetime, setuptools",
     packages=find_packages(where="src"),
     python_requires=">=3.6, <4",
-    install_requires=["pandas", "numpy", "datatable", "matplotlib"],
+    install_requires=["pandas", "numpy", "polars", "matplotlib"],
     py_modules=["orderflow"],
 )

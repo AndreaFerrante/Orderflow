@@ -3,7 +3,6 @@ import polars
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from datatable import fread, f
 from tqdm import tqdm
 from orderflow.configuration import *
 from dateutil.parser import parse

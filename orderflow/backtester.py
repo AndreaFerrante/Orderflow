@@ -28,7 +28,8 @@ def backtester(
     commission: float = 4.5,
     n_contacts: int   = 1,
     slippage_max: int = 0,
-    save_path: str    = ''
+    save_path: str    = '',
+    adapt_sl_tp_to_slippage: bool = False
 ) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -110,7 +111,7 @@ def backtester(
             entry_counter += 1
             trade_type     = signal_tradetype[signal_idx]
 
-            ####################################################################
+            ######################################################################################################
             # Let's add slippage given the type of entry (1 == short, 2 == long)
             if trade_type == 1:
                 slippage    = float(tick_size * random.randint(0, slippage_max))
@@ -120,12 +121,16 @@ def backtester(
                 slippage    = float(tick_size * random.randint(0, slippage_max))
                 entry_price = float(price_array[i]) + slippage
                 #print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
-            ####################################################################
+            ######################################################################################################
 
             entry_index_.append( datetime_signal[signal_idx] )
             entry_time_.append(  data.Date[i] + ' ' + data.Time[i] )
             entry_price_.append( entry_price )
             entry_price_pure.append( price_array[i] )
+
+            if adapt_sl_tp_to_slippage:
+                sl = sl + slippage
+                tp = tp - slippage
 
         # ---> Long trade...
         elif entry_price != 0 and trade_type == 2:

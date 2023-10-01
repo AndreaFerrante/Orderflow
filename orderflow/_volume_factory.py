@@ -1,5 +1,5 @@
 import os
-import datatable
+import polars
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -177,12 +177,12 @@ def get_tickers_in_pg_table(
 
 
 def get_tickers_in_folder(
-        path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999, offset: int = 0
-) -> pd.DataFrame:
+        path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999, offset: int = 0, extension:str = 'txt'
+):
 
     """
     Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES).
-    This package leverages a ot datatable speed !
+    This package leverages a polars speed !
     :param path: path to ticker data to read
     :param ticker: ticker to read in the form of ES, ZN, ZB, AAPL, MSFT. . .
     :param cols: columns to import...
@@ -198,37 +198,29 @@ def get_tickers_in_folder(
     if cols is None:
         cols = get_longest_columns_dataframe(path=path, ticker=ticker)
 
-    ticker = str(ticker).upper()
-    files = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
-    stacked = datatable.Frame()
+    ticker  = str(ticker).upper()
+    files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
+    stacked = polars.DataFrame()
 
     for idx, file in tqdm(enumerate(files)):
 
         print(f"Reading file {file} ...")
 
-        read_file          = fread(os.path.join(path, file), sep=";", fill=True)
-        read_file          = read_file[:, list(cols)]  # Select all rows and specific columns...
-        read_file["Date"]  = datatable.str64  # Convert string for filtering...
-        read_file["Price"] = datatable.float64  # Convert float for filtering...
-        read_file          = read_file[(f.Date != "1899-12-30") & (f.Price != 0), :]  # Filter impurities...
-        stacked.rbind(read_file)
+        if file.endswith(str(extension).upper()):
+            single_file = polars.read_csv(os.path.join(path, file), separator=';', columns=cols)
+            single_file = single_file.filter((single_file['Date'] != "1899-12-30") & (single_file['Price'] > 0))
+            stacked     = polars.concat([stacked, single_file])
 
         if idx >= break_at:
             break
 
-    if offset:
-        stacked['Date']        = datatable.Type.str32
-        stacked['Time']        = datatable.Type.str32
-        stacked[:, 'Datetime'] = stacked[:, datatable.f.Date + ' ' + datatable.f.Time]
-        stacked['Datetime']    = datatable.Type.time64
-        ########################################################################
-        date_time = np.array(stacked['Datetime'].to_list(), dtype='datetime64')
-        date_time = date_time - np.timedelta64(offset, 'h')
+    print(f"Get tickers in folder, adding Datetime...")
+    stacked = stacked.with_columns(Datetime=stacked['Date'] + ' ' + stacked['Time'])
+    stacked = stacked.with_columns(Datetime=stacked['Datetime'].str.ljust(26, '0'))
+    stacked = stacked.with_columns(Datetime=stacked['Datetime'].str.to_datetime())
 
-        del stacked[:, 'Datetime']  # Let's leave only the datetime offset...
-        stacked[:, 'Datetime_Offset'] = date_time[0]
-        stacked.names = {'Datetime_Offset': 'Datetime'}
-        ########################################################################
+    if offset:
+        stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + offset + "h"))
         return stacked.sort(["Date", "Time"]).to_pandas()
     else:
         return stacked.sort(["Date", "Time"]).to_pandas()

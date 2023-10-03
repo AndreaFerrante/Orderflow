@@ -45,6 +45,7 @@ def backtester(
     :param n_contacts: number of contracts per entry
     :param slippage_max: max number of random ticks of slippage to pick
     :param save_path: if not empty, path where to save the final trades
+    :param adapt_sl_tp_to_slippage: move tp and sl given slippage
     :return: 2 dataframes: one for the backtest, and one with all single trades ticks
     '''
 

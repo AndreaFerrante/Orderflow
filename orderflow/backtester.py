@@ -99,6 +99,8 @@ def backtester(
     entry_counter    = 0
     entry_price      = 0.0
     position         = '' # This string keeps track if we are LONG or SHORT.
+    SL_CONSTANT      = sl
+    TP_CONSTANT      = tp
 
     #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
@@ -115,12 +117,14 @@ def backtester(
             ######################################################################################################
             # Let's add slippage given the type of entry (1 == short, 2 == long)
             if trade_type == 1:
-                slippage    = float(tick_size * random.randint(0, slippage_max))
-                entry_price = float(price_array[i]) - slippage
+                slippage_tick = random.randint(0, slippage_max)
+                slippage      = float(tick_size * slippage_tick)
+                entry_price   = float(price_array[i]) - slippage
                 #print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             else:
-                slippage    = float(tick_size * random.randint(0, slippage_max))
-                entry_price = float(price_array[i]) + slippage
+                slippage_tick = random.randint(0, slippage_max)
+                slippage      = float(tick_size * slippage_tick)
+                entry_price   = float(price_array[i]) + slippage
                 #print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             ######################################################################################################
 
@@ -129,9 +133,12 @@ def backtester(
             entry_price_.append( entry_price )
             entry_price_pure.append( price_array[i] )
 
-            if adapt_sl_tp_to_slippage:
-                sl = sl + slippage
-                tp = tp - slippage
+            if adapt_sl_tp_to_slippage and slippage_tick > 0:
+                sl = SL_CONSTANT + slippage_tick
+                tp = TP_CONSTANT - slippage_tick
+            else:
+                sl = SL_CONSTANT
+                tp = TP_CONSTANT
 
         # ---> Long trade...
         elif entry_price != 0 and trade_type == 2:

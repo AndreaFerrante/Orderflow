@@ -243,6 +243,17 @@ def backtester(
         n_contacts,
     )
 
+    backtest_results = pd.DataFrame({'Profit': [round(profit_, 2)],
+                                     'Loss': [round(loss_, 2)],
+                                     'Commissions': [round(commission_, 2)],
+                                     'Net Profit': [round(net_profit_, 2)],
+                                     'Total Trades': [entry_counter],
+                                     'Profit Net Factor': [round( net_profit_ / loss_, 2 )],
+                                     'Profit Rate': [round( success / (success + loss), 2)],
+                                     'Min Date': [data['Date'].min()],
+                                     'Max Date': [data['Date'].max()]})
+
+
     # Manage we are in a position not closed at the end of the dataframe...
     if len(entry_time_) != len(exit_time_):
 
@@ -290,7 +301,7 @@ def backtester(
     if save_path != '':
         backtest.to_csv(save_path, sep=';')
 
-    return backtest, trades
+    return backtest, trades, backtest_results
 
 
 

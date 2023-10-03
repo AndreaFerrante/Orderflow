@@ -206,7 +206,7 @@ def get_tickers_in_folder(
         print(f"Reading file {file} ...")
 
         if file.endswith(str(extension).upper()):
-            single_file = polars.read_csv(os.path.join(path, file), separator=';', columns=cols)
+            single_file = polars.read_csv(os.path.join(path, file), separator=';', columns=cols, infer_schema_length=10_000)
             single_file = single_file.filter((single_file['Date'] != "1899-12-30") & (single_file['Price'] > 0))
             stacked     = polars.concat([stacked, single_file])
 

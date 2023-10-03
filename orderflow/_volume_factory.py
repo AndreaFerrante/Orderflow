@@ -219,7 +219,7 @@ def get_tickers_in_folder(
     stacked = stacked.with_columns(Datetime=stacked['Datetime'].str.to_datetime())
 
     if offset:
-        stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + offset + "h"))
+        stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
         return stacked.sort(["Date", "Time"]).to_pandas()
     else:
         return stacked.sort(["Date", "Time"]).to_pandas()

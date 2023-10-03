@@ -264,9 +264,9 @@ def backtester(
                 }
             )
     backtest.insert(0, 'TRADE_INDEX', np.arange(1, backtest.shape[0] + 1, 1))
-    backtest = backtest.assign(TRADE_GAIN = np.where( backtest.ORDER_TYPE == 'LONG',
-                                                      backtest.EXIT_PRICES - backtest.ENTRY_PRICES_SLIPPAGE,
-                                                      backtest.ENTRY_PRICES_SLIPPAGE - backtest.EXIT_PRICES))
+    backtest['TRADE_GAIN'] = np.where( backtest.ORDER_TYPE == 'LONG',
+                                       backtest.EXIT_PRICES - backtest.ENTRY_PRICES_SLIPPAGE,
+                                       backtest.ENTRY_PRICES_SLIPPAGE - backtest.EXIT_PRICES)
 
 
     # Define single trade snapshots here...

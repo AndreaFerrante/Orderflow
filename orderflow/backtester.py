@@ -45,6 +45,7 @@ def backtester(
     :param n_contacts: number of contracts per entry
     :param slippage_max: max number of random ticks of slippage to pick
     :param save_path: if not empty, path where to save the final trades
+    :param adapt_sl_tp_to_slippage: move tp and sl given slippage
     :return: 2 dataframes: one for the backtest, and one with all single trades ticks
     '''
 
@@ -98,6 +99,8 @@ def backtester(
     entry_counter    = 0
     entry_price      = 0.0
     position         = '' # This string keeps track if we are LONG or SHORT.
+    SL_CONSTANT      = sl
+    TP_CONSTANT      = tp
 
     #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
@@ -114,12 +117,14 @@ def backtester(
             ######################################################################################################
             # Let's add slippage given the type of entry (1 == short, 2 == long)
             if trade_type == 1:
-                slippage    = float(tick_size * random.randint(0, slippage_max))
-                entry_price = float(price_array[i]) - slippage
+                slippage_tick = random.randint(0, slippage_max)
+                slippage      = float(tick_size * slippage_tick)
+                entry_price   = float(price_array[i]) - slippage
                 #print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             else:
-                slippage    = float(tick_size * random.randint(0, slippage_max))
-                entry_price = float(price_array[i]) + slippage
+                slippage_tick = random.randint(0, slippage_max)
+                slippage      = float(tick_size * slippage_tick)
+                entry_price   = float(price_array[i]) + slippage
                 #print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             ######################################################################################################
 
@@ -128,9 +133,12 @@ def backtester(
             entry_price_.append( entry_price )
             entry_price_pure.append( price_array[i] )
 
-            if adapt_sl_tp_to_slippage:
-                sl = sl + slippage
-                tp = tp - slippage
+            if adapt_sl_tp_to_slippage and slippage_tick > 0:
+                sl = SL_CONSTANT + slippage_tick
+                tp = TP_CONSTANT - slippage_tick
+            else:
+                sl = SL_CONSTANT
+                tp = TP_CONSTANT
 
         # ---> Long trade...
         elif entry_price != 0 and trade_type == 2:
@@ -235,6 +243,17 @@ def backtester(
         n_contacts,
     )
 
+    backtest_results = pd.DataFrame({'Profit': [round(profit_, 2)],
+                                     'Loss': [round(loss_, 2)],
+                                     'Commissions': [round(commission_, 2)],
+                                     'Net Profit': [round(net_profit_, 2)],
+                                     'Total Trades': [entry_counter],
+                                     'Profit Net Factor': [round( net_profit_ / loss_, 2 )],
+                                     'Profit Rate': [round( success / (success + loss), 2)],
+                                     'Min Date': [data['Date'].min()],
+                                     'Max Date': [data['Date'].max()]})
+
+
     # Manage we are in a position not closed at the end of the dataframe...
     if len(entry_time_) != len(exit_time_):
 
@@ -263,9 +282,9 @@ def backtester(
                 }
             )
     backtest.insert(0, 'TRADE_INDEX', np.arange(1, backtest.shape[0] + 1, 1))
-    backtest = backtest.assign(TRADE_GAIN = np.where( backtest.ORDER_TYPE == 'LONG',
-                                                      backtest.EXIT_PRICES - backtest.ENTRY_PRICES_SLIPPAGE,
-                                                      backtest.ENTRY_PRICES_SLIPPAGE - backtest.EXIT_PRICES))
+    backtest['TRADE_GAIN'] = np.where( backtest.ORDER_TYPE == 'LONG',
+                                       backtest.EXIT_PRICES - backtest.ENTRY_PRICES_SLIPPAGE,
+                                       backtest.ENTRY_PRICES_SLIPPAGE - backtest.EXIT_PRICES)
 
 
     # Define single trade snapshots here...
@@ -282,7 +301,7 @@ def backtester(
     if save_path != '':
         backtest.to_csv(save_path, sep=';')
 
-    return backtest, trades
+    return backtest, trades, backtest_results
 
 
 

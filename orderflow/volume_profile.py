@@ -256,6 +256,7 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
             poc_volume    = volume_profile[price[i]]
             poc           = price[i]
             value_area[i] = 'POC'
+            total_volume += volume[i]
             continue
 
         total_volume              += volume[i]
@@ -282,7 +283,7 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
 
             if advance_down:
                 if lower_index <= 0:
-                    lower_index = 0
+                    lower_volume = 0
                 else:
                     lower_index -= 1
                     lower_volume += vp_volumes[lower_index]
@@ -304,12 +305,11 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
                     value_area[i] = 'VA'
                     break
 
-            if (current_sum_of_volume <= percentage_of_total_volume) and (
-                    (upper_index < len(vp_prices)) or (lower_index > 0)):
+            if current_sum_of_volume > percentage_of_total_volume:
                 break
 
 
-    value_area[0] = 'PO'
+    value_area[0] = 'POC'
 
     return value_area
 

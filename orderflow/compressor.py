@@ -127,6 +127,3 @@ def compress_to_volume_bars(tick_data:pd.DataFrame, volume_threshold:int) -> pd.
     return volume_bars_df
 
 
-
-
-

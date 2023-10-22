@@ -269,22 +269,21 @@ def get_orders_in_row(
 
         while i < len_:
 
-            start_time = trades_on_side.Datetime[i]
-            start_vol  = trades_on_side.Volume[i]
+            start_time  = trades_on_side.Datetime[i]
+            start_vol   = trades_on_side.Volume[i]
             start_price = trades_on_side.Price[i]
-            counter    = 0
+            counter     = 0
 
             for j in range(i + 1, len_):
                 delta_time = trades_on_side.Datetime[j] - start_time
-                ##############################################
+                ############################################################################################
                 if delta_time.total_seconds() <= seconds_split and \
-                        ((not same_price_level)
-                        or (same_price_level and start_price == trades_on_side.Price[j])):
+                   ((not same_price_level) or (same_price_level and start_price == trades_on_side.Price[j])):
                     start_vol += trades_on_side.Volume[j]
                     counter   += 1
                 else:
                     break
-                ##############################################
+                ############################################################################################
 
             if counter:
                 vol_.append(start_vol)

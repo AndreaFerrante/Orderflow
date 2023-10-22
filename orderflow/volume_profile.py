@@ -450,3 +450,5 @@ def get_daily_high_and_low_by_session(data: pd.DataFrame):
         lows[i] = current_low
 
     return lows, highs
+
+

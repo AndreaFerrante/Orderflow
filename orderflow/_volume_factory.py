@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.configuration import *
+from .exceptions import ColumnNotPresent
 from dateutil.parser import parse
 
 
@@ -16,6 +17,26 @@ def half_hour(x) -> str:
         return "30"
     else:
         return "00"
+
+
+def get_correct_trade_order(ticker:pd.DataFrame=None):
+
+    if 'Sequence' not in ticker.columns:
+        raise ColumnNotPresent("Column Sequence not present inside the initial DataFrame. Provide it.")
+
+    if 'Datetime' not in ticker.columns:
+        raise ColumnNotPresent("Column Datetime not present inside the initial DataFrame. Provide it.")
+
+    if isinstance(ticker, pd.DataFrame):
+        ticker = polars.from_pandas(ticker)
+
+    ticker = ticker.with_columns(Datetime = ticker['Datetime'].str.to_datetime())
+    ticker = ticker.with_columns(Hour     = ticker['Datetime'].dt.hour())
+    ticker = ticker.with_columns(Minute   = ticker['Datetime'].dt.minute())
+    ticker = ticker.with_columns(Second   = ticker['Datetime'].dt.second())
+
+    return ticker.sort(['Date', 'Hour', 'Minute', 'Second', 'Sequence'],
+                       descending=[False, False, False, False, False]).to_pandas()
 
 
 def prepare_data(

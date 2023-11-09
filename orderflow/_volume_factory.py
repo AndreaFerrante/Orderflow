@@ -19,7 +19,7 @@ def half_hour(x) -> str:
         return "00"
 
 
-def get_correct_trade_order(ticker:pd.DataFrame=None):
+def get_correct_trade_order(ticker=None):
 
     """
     Processes a DataFrame representing trade order data to ensure chronological ordering and correct sequence.
@@ -57,6 +57,10 @@ def get_correct_trade_order(ticker:pd.DataFrame=None):
     - The function depends on the 'polars' library for DataFrame conversion and manipulation.
     - The function expects the 'Date' and 'Time' columns to be in a format that can be concatenated and parsed into a datetime object.
     """
+
+    if ticker is None:
+        raise Exception('Please, pass a ticker as dataframe or in Polars or in Pandas !')
+        return
 
     if 'Sequence' not in ticker.columns:
         raise ColumnNotPresent("Column Sequence not present inside the initial DataFrame. Provide it.")
@@ -283,9 +287,11 @@ def get_tickers_in_folder(
 
     if offset:
         stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
-        return stacked.sort(["Date", "Time"]).to_pandas()
+        stacked = get_correct_trade_order(stacked)
+        return stacked
     else:
-        return stacked.sort(["Date", "Time"]).to_pandas()
+        stacked = get_correct_trade_order(stacked)
+        return stacked
 
 
 def get_orders_in_row(

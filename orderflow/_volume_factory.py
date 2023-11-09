@@ -21,22 +21,64 @@ def half_hour(x) -> str:
 
 def get_correct_trade_order(ticker:pd.DataFrame=None):
 
+    """
+    Processes a DataFrame representing trade order data to ensure chronological ordering and correct sequence.
+
+    The function performs several checks and operations on the input DataFrame:
+    - Validates the presence of 'Sequence', 'Date', and 'Time' columns. Raises `ColumnNotPresent` exception if missing.
+    - Converts the DataFrame to a Polars DataFrame for efficient processing if it's a pandas DataFrame.
+    - Creates a 'Datetime' column by concatenating 'Date' and 'Time' columns and then converting the result into a datetime object.
+    - Extracts hour, minute, and second components from the 'Datetime' column.
+    - Sorts the DataFrame by 'Date', 'Hour', 'Minute', 'Second', and 'Sequence' in ascending order to maintain the correct order of trades.
+    - Drops the 'Hour', 'Minute', and 'Second' columns before returning the processed DataFrame.
+
+    Parameters:
+    - ticker (pd.DataFrame, optional): The trade order DataFrame to process. Defaults to None.
+
+    Returns:
+    - pd.DataFrame: The processed DataFrame with trades in the correct chronological order and without the time component columns.
+
+    Raises:
+    - ColumnNotPresent: If the 'Sequence', 'Date', or 'Time' columns are not present in the input DataFrame.
+
+    Examples:
+    ```
+    # Example DataFrame with Date, Time, and Sequence columns
+    df = pd.DataFrame({
+        'Sequence': [1, 2, 3],
+        'Date': ['2021-01-01', '2021-01-01', '2021-01-01'],
+        'Time': ['09:30:00', '09:30:01', '09:30:02'],
+        ...
+    })
+    processed_df = get_correct_trade_order(df)
+    ```
+
+    Note:
+    - The function depends on the 'polars' library for DataFrame conversion and manipulation.
+    - The function expects the 'Date' and 'Time' columns to be in a format that can be concatenated and parsed into a datetime object.
+    """
+
     if 'Sequence' not in ticker.columns:
         raise ColumnNotPresent("Column Sequence not present inside the initial DataFrame. Provide it.")
+        return
 
-    if 'Datetime' not in ticker.columns:
-        raise ColumnNotPresent("Column Datetime not present inside the initial DataFrame. Provide it.")
+    if 'Date' not in ticker.columns or 'Time' not in ticker.columns:
+        raise ColumnNotPresent("Column Date or Time not present inside the initial DataFrame. Provide it.")
+        return
 
     if isinstance(ticker, pd.DataFrame):
         ticker = polars.from_pandas(ticker)
 
-    ticker = ticker.with_columns(Datetime = ticker['Datetime'].str.to_datetime())
+    if 'Datetime' not in ticker.columns:
+        ticker = ticker.with_columns(Datetime = ticker['Date'] + ' ' + ticker['Time'])
+        ticker = ticker.with_columns(Datetime = ticker['Datetime'].str.to_datetime())
+
     ticker = ticker.with_columns(Hour     = ticker['Datetime'].dt.hour())
     ticker = ticker.with_columns(Minute   = ticker['Datetime'].dt.minute())
     ticker = ticker.with_columns(Second   = ticker['Datetime'].dt.second())
+    ticker = ticker.sort(['Date', 'Hour', 'Minute', 'Second', 'Sequence'], descending=[False, False, False, False, False])
 
-    return ticker.sort(['Date', 'Hour', 'Minute', 'Second', 'Sequence'],
-                       descending=[False, False, False, False, False]).to_pandas()
+    return ticker.drop(['Hour', 'Minute', 'Second']).to_pandas()
 
 
 def prepare_data(

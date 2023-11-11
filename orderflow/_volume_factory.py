@@ -230,10 +230,10 @@ def get_tickers_in_folder(
             else:
                 return value
 
-        ########################################################################################################
+        ###################################################################################################################
         '''This is the apply pandas function but in Polars, much faster'''
-        ticker_to_correct = ticker_to_correct.with_columns(Time = ticker['Time'].map_elements(pad_after_period))
-        ########################################################################################################
+        ticker_to_correct = ticker_to_correct.with_columns(Time = ticker_to_correct['Time'].map_elements(pad_after_period))
+        ###################################################################################################################
         
         return ticker_to_correct
 

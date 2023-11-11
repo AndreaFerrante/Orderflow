@@ -173,7 +173,7 @@ def get_tickers_in_pg_table(
 
 
 def get_tickers_in_folder(
-        path:        str, 
+        path:        str  = None, 
         single_file: str  = None,
         ticker:      str  = "ES", 
         cols:        list = None, 
@@ -251,6 +251,9 @@ def get_tickers_in_folder(
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Datetime'].str.to_datetime())
         
         return single_file_polars
+
+    if path is None:
+        raise Exception("Pass to the function a path where the files are stored in.")
 
     print("Get tickers in folder...")
 

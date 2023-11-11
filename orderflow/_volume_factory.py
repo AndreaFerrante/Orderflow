@@ -19,75 +19,7 @@ def half_hour(x) -> str:
         return "00"
 
 
-def get_correct_trade_order(ticker=None):
-
-    """
-    Processes a DataFrame representing trade order data to ensure chronological ordering and correct sequence.
-
-    The function performs several checks and operations on the input DataFrame:
-    - Validates the presence of 'Sequence', 'Date', and 'Time' columns. Raises `ColumnNotPresent` exception if missing.
-    - Converts the DataFrame to a Polars DataFrame for efficient processing if it's a pandas DataFrame.
-    - Creates a 'Datetime' column by concatenating 'Date' and 'Time' columns and then converting the result into a datetime object.
-    - Extracts hour, minute, and second components from the 'Datetime' column.
-    - Sorts the DataFrame by 'Date', 'Hour', 'Minute', 'Second', and 'Sequence' in ascending order to maintain the correct order of trades.
-    - Drops the 'Hour', 'Minute', and 'Second' columns before returning the processed DataFrame.
-
-    Parameters:
-    - ticker (pd.DataFrame, optional): The trade order DataFrame to process. Defaults to None.
-
-    Returns:
-    - pd.DataFrame: The processed DataFrame with trades in the correct chronological order and without the time component columns.
-
-    Raises:
-    - ColumnNotPresent: If the 'Sequence', 'Date', or 'Time' columns are not present in the input DataFrame.
-
-    Examples:
-    ```
-    # Example DataFrame with Date, Time, and Sequence columns
-    df = pd.DataFrame({
-        'Sequence': [1, 2, 3],
-        'Date': ['2021-01-01', '2021-01-01', '2021-01-01'],
-        'Time': ['09:30:00', '09:30:01', '09:30:02'],
-        ...
-    })
-    processed_df = get_correct_trade_order(df)
-    ```
-
-    Note:
-    - The function depends on the 'polars' library for DataFrame conversion and manipulation.
-    - The function expects the 'Date' and 'Time' columns to be in a format that can be concatenated and parsed into a datetime object.
-    """
-
-    if ticker is None:
-        raise Exception('Please, pass a ticker as dataframe or in Polars or in Pandas !')
-        return
-
-    if 'Sequence' not in ticker.columns:
-        raise ColumnNotPresent("Column Sequence not present inside the initial DataFrame. Provide it.")
-        return
-
-    if 'Date' not in ticker.columns or 'Time' not in ticker.columns:
-        raise ColumnNotPresent("Column Date or Time not present inside the initial DataFrame. Provide it.")
-        return
-
-    if isinstance(ticker, pd.DataFrame):
-        ticker = polars.from_pandas(ticker)
-
-    if 'Datetime' not in ticker.columns:
-        ticker = ticker.with_columns(Datetime = ticker['Date'] + ' ' + ticker['Time'])
-        ticker = ticker.with_columns(Datetime = ticker['Datetime'].str.to_datetime())
-
-    ticker = ticker.with_columns(Hour     = ticker['Datetime'].dt.hour())
-    ticker = ticker.with_columns(Minute   = ticker['Datetime'].dt.minute())
-    ticker = ticker.with_columns(Second   = ticker['Datetime'].dt.second())
-    ticker = ticker.sort(['Date', 'Hour', 'Minute', 'Second', 'Sequence'], descending=[False, False, False, False, False])
-
-    return ticker.drop(['Hour', 'Minute', 'Second']).to_pandas()
-
-
-def prepare_data(
-        data: pd.DataFrame
-) -> pd.DataFrame:
+def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     Given usual data recorded, this function returns it corrected since its CSV recoding so it adds pandas datatypes
@@ -115,9 +47,7 @@ def prepare_data(
     return data
 
 
-def get_longest_columns_dataframe(
-        path: str, ticker: str = "ES"
-) -> list:
+def get_longest_columns_dataframe(path: str, ticker: str = "ES") -> list:
 
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
     cols  = [x for x in range(99999)]  # Dummy list for having the cols as big as possible...
@@ -243,7 +173,13 @@ def get_tickers_in_pg_table(
 
 
 def get_tickers_in_folder(
-        path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999, offset: int = 0, extension:str = 'txt'
+        path: str, 
+        single_file:str  = None,
+        ticker:     str  = "ES", 
+        cols:       list = None, 
+        break_at:   int  = 99999, 
+        offset:     int  = 0, 
+        extension:  str  = 'txt'
 ):
 
     """
@@ -254,15 +190,69 @@ def get_tickers_in_folder(
     :param cols: columns to import...
     :param break_at: how many ticker files do we have to read ?
     :param offset: offset to a created datetime column
+    :param extension: this it the file extension
+    :param single_file: this is the whole path and file name in case we would like to read a specific file
     :return: DataFrame of all read ticker files
 
     Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
     """
 
-    print(f"Get tickers in folder...")
+    def correct_time_nanoseconds(ticker_to_correct:polars.DataFrame=None):
+        
+        '''
+        OS sometimes record incorrectly the immediate initial nanoseconds at the beginning of a single second.
+        This function gets all the nanoseconds recorded at the same padding length.
+        '''
+        
+        if ticker_to_correct is None:
+            raise Exception("Pass a DataFrame to clear the Time column on !")
+        
+        if isinstance(ticker_to_correct, pd.DataFrame):
+            ticker_to_correct = polars.DataFrame(ticker_to_correct)
+        
+        def pad_after_period(value):
+            if '.' in value:
+                before_dot, after_dot = value.split('.', 1)
+                padded_after_dot      = after_dot.rjust(6, '0')
+                return f"{before_dot}.{padded_after_dot}"
+            else:
+                return value
+
+        ########################################################################################################
+        '''This is the apply pandas function but in Polars, much faster'''
+        ticker_to_correct = ticker_to_correct.with_columns(Time = ticker['Time'].map_elements(pad_after_period))
+        ########################################################################################################
+        
+        return ticker_to_correct
+
+    def apply_offset(stacked):
+        
+        '''Data needs sometime time to be shifted due to sytem time rgistration'''
+        
+        if offset:
+            stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
+            stacked = stacked.sort(['Datetime'], descending=False)
+            return stacked.to_pandas()
+        else:
+            stacked = stacked.sort(['Datetime'], descending=False)
+            return stacked.to_pandas()
 
     if cols is None:
         cols = get_longest_columns_dataframe(path=path, ticker=ticker)
+
+    '''Read one file only'''
+    if single_file is not None:
+        
+        print(f"Reading one single file, only...")
+        
+        single_file_polars = polars.read_csv(single_file, separator=';', columns=cols, infer_schema_length=10_000)
+        single_file_polars = correct_time_nanoseconds(single_file_polars)
+        single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])
+        single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Datetime'].str.to_datetime())
+        
+        return single_file_polars
+
+    print(f"Get tickers in folder...")
 
     ticker  = str(ticker).upper()
     files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
@@ -280,23 +270,16 @@ def get_tickers_in_folder(
         if idx >= break_at:
             break
 
-    print(f"Get tickers in folder, adding Datetime...")
-    stacked = stacked.with_columns(Datetime=stacked['Date'] + ' ' + stacked['Time'])
-    stacked = stacked.with_columns(Datetime=stacked['Datetime'].str.ljust(26, '0'))
-    stacked = stacked.with_columns(Datetime=stacked['Datetime'].str.to_datetime())
+    print(f"Correcting Time and adding Datetime...")
+    stacked = correct_time_nanoseconds(stacked)
+    stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
+    stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
+    stacked = apply_offset(stacked)
 
-    if offset:
-        stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
-        stacked = get_correct_trade_order(stacked)
-        return stacked
-    else:
-        stacked = get_correct_trade_order(stacked)
-        return stacked
+    return stacked
 
 
-def get_orders_in_row(
-        trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False
-) -> (pd.DataFrame, pd.DataFrame):
+def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False) -> (pd.DataFrame, pd.DataFrame):
 
     '''
     This function gets prints "anxiety" over the tape :-)
@@ -316,7 +299,7 @@ def get_orders_in_row(
             present += 1
 
     if present < 2:
-        raise Exception('Please, provide a trade dataframe that has Date and Time columns')
+        raise Exception('Please, provide a trade dataframe that has Date and Time columns.')
 
     if 'Datetime' not in trades.columns:
         trades.insert(0, 'Datetime', pd.to_datetime(trades['Date'] + ' ' + trades['Time']))
@@ -324,7 +307,8 @@ def get_orders_in_row(
     elif 'Datetime' in trades.columns:
         trades.sort_values(['Datetime'], ascending=True, inplace=True)
 
-    def manage_speed_of_tape(trades_on_side: pd.DataFrame, side: int = 2,
+    def manage_speed_of_tape(trades_on_side: pd.DataFrame, 
+                             side: int              = 2,
                              same_price_level: bool = False) -> pd.DataFrame:
 
         ############################## EXECUTE TRADES ON SIDE SEPARATELY ####################################
@@ -358,6 +342,7 @@ def get_orders_in_row(
                 vol_.append(start_vol)
                 dt_.append(trades_on_side.Datetime[j - 1])
                 price_.append(trades_on_side.Price[j - 1])
+                seq_.append(trades_on_side.Sequence[j - 1])
                 idx_.append(trades_on_side.Index[j - 1])
                 count_.append(counter + 1)
                 i = i + counter + 1
@@ -428,9 +413,7 @@ def plot_half_hour_volume(
     plt.tight_layout()
 
 
-def get_volume_distribution(
-        data: pd.DataFrame
-) -> pd.DataFrame:
+def get_volume_distribution(data: pd.DataFrame) -> pd.DataFrame:
 
     value_counts_num = pd.DataFrame(data["Volume"].value_counts()).reset_index()
     value_counts_num = value_counts_num.rename(columns={"Volume": "VolumeCount", "index": "VolumeSize"})
@@ -445,9 +428,7 @@ def get_volume_distribution(
     return stats
 
 
-def get_new_start_date(
-        data: pd.DataFrame, sort_values: bool = False
-) -> pd.DataFrame:
+def get_new_start_date(data: pd.DataFrame, sort_values: bool = False) -> pd.DataFrame:
     '''
     This function marks with one the start of a new date
     :param data: canonical dataframe
@@ -468,9 +449,7 @@ def get_new_start_date(
     return data.drop(['Date_Shift'], axis=1)
 
 
-def get_market_evening_session(
-        data: pd.DataFrame
-):
+def get_market_evening_session(data: pd.DataFrame):
     '''
     This function defines session start and end given Chicago Time.
     Pass to this function a DataFrame with Datetime offset !

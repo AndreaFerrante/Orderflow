@@ -47,11 +47,23 @@ def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def get_longest_columns_dataframe(path: str, ticker: str = "ES") -> list:
+def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: str = '') -> list:
 
+    cols = [x for x in range(99999)]
+
+
+    '''Get one file only to scan'''
+    if single_file is not None:
+        
+        single = pd.read_csv(single_file, sep=";", nrows=5)
+        if len(single.columns) < len(cols):
+            cols = single.columns
+        
+        return list(cols)       
+
+
+    '''Get multiple file to scan'''
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
-    cols  = [x for x in range(99999)]  # Dummy list for having the cols as big as possible...
-
     for file in files:
 
         single = pd.read_csv(os.path.join(path, file), sep=";", nrows=2)  # Read only first two rows to read teh columns !
@@ -238,7 +250,7 @@ def get_tickers_in_folder(
             return stacked.to_pandas()
 
     if cols is None:
-        cols = get_longest_columns_dataframe(path=path, ticker=ticker)
+        cols = get_longest_columns_dataframe(path=path, ticker=ticker, single_file=single_file)
 
     '''Read one file only'''
     if single_file is not None:

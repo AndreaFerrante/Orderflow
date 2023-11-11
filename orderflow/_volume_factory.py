@@ -173,13 +173,13 @@ def get_tickers_in_pg_table(
 
 
 def get_tickers_in_folder(
-        path: str, 
-        single_file:str  = None,
-        ticker:     str  = "ES", 
-        cols:       list = None, 
-        break_at:   int  = 99999, 
-        offset:     int  = 0, 
-        extension:  str  = 'txt'
+        path:        str, 
+        single_file: str  = None,
+        ticker:      str  = "ES", 
+        cols:        list = None, 
+        break_at:    int  = 99999, 
+        offset:      int  = 0, 
+        extension:   str  = 'txt'
 ):
 
     """
@@ -243,7 +243,7 @@ def get_tickers_in_folder(
     '''Read one file only'''
     if single_file is not None:
         
-        print(f"Reading one single file, only...")
+        print("Reading one single file, only...")
         
         single_file_polars = polars.read_csv(single_file, separator=';', columns=cols, infer_schema_length=10_000)
         single_file_polars = correct_time_nanoseconds(single_file_polars)
@@ -252,7 +252,7 @@ def get_tickers_in_folder(
         
         return single_file_polars
 
-    print(f"Get tickers in folder...")
+    print("Get tickers in folder...")
 
     ticker  = str(ticker).upper()
     files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
@@ -374,12 +374,7 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_sa
     return ask, bid
 
 
-def plot_half_hour_volume(
-        data_already_read: bool,
-        data: pd.DataFrame,
-        data_path: str = "",
-        data_name: str = "",
-) -> None:
+def plot_half_hour_volume(data_already_read: bool, data: pd.DataFrame, data_path: str = "", data_name: str = "" ) -> None:
 
     """
     This function helps to understand the "volume smile" so that the peak in volume given hal hours is the market open

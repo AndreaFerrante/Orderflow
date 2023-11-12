@@ -258,9 +258,11 @@ def get_tickers_in_folder(
         print("Reading one single file, only...")
         
         single_file_polars = polars.read_csv(single_file, separator=';', columns=cols, infer_schema_length=10_000)
+        single_file_polars = single_file_polars.filter((single_file_polars['Date'] != "1899-12-30") & (single_file_polars['Price'] > 0))
         single_file_polars = correct_time_nanoseconds(single_file_polars)
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Datetime'].str.to_datetime())
+        single_file_polars = apply_offset(single_file_polars)
         
         return single_file_polars
 

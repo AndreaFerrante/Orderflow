@@ -260,9 +260,8 @@ def get_tickers_in_folder(
         single_file_polars = correct_time_nanoseconds(single_file_polars)
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Datetime'].str.to_datetime())
-        single_file_polars = apply_offset(single_file_polars)
         
-        return single_file_polars
+        return apply_offset(single_file_polars)
 
     if path is None:
         raise Exception("Pass to the function a path where the files are stored in.")

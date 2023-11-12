@@ -192,7 +192,7 @@ def get_tickers_in_folder(
         break_at:    int  = 99999, 
         offset:      int  = 0, 
         extension:   str  = 'txt'
-):
+) -> polars.DataFrame:
 
     """
     Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES).
@@ -204,7 +204,7 @@ def get_tickers_in_folder(
     :param offset: offset to a created datetime column
     :param extension: this it the file extension
     :param single_file: this is the whole path and file name in case we would like to read a specific file
-    :return: DataFrame of all read ticker files
+    :return: polars.DataFrame of all read ticker files
 
     Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
     """
@@ -243,11 +243,9 @@ def get_tickers_in_folder(
         
         if offset:
             stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
-            stacked = stacked.sort(['Datetime'], descending=False)
-            return stacked.to_pandas()
+            return stacked.sort(['Datetime'], descending=False)
         else:
-            stacked = stacked.sort(['Datetime'], descending=False)
-            return stacked.to_pandas()
+            return stacked.sort(['Datetime'], descending=False)
 
     if cols is None:
         cols = get_longest_columns_dataframe(path=path, ticker=ticker, single_file=single_file)
@@ -291,9 +289,7 @@ def get_tickers_in_folder(
     stacked = correct_time_nanoseconds(stacked)
     stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
     stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
-    stacked = apply_offset(stacked)
-
-    return stacked
+    return apply_offset(stacked)
 
 
 def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False) -> (pd.DataFrame, pd.DataFrame):

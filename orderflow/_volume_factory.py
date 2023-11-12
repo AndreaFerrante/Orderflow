@@ -354,7 +354,6 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_sa
                 vol_.append(start_vol)
                 dt_.append(trades_on_side.Datetime[j - 1])
                 price_.append(trades_on_side.Price[j - 1])
-                seq_.append(trades_on_side.Sequence[j - 1])
                 idx_.append(trades_on_side.Index[j - 1])
                 count_.append(counter + 1)
                 i = i + counter + 1

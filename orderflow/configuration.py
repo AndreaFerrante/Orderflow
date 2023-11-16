@@ -56,5 +56,20 @@ FUTURE_LETTERS         = pd.DataFrame({'Expiry_Month':['January',
                                            'V',
                                            'X',
                                            'Z']})
+FUTURE_VALUES          = pd.DataFrame({'Ticker':    ['ES',
+                                                     'ZB',
+                                                     'ZN',
+                                                     'FESX',
+                                                     'FGBL'],
+                                       'Tick_Value':[12.5,
+                                                     31.25,
+                                                     15.625,
+                                                     10,
+                                                     10],
+                                       'Tick_Size': [0.25,
+                                                     0.03125,
+                                                     0.015625,
+                                                     1,
+                                                     0.1]})
 
 

@@ -5,7 +5,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def get_montecarlo_analysis(trades:pd.DataFrame, n_rows_sample:int, n_simulations:int=100, entry_col_name:str='Entry_Gains'):
+def get_montecarlo_analysis(trades:pd.DataFrame,
+                            n_rows_sample:int,
+                            n_simulations:int  = 100,
+                            entry_col_name:str = 'Entry_Gains'):
 
     '''
     This function performs MonteCarlo charting.
@@ -13,7 +16,7 @@ def get_montecarlo_analysis(trades:pd.DataFrame, n_rows_sample:int, n_simulation
     emulate "n_simulations" equity curve patterns. For better visualisation, trades has to contain at least 50 trades.
     A very good MonteCarlo chart should have positive overall slope and none of the pattern should be below zero.
 
-    trades: Trades as returned by OrderFlow package backtester
+    trades: Trades as returned by OrderFlow backtester function
     n_simulations: Number of simulations (i.e. random sampling with replacement) to be performed
     n_rows_sample: Number of samples (i.e. rows extracted from the trades DataFrame) extracted at every iteration
     entry_col_name: Column trades's name containing the gain per single trade
@@ -30,6 +33,7 @@ def get_montecarlo_analysis(trades:pd.DataFrame, n_rows_sample:int, n_simulation
 
     if not 'Datetime' in trades.columns:
         raise Exception('Attention, trades Dataframe has no Datetime column.')
+
 
 
     n_simulations  = 500

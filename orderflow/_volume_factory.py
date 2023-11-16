@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.configuration import *
+from .exceptions import ColumnNotPresent
 from dateutil.parser import parse
 
 
@@ -18,9 +19,7 @@ def half_hour(x) -> str:
         return "00"
 
 
-def prepare_data(
-        data: pd.DataFrame
-) -> pd.DataFrame:
+def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
 
     """
     Given usual data recorded, this function returns it corrected since its CSV recoding so it adds pandas datatypes
@@ -48,13 +47,23 @@ def prepare_data(
     return data
 
 
-def get_longest_columns_dataframe(
-        path: str, ticker: str = "ES"
-) -> list:
+def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: str = '') -> list:
 
+    cols = [x for x in range(99999)]
+
+
+    '''Get one file only to scan'''
+    if single_file is not None:
+        
+        single = pd.read_csv(single_file, sep=";", nrows=5)
+        if len(single.columns) < len(cols):
+            cols = single.columns
+        
+        return list(cols)       
+
+
+    '''Get multiple file to scan'''
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
-    cols  = [x for x in range(99999)]  # Dummy list for having the cols as big as possible...
-
     for file in files:
 
         single = pd.read_csv(os.path.join(path, file), sep=";", nrows=2)  # Read only first two rows to read teh columns !
@@ -176,8 +185,14 @@ def get_tickers_in_pg_table(
 
 
 def get_tickers_in_folder(
-        path: str, ticker: str = "ES", cols: list = None, break_at: int = 99999, offset: int = 0, extension:str = 'txt'
-):
+        path:        str  = None, 
+        single_file: str  = None,
+        ticker:      str  = "ES", 
+        cols:        list = None, 
+        break_at:    int  = 99999, 
+        offset:      int  = 0, 
+        extension:   str  = 'txt'
+) -> polars.DataFrame:
 
     """
     Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES).
@@ -187,15 +202,71 @@ def get_tickers_in_folder(
     :param cols: columns to import...
     :param break_at: how many ticker files do we have to read ?
     :param offset: offset to a created datetime column
-    :return: DataFrame of all read ticker files
+    :param extension: this it the file extension
+    :param single_file: this is the whole path and file name in case we would like to read a specific file
+    :return: polars.DataFrame of all read ticker files
 
     Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
     """
 
-    print(f"Get tickers in folder...")
+    def correct_time_nanoseconds(ticker_to_correct:polars.DataFrame=None):
+        
+        '''
+        OS sometimes record incorrectly the immediate initial nanoseconds at the beginning of a single second.
+        This function gets all the nanoseconds recorded at the same padding length.
+        '''
+        
+        if ticker_to_correct is None:
+            raise Exception("Pass a DataFrame to clear the Time column on !")
+        
+        if isinstance(ticker_to_correct, pd.DataFrame):
+            ticker_to_correct = polars.DataFrame(ticker_to_correct)
+        
+        def pad_after_period(value):
+            if '.' in value:
+                before_dot, after_dot = value.split('.', 1)
+                padded_after_dot      = after_dot.rjust(6, '0')
+                return f"{before_dot}.{padded_after_dot}"
+            else:
+                return value
+
+        ###################################################################################################################
+        '''This is the apply pandas function but in Polars, much faster'''
+        ticker_to_correct = ticker_to_correct.with_columns(Time = ticker_to_correct['Time'].map_elements(pad_after_period))
+        ###################################################################################################################
+        
+        return ticker_to_correct
+
+    def apply_offset(stacked):
+        
+        '''Data needs sometime time to be shifted due to sytem time rgistration'''
+        
+        if offset:
+            stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
+            return stacked.sort(['Datetime'], descending=False)
+        else:
+            return stacked.sort(['Datetime'], descending=False)
 
     if cols is None:
-        cols = get_longest_columns_dataframe(path=path, ticker=ticker)
+        cols = get_longest_columns_dataframe(path=path, ticker=ticker, single_file=single_file)
+
+    '''Read one file only'''
+    if single_file is not None:
+        
+        print("Reading one single file, only...")
+        
+        single_file_polars = polars.read_csv(single_file, separator=';', columns=cols, infer_schema_length=10_000)
+        single_file_polars = single_file_polars.filter((single_file_polars['Date'] != "1899-12-30") & (single_file_polars['Price'] > 0))
+        single_file_polars = correct_time_nanoseconds(single_file_polars)
+        single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])
+        single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Datetime'].str.to_datetime())
+        
+        return apply_offset(single_file_polars)
+
+    if path is None:
+        raise Exception("Pass to the function a path where the files are stored in.")
+
+    print("Get tickers in folder...")
 
     ticker  = str(ticker).upper()
     files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
@@ -213,21 +284,14 @@ def get_tickers_in_folder(
         if idx >= break_at:
             break
 
-    print(f"Get tickers in folder, adding Datetime...")
-    stacked = stacked.with_columns(Datetime=stacked['Date'] + ' ' + stacked['Time'])
-    stacked = stacked.with_columns(Datetime=stacked['Datetime'].str.ljust(26, '0'))
-    stacked = stacked.with_columns(Datetime=stacked['Datetime'].str.to_datetime())
-
-    if offset:
-        stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
-        return stacked.sort(["Date", "Time"]).to_pandas()
-    else:
-        return stacked.sort(["Date", "Time"]).to_pandas()
+    print(f"Correcting Time and adding Datetime...")
+    stacked = correct_time_nanoseconds(stacked)
+    stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
+    stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
+    return apply_offset(stacked)
 
 
-def get_orders_in_row(
-        trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False
-) -> (pd.DataFrame, pd.DataFrame):
+def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False) -> (pd.DataFrame, pd.DataFrame):
 
     '''
     This function gets prints "anxiety" over the tape :-)
@@ -247,7 +311,7 @@ def get_orders_in_row(
             present += 1
 
     if present < 2:
-        raise Exception('Please, provide a trade dataframe that has Date and Time columns')
+        raise Exception('Please, provide a trade dataframe that has Date and Time columns.')
 
     if 'Datetime' not in trades.columns:
         trades.insert(0, 'Datetime', pd.to_datetime(trades['Date'] + ' ' + trades['Time']))
@@ -255,7 +319,8 @@ def get_orders_in_row(
     elif 'Datetime' in trades.columns:
         trades.sort_values(['Datetime'], ascending=True, inplace=True)
 
-    def manage_speed_of_tape(trades_on_side: pd.DataFrame, side: int = 2,
+    def manage_speed_of_tape(trades_on_side: pd.DataFrame, 
+                             side: int              = 2,
                              same_price_level: bool = False) -> pd.DataFrame:
 
         ############################## EXECUTE TRADES ON SIDE SEPARATELY ####################################
@@ -269,22 +334,21 @@ def get_orders_in_row(
 
         while i < len_:
 
-            start_time = trades_on_side.Datetime[i]
-            start_vol  = trades_on_side.Volume[i]
+            start_time  = trades_on_side.Datetime[i]
+            start_vol   = trades_on_side.Volume[i]
             start_price = trades_on_side.Price[i]
-            counter    = 0
+            counter     = 0
 
             for j in range(i + 1, len_):
                 delta_time = trades_on_side.Datetime[j] - start_time
-                ##############################################
+                ############################################################################################
                 if delta_time.total_seconds() <= seconds_split and \
-                        ((not same_price_level)
-                        or (same_price_level and start_price == trades_on_side.Price[j])):
+                   ((not same_price_level) or (same_price_level and start_price == trades_on_side.Price[j])):
                     start_vol += trades_on_side.Volume[j]
                     counter   += 1
                 else:
                     break
-                ##############################################
+                ############################################################################################
 
             if counter:
                 vol_.append(start_vol)
@@ -321,12 +385,7 @@ def get_orders_in_row(
     return ask, bid
 
 
-def plot_half_hour_volume(
-        data_already_read: bool,
-        data: pd.DataFrame,
-        data_path: str = "",
-        data_name: str = "",
-) -> None:
+def plot_half_hour_volume(data_already_read: bool, data: pd.DataFrame, data_path: str = "", data_name: str = "" ) -> None:
 
     """
     This function helps to understand the "volume smile" so that the peak in volume given hal hours is the market open
@@ -360,9 +419,7 @@ def plot_half_hour_volume(
     plt.tight_layout()
 
 
-def get_volume_distribution(
-        data: pd.DataFrame
-) -> pd.DataFrame:
+def get_volume_distribution(data: pd.DataFrame) -> pd.DataFrame:
 
     value_counts_num = pd.DataFrame(data["Volume"].value_counts()).reset_index()
     value_counts_num = value_counts_num.rename(columns={"Volume": "VolumeCount", "index": "VolumeSize"})
@@ -377,9 +434,7 @@ def get_volume_distribution(
     return stats
 
 
-def get_new_start_date(
-        data: pd.DataFrame, sort_values: bool = False
-) -> pd.DataFrame:
+def get_new_start_date(data: pd.DataFrame, sort_values: bool = False) -> pd.DataFrame:
     '''
     This function marks with one the start of a new date
     :param data: canonical dataframe
@@ -400,9 +455,7 @@ def get_new_start_date(
     return data.drop(['Date_Shift'], axis=1)
 
 
-def get_market_evening_session(
-        data: pd.DataFrame
-):
+def get_market_evening_session(data: pd.DataFrame):
     '''
     This function defines session start and end given Chicago Time.
     Pass to this function a DataFrame with Datetime offset !

@@ -10,6 +10,7 @@ from orderflow._volume_factory import (
     get_volume_distribution,
     get_new_start_date,
     get_orders_in_row,
+    get_orders_in_row_v2,
     get_market_evening_session,
     print_constants
 )

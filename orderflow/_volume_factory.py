@@ -384,6 +384,218 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_sa
 
     return ask, bid
 
+def get_orders_in_row_v1_2(trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False,
+                         min_volume_summation:int = 100000) -> (pd.DataFrame, pd.DataFrame):
+
+    '''
+    This function gets prints "anxiety" over the tape :-)
+    !!! Attention !!! Pass to this function a dataset in which the  the "Datetime" columns is in datetime format.
+
+    :param trades: canonical trades executed
+    :param seconds_split: seconds to measure the speed of the tape
+    :param orders_on_same_price_level: if True, the anxiety is considered on orders at same price level
+    :param min_volume_summation: minimum value of volume summation to reach in order to trigger a new order
+    :return: anxiety over the market on both ask/bid sides
+    '''
+
+    print(f"Get orders in row...")
+
+    present = 0
+    for el in ['Date', 'Time']:
+        if el in trades.columns:
+            present += 1
+
+    if present < 2:
+        raise Exception('Please, provide a trade dataframe that has Date and Time columns.')
+
+    if 'Datetime' not in trades.columns:
+        trades.insert(0, 'Datetime', pd.to_datetime(trades['Date'] + ' ' + trades['Time']))
+        trades.sort_values(['Datetime'], ascending=True, inplace=True)
+    elif 'Datetime' in trades.columns:
+        trades.sort_values(['Datetime'], ascending=True, inplace=True)
+
+    def manage_speed_of_tape(trades_on_side: pd.DataFrame,
+                             side: int              = 2,
+                             same_price_level: bool = False,
+                             min_vol_summation:int = 100000) -> pd.DataFrame:
+
+        ############################## EXECUTE TRADES ON SIDE SEPARATELY ####################################
+        trades_on_side = trades_on_side[(trades_on_side.TradeType == side)].reset_index(drop=True)
+        trades_on_side.sort_values(['Datetime'], ascending=True, inplace=True)
+        #####################################################################################################
+
+        vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
+        len_ = trades_on_side.shape[0]
+        i = 0
+
+        while i < len_:
+
+            start_time  = trades_on_side.Datetime[i]
+            start_vol   = trades_on_side.Volume[i]
+            start_price = trades_on_side.Price[i]
+            counter     = 0
+
+            for j in range(i + 1, len_):
+                delta_time = trades_on_side.Datetime[j] - start_time
+                ############################################################################################
+                if delta_time.total_seconds() <= seconds_split and \
+                   ((not same_price_level) or (same_price_level and start_price == trades_on_side.Price[j])):
+                    start_vol += trades_on_side.Volume[j]
+                    counter   += 1
+
+                    if start_vol >= min_vol_summation:
+                        break
+                else:
+                    break
+                ############################################################################################
+
+            if counter:
+                if start_vol >= min_vol_summation:
+                    vol_.append(start_vol)
+                    dt_.append(trades_on_side.Datetime[j - 1])
+                    price_.append(trades_on_side.Price[j - 1])
+                    idx_.append(trades_on_side.Index[j - 1])
+                    count_.append(counter + 1)
+                i = i + counter + 1
+            else:
+                i += 1
+
+        return pd.DataFrame({'Datetime':   dt_,
+                             'Volume':     vol_,
+                             'Counter':    count_,
+                             'Price':      price_,
+                             'TradeType':  [side] * len(price_),
+                             'Index':      idx_})
+
+    ask = None
+    bid = None
+
+    # Manage speed of tape on the ASK, first
+    try:
+        ask = manage_speed_of_tape(trades,
+                                   2,
+                                   orders_on_same_price_level,
+                                   min_volume_summation).sort_values(['Datetime'], ascending=True)
+    except Exception as e:
+        print(e)
+
+    # Manage speed of tape on the BID, secondly.
+    try:
+        bid = manage_speed_of_tape(trades,
+                                   1,
+                                   orders_on_same_price_level,
+                                   min_volume_summation).sort_values(['Datetime'], ascending=True)
+    except Exception as e:
+        print(e)
+
+    return ask, bid
+
+def get_orders_in_row_v2(trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False,
+                         min_volume_summation:int = 100000,
+                         reset_counter_at_summation: bool = True) -> (pd.DataFrame, pd.DataFrame):
+
+    '''
+    This function gets prints "anxiety" over the tape :-)
+    !!! Attention !!! Pass to this function a dataset in which the  the "Datetime" columns is in datetime format.
+    This version includes also single trade with volume greater than min summation
+
+    :param trades: canonical trades executed
+    :param seconds_split: seconds to measure the speed of the tape
+    :param orders_on_same_price_level: if True, the anxiety is considered on orders at same price level
+    :param min_volume_summation: minimum value of volume summation to reach in order to trigger a new order
+    :param reset_counter_at_summation: if True when the summation of volume reaches the min the counter restart
+    :return: anxiety over the market on both ask/bid sides
+    '''
+
+    print(f"Get orders in row...")
+
+    present = 0
+    for el in ['Date', 'Time']:
+        if el in trades.columns:
+            present += 1
+
+    if present < 2:
+        raise Exception('Please, provide a trade dataframe that has Date and Time columns.')
+
+    if 'Datetime' not in trades.columns:
+        trades.insert(0, 'Datetime', pd.to_datetime(trades['Date'] + ' ' + trades['Time']))
+        trades.sort_values(['Datetime'], ascending=True, inplace=True)
+    elif 'Datetime' in trades.columns:
+        trades.sort_values(['Datetime'], ascending=True, inplace=True)
+
+    def manage_speed_of_tape(trades_on_side: pd.DataFrame,
+                             side: int = 2,
+                             same_price_level: bool = False,
+                             min_vol_summation: float = 0,
+                             reset_cnt_at_summation: bool = False) -> pd.DataFrame:
+
+        trades_on_side = trades_on_side[(trades_on_side.TradeType == side)].reset_index(drop=True)
+        trades_on_side.sort_values(['Datetime'], ascending=True, inplace=True)
+
+        vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
+        len_ = trades_on_side.shape[0]
+        i = 0
+
+        start_vol, start_time, start_price, counter = 0, trades_on_side.Datetime[i], trades_on_side.Price[i], 0
+
+        for j in range(i, len_):
+            delta_time = trades_on_side.Datetime[j] - start_time
+
+            if delta_time.total_seconds() <= seconds_split and \
+                    ((not same_price_level) or (same_price_level and start_price == trades_on_side.Price[j])):
+                start_vol += trades_on_side.Volume[j]
+                counter += 1
+            else:
+                start_vol = trades_on_side.Volume[j]
+                counter = 1
+                start_time = trades_on_side.Datetime[j]
+                start_price = trades_on_side.Price[j]
+
+            if start_vol >= min_vol_summation:
+                vol_.append(start_vol)
+                dt_.append(trades_on_side.Datetime[j])
+                price_.append(trades_on_side.Price[j])
+                idx_.append(trades_on_side.Index[j])
+                count_.append(counter)
+
+                if i < len_ and reset_cnt_at_summation:
+                    start_vol = 0
+                    counter = 0
+                    start_time = trades_on_side.Datetime[j + 1]
+                    start_price = trades_on_side.Price[j + 1]
+
+        return pd.DataFrame({'Datetime': dt_,
+                             'Volume': vol_,
+                             'Counter': count_,
+                             'Price': price_,
+                             'TradeType': [side] * len(price_),
+                             'Index': idx_})
+
+    ask = None
+    bid = None
+
+    # Manage speed of tape on the ASK, first
+    try:
+        ask = manage_speed_of_tape(trades,
+                                   2,
+                                   orders_on_same_price_level,
+                                   min_volume_summation,
+                                   reset_counter_at_summation).sort_values(['Datetime'], ascending=True)
+    except Exception as e:
+        print(e)
+
+    # Manage speed of tape on the BID, secondly.
+    try:
+        bid = manage_speed_of_tape(trades,
+                                   1,
+                                   orders_on_same_price_level,
+                                   min_volume_summation,
+                                   reset_counter_at_summation).sort_values(['Datetime'], ascending=True)
+    except Exception as e:
+        print(e)
+
+    return ask, bid
+
 
 def plot_half_hour_volume(data_already_read: bool, data: pd.DataFrame, data_path: str = "", data_name: str = "" ) -> None:
 

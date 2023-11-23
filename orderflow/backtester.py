@@ -206,6 +206,9 @@ def backtester(
     loss_       = loss * sl * n_contacts * tick_value
     commission_ = entry_counter * n_contacts * commission
     net_profit_ = profit_ - loss_ - commission_
+    profit_net_factor =  net_profit_ / loss_ if loss_ else net_profit_
+
+
 
     print("\n")
     print(
@@ -225,7 +228,7 @@ def backtester(
         entry_counter,
         "\n",
         "-- PROFIT NET FACTOR",
-        round( net_profit_ / loss_, 2 ),
+        round( profit_net_factor, 2 ),
         "\n",
         "-- PROFIT RATE",
         round( success / (success + loss), 2),
@@ -248,7 +251,7 @@ def backtester(
                                      'Commissions': [round(commission_, 2)],
                                      'Net Profit': [round(net_profit_, 2)],
                                      'Total Trades': [entry_counter],
-                                     'Profit Net Factor': [round( net_profit_ / loss_, 2 )],
+                                     'Profit Net Factor': [round( profit_net_factor, 2 )],
                                      'Profit Rate': [round( success / (success + loss), 2)],
                                      'Min Date': [data['Date'].min()],
                                      'Max Date': [data['Date'].max()]})

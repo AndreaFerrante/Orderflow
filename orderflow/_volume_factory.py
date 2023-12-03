@@ -291,7 +291,7 @@ def get_tickers_in_folder(
     return apply_offset(stacked)
 
 
-def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False,
+def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_on_same_price_level: bool = False,
                          min_volume_summation:int = 100000) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -333,7 +333,7 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_sa
 
         vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
         len_ = trades_on_side.shape[0]
-        i = 0
+        i    = 0
 
         while i < len_:
 
@@ -397,8 +397,11 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: int = 1, orders_on_sa
 
     return ask, bid
 
-def get_orders_in_row_v2(trades: pd.DataFrame, seconds_split: int = 1, orders_on_same_price_level: bool = False,
-                         min_volume_summation:int = 100000,
+
+def get_orders_in_row_v2(trades: pd.DataFrame, 
+                         seconds_split: float             = 1.0, 
+                         orders_on_same_price_level: bool = True,
+                         min_volume_summation:int         = 1_000_000,
                          reset_counter_at_summation: bool = True) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -414,8 +417,6 @@ def get_orders_in_row_v2(trades: pd.DataFrame, seconds_split: int = 1, orders_on
     :return: anxiety over the market on both ask/bid sides
     '''
 
-    print(f"Get orders in row...")
-
     present = 0
     for el in ['Date', 'Time']:
         if el in trades.columns:
@@ -430,53 +431,63 @@ def get_orders_in_row_v2(trades: pd.DataFrame, seconds_split: int = 1, orders_on
     elif 'Datetime' in trades.columns:
         trades.sort_values(['Datetime'], ascending=True, inplace=True)
 
-    def manage_speed_of_tape(trades_on_side: pd.DataFrame,
-                             side: int = 2,
-                             same_price_level: bool = False,
-                             min_vol_summation: float = 0,
-                             reset_cnt_at_summation: bool = False) -> pd.DataFrame:
+    def manage_speed_of_tape(trades_on_side:         pd.DataFrame,
+                             side:                   int   = 1,
+                             same_price_level:       bool  = True,
+                             reset_cnt_at_summation: bool  = True,
+                             min_vol_summation:      int   = 0) -> pd.DataFrame:
 
         trades_on_side = trades_on_side[(trades_on_side.TradeType == side)].reset_index(drop=True)
         trades_on_side.sort_values(['Datetime'], ascending=True, inplace=True)
 
         vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
         len_ = trades_on_side.shape[0]
-        i = 0
 
-        start_vol, start_time, start_price, counter = 0, trades_on_side.Datetime[i], trades_on_side.Price[i], 0
+        counter       = 0
+        start_vol     = 0
+        volume_arr    = np.array( trades_on_side['Volume'] )
+        datetime_arr  = np.array( trades_on_side['Datetime'] )
+        price_arr     = np.array( trades_on_side['Price'] )
+        index_arr     = np.array( trades_on_side['Index'] )
+        start_time    = datetime_arr[0]
+        start_price   = price_arr[0]
 
-        for j in range(i, len_):
-            delta_time = trades_on_side.Datetime[j] - start_time
+        print('Processing get_order_in_row_v2 . . .')
 
-            if delta_time.total_seconds() <= seconds_split and \
-                    ((not same_price_level) or (same_price_level and start_price == trades_on_side.Price[j])):
-                start_vol += trades_on_side.Volume[j]
-                counter += 1
+        for j in tqdm(range(len_)):
+            
+            ###########################################################
+            delta_time = (datetime_arr[j] - start_time).total_seconds()
+            ###########################################################
+
+            if (delta_time <= seconds_split) & ((not same_price_level) | (same_price_level and start_price == price_arr[j])):
+                start_vol  += volume_arr[j]
+                counter    += 1
             else:
-                start_vol = trades_on_side.Volume[j]
-                counter = 1
-                start_time = trades_on_side.Datetime[j]
-                start_price = trades_on_side.Price[j]
+                counter     = 1
+                start_vol   = volume_arr[j]
+                start_time  = datetime_arr[j]
+                start_price = price_arr[j]
 
             if start_vol >= min_vol_summation:
-                vol_.append(start_vol)
-                dt_.append(trades_on_side.Datetime[j])
-                price_.append(trades_on_side.Price[j])
-                idx_.append(trades_on_side.Index[j])
                 count_.append(counter)
+                vol_.append(start_vol)
+                idx_.append(index_arr[j])
+                dt_.append(datetime_arr[j])
+                price_.append(price_arr[j])
 
-                if i < len_ and reset_cnt_at_summation:
-                    start_vol = 0
-                    counter = 0
-                    start_time = trades_on_side.Datetime[j + 1]
-                    start_price = trades_on_side.Price[j + 1]
+                if j<len_ and reset_cnt_at_summation:
+                    start_vol   = 0
+                    counter     = 0
+                    start_time  = datetime_arr[j + 1]
+                    start_price = price_arr[j + 1]
 
-        return pd.DataFrame({'Datetime': dt_,
-                             'Volume': vol_,
-                             'Counter': count_,
-                             'Price': price_,
+        return pd.DataFrame({'Datetime':   dt_,
+                             'Volume':     vol_,
+                             'Counter':    count_,
+                             'Price':      price_,
                              'TradeType': [side] * len(price_),
-                             'Index': idx_})
+                             'Index':      idx_})
 
     ask = None
     bid = None

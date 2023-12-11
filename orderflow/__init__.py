@@ -61,6 +61,8 @@ from orderflow.configuration import (
     VWAP_BAND_OFFSET_1,
     VWAP_BAND_OFFSET_2,
     VWAP_BAND_OFFSET_3,
-    VWAP_BAND_OFFSET_4
+    VWAP_BAND_OFFSET_4,
+    FUTURE_LETTERS,
+    FUTURE_VALUES
 
 )

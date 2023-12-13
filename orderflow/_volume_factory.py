@@ -437,7 +437,7 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
                              reset_cnt_at_summation: bool  = True,
                              min_vol_summation:      int   = 0) -> pd.DataFrame:
 
-        trades_on_side = trades_on_side[(trades_on_side.TradeType == side)].reset_index(drop=True)
+        trades_on_side = trades_on_side[(trades_on_side['TradeType'] == side)].reset_index(drop=True)
         trades_on_side.sort_values(['Datetime'], ascending=True, inplace=True)
 
         vol_, dt_, count_, price_, idx_ = list(), list(), list(), list(), list()
@@ -446,9 +446,9 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
         counter       = 0
         start_vol     = 0
         volume_arr    = np.array( trades_on_side['Volume'] )
-        datetime_arr  = np.array( trades_on_side['Datetime'] )
         price_arr     = np.array( trades_on_side['Price'] )
         index_arr     = np.array( trades_on_side['Index'] )
+        datetime_arr  = trades_on_side['Datetime']
         start_time    = datetime_arr[0]
         start_price   = price_arr[0]
 

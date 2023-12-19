@@ -191,7 +191,8 @@ def get_tickers_in_folder(
         cols:        list = None, 
         break_at:    int  = 99999, 
         offset:      int  = 0, 
-        extension:   str  = 'txt'
+        extension:   str  = 'txt',
+        separator:   str  = ';'
 ) -> polars.DataFrame:
 
     """
@@ -232,7 +233,7 @@ def get_tickers_in_folder(
 
         #####################################################################################################################################
         '''This is the apply pandas function but in Polars, much faster'''
-        ticker_to_correct = ticker_to_correct.with_columns(Time = ticker_to_correct['Time'].map_elements(pad_after_period, skip_nulls=False))
+        ticker_to_correct = ticker_to_correct.with_columns(Time = ticker_to_correct['Time'].map_elements(pad_after_period))
         #####################################################################################################################################
         
         return ticker_to_correct
@@ -255,7 +256,7 @@ def get_tickers_in_folder(
         
         print("Reading one single file, only...")
         
-        single_file_polars = polars.read_csv(single_file, separator=';', columns=cols, infer_schema_length=10_000)
+        single_file_polars = polars.read_csv(single_file, separator=separator, columns=cols, infer_schema_length=10_000)
         single_file_polars = single_file_polars.filter((single_file_polars['Date'] != "1899-12-30") & (single_file_polars['Price'] > 0))
         single_file_polars = correct_time_nanoseconds(single_file_polars)
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])

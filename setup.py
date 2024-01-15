@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="Orderflow",
-    version="0.1.0",
+    version="0.3.0",
     description="Orderflow trading data manager and data reshaper",
     author="Andrea Ferrante",
     author_email="nonicknamethankyou@gmail.com",

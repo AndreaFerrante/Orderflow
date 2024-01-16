@@ -399,10 +399,11 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_o
     return ask, bid
 
 
-def get_orders_in_row_v2(trades: pd.DataFrame, 
-                         seconds_split: float             = 1.0, 
+def get_orders_in_row_v2(trades: pd.DataFrame,
+                         seconds_split: float             = 1.0,
                          orders_on_same_price_level: bool = True,
                          min_volume_summation:int         = 1_000_000,
+                         min_num_of_trades                = 1,
                          reset_counter_at_summation: bool = True) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -436,6 +437,7 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
                              side:                   int   = 1,
                              same_price_level:       bool  = True,
                              reset_cnt_at_summation: bool  = True,
+                             min_num_of_trades:      int   = 1,
                              min_vol_summation:      int   = 0) -> pd.DataFrame:
 
         trades_on_side = trades_on_side[(trades_on_side['TradeType'] == side)].reset_index(drop=True)
@@ -470,7 +472,7 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
                 start_time  = datetime_arr[j]
                 start_price = price_arr[j]
 
-            if start_vol >= min_vol_summation:
+            if (start_vol >= min_vol_summation) & (counter >= min_num_of_trades):
                 count_.append(counter)
                 vol_.append(start_vol)
                 idx_.append(index_arr[j])
@@ -498,8 +500,9 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
         ask = manage_speed_of_tape(trades,
                                    2,
                                    orders_on_same_price_level,
-                                   min_volume_summation,
-                                   reset_counter_at_summation).sort_values(['Datetime'], ascending=True)
+                                   reset_counter_at_summation,
+                                   min_num_of_trades,
+                                   min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
         print(e)
 
@@ -508,8 +511,9 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
         bid = manage_speed_of_tape(trades,
                                    1,
                                    orders_on_same_price_level,
-                                   min_volume_summation,
-                                   reset_counter_at_summation).sort_values(['Datetime'], ascending=True)
+                                   reset_counter_at_summation,
+                                   min_num_of_trades,
+                                   min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
         print(e)
 

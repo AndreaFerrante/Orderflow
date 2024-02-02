@@ -69,6 +69,15 @@ def backtester(
     # ###########################################
 
 
+    #############################################
+    len_             = data.shape[0]
+    price_array      = np.array(data.Price)
+    datetime_all     = np.array(data.Index)
+    datetime_signal  = np.array(signal.Index)
+    signal_tradetype = np.array(signal.TradeType)
+    #############################################
+
+
     if not 'Index' in data.columns:
         raise Exception('Please, provide DataFrame with Index column.')
 
@@ -85,6 +94,10 @@ def backtester(
                         agg({'IndexFirst': 'first',
                              'IndexLast':  'last'}).
                         reset_index())
+        
+        # Let's filter the entries to avoid ENTERING OUTSIDE RTH hours...
+        
+
 
     present = 0
     for el in ['Date', 'Time']:
@@ -93,14 +106,6 @@ def backtester(
 
     if present < 2:
         raise Exception('Please, provide a dataset with Date and Time columns.')
-
-    ############################################
-    len_             = data.shape[0]
-    price_array      = np.array(data.Price)
-    datetime_all     = np.array(data.Index)
-    datetime_signal  = np.array(signal.Index)
-    signal_tradetype = np.array(signal.TradeType)
-    ############################################
 
     entry_time_      = []
     exit_time_       = []
@@ -125,6 +130,14 @@ def backtester(
 
     print('\n')
     for i in tqdm(range(len_)):
+
+        if trade_in_RTH:
+            # If we are not in position...
+            if entry_price == 0:
+                any(np.where((RTH_indexes['IndexFirst'] <= datetime_signal[i]) & (datetime_signal[i] <= RTH_indexes['IndexLast']), True, False))
+            # ...if we are in position.
+            else:
+                pass
 
         if entries_times[i] and not entry_price:
 

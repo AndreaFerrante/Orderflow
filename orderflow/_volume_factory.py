@@ -289,6 +289,7 @@ def get_tickers_in_folder(
     stacked = correct_time_nanoseconds(stacked)
     stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
     stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
+    
     return apply_offset(stacked)
 
 
@@ -599,7 +600,7 @@ def get_market_evening_session(data: pd.DataFrame):
     print(f"Assign sessions labels...")
 
     condlist   = [(data.Datetime.dt.time >= SESSION_START_TIME) & (data.Datetime.dt.time <= SESSION_END_TIME),
-                (data.Datetime.dt.time <= SESSION_START_TIME) | (data.Datetime.dt.time >= SESSION_END_TIME)]
+                  (data.Datetime.dt.time <= SESSION_START_TIME) | (data.Datetime.dt.time >= SESSION_END_TIME)]
     choicelist = ['RTH', 'ETH']
 
     return np.select(condlist, choicelist)

@@ -29,7 +29,8 @@ def backtester(
     n_contacts: int   = 1,
     slippage_max: int = 0,
     save_path: str    = '',
-    adapt_sl_tp_to_slippage: bool = False
+    adapt_sl_tp_to_slippage: bool = False,
+    trade_in_RTH: bool = False
 ) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -46,6 +47,7 @@ def backtester(
     :param slippage_max: max number of random ticks of slippage to pick
     :param save_path: if not empty, path where to save the final trades
     :param adapt_sl_tp_to_slippage: move tp and sl given slippage
+    :param trade_in_RTH: close/open trades just during RTH trading session (not before/after RTH session)
     :return: 2 dataframes: one for the backtest, and one with all single trades ticks
     '''
 
@@ -140,7 +142,7 @@ def backtester(
                 sl = SL_CONSTANT
                 tp = TP_CONSTANT
 
-        # ---> Long trade...
+        # ---> We are having a long trade...
         elif entry_price != 0 and trade_type == 2:
 
             position = 'LONG'
@@ -171,7 +173,7 @@ def backtester(
                         datetime_all, datetime_signal, i, signal_idx
                     )
 
-        # ---> Short trade...
+        # ---> We are having a short trade...
         elif entry_price != 0 and trade_type == 1:
 
             position = 'SHORT'

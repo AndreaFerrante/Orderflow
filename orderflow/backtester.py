@@ -2,6 +2,7 @@ from tqdm import tqdm
 import random
 import numpy as np
 import pandas as pd
+from .exceptions import SessionTypeAbsent
 
 
 def update_datetime_signal_index(datetime_all, datetime_signal, index_, signal_idx_):
@@ -69,7 +70,21 @@ def backtester(
 
 
     if not 'Index' in data.columns:
-        raise Exception('Please, provide DataFrame with Index column !')
+        raise Exception('Please, provide DataFrame with Index column.')
+
+    if trade_in_RTH and 'Sessions' not in data.columns:
+        raise SessionTypeAbsent('No SessionType column inside DataFrame passed but trade_in_RTH set to True: provide SessionType column.')
+
+    RTH_indexes = pd.DataFrame()
+    if trade_in_RTH:
+        RTH_indexes = (data.
+                        query('SessionType == "RTH"').
+                        assign(IndexFirst = data.Index).
+                        assign(IndexLast  = data.Index).
+                        groupby(['Date', 'SessionType']).
+                        agg({'IndexFirst': 'first',
+                             'IndexLast':  'last'}).
+                        reset_index())
 
     present = 0
     for el in ['Date', 'Time']:

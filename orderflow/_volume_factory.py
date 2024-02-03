@@ -1,10 +1,12 @@
 import os
+import pytz
 import polars
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.configuration import *
+from datetime import datetime, timedelta
 from .exceptions import ColumnNotPresent
 from dateutil.parser import parse
 
@@ -17,6 +19,29 @@ def half_hour(x) -> str:
         return "30"
     else:
         return "00"
+
+
+def get_days_tz_diff(start_date, end_date, tz_start_str:str='Europe/Rome', tz_end_str:str='America/Chicago'):
+
+    #####################################
+    # # Start and end dates
+    # start_date = datetime(2021, 1, 1)
+    # end_date   = datetime(2023, 12, 31)
+    #####################################
+
+    # Define the timezones for Chicago and Rome
+    end_tz       = pytz.timezone(tz_end_str)
+    start_tz     = pytz.timezone(tz_start_str)
+    current_date = start_date
+
+    while current_date < end_date:
+
+        ref_end_tz      = end_tz.localize(current_date)
+        ref_start_tz    = start_tz.localize(current_date)
+        time_difference = (ref_start_tz - ref_end_tz).total_seconds() / 3600
+        
+        print(f"Week starting {current_date.strftime('%Y-%m-%d')}, Chicago to Rome time difference: {time_difference} hours")
+        current_date += timedelta(days=1)
 
 
 def prepare_data(data: pd.DataFrame) -> pd.DataFrame:

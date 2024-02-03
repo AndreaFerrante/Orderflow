@@ -23,6 +23,29 @@ def half_hour(x) -> str:
 
 def get_days_tz_diff(start_date, end_date, tz_start_str:str='Europe/Rome', tz_end_str:str='America/Chicago'):
 
+    """
+    Calculates and prints the time difference in hours between two timezones for each day in a specified date range.
+    
+    This function iterates through each day from the start_date to the end_date, calculates the time difference
+    between the start timezone (defaulting to Europe/Rome) and the end timezone (defaulting to America/Chicago),
+    and prints the difference in hours along with the date. This can be useful for analyzing the impact of daylight
+    saving time changes over the specified period.
+
+    Parameters:
+    - start_date (datetime.date or datetime.datetime): The start date of the period for which to calculate time differences.
+    - end_date (datetime.date or datetime.datetime): The end date of the period for which to calculate time differences.
+    - tz_start_str (str, optional): The IANA timezone database string for the start timezone. Defaults to 'Europe/Rome'.
+    - tz_end_str (str, optional): The IANA timezone database string for the end timezone. Defaults to 'America/Chicago'.
+
+    Returns:
+    - None: This function prints the time difference for each day in the specified range but does not return any value.
+
+    Note:
+    - The function assumes that both start_date and end_date are provided as timezone-naive objects and that
+      the times for comparison at both locations are equivalent (i.e., same local time in both timezones).
+    - The time difference calculation accounts for daylight saving time changes, if any, in the specified timezones.
+    """
+
     #####################################
     # # Start and end dates
     # start_date = datetime(2021, 1, 1)

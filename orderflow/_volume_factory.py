@@ -114,8 +114,34 @@ def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
 
 def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: str = '') -> list:
 
-    cols = [x for x in range(99999)]
+    """
+    Scans CSV files in a given directory (optionally, a single file) to identify the file with the least number of columns.
+    This is useful for determining a consistent set of columns when dealing with multiple CSV files that may have different structures.
 
+    Args:
+        path (str): The directory path containing CSV files to scan. Ignored if `single_file` is specified.
+        ticker (str): A filter to select files starting with this ticker symbol. Defaults to "ES".
+                      Only used when scanning multiple files in a directory.
+        single_file (str): Path to a single CSV file to scan. If specified, `path` is ignored, and only this file is scanned.
+
+    Returns:
+        list: A list containing the names of the columns of the file with the least number of columns. 
+              If `single_file` is specified, it returns the columns from that file.
+
+    Note:
+        - This function assumes that all CSV files are delimited by semicolons (`;`).
+        - Only the first few rows of each file (2 for multiple files, 5 for a single file) are read to determine the columns,
+          which improves performance when working with large files.
+
+    Example:
+        # For scanning all files in a directory
+        columns = get_longest_columns_dataframe('/path/to/csv/files', ticker='AAPL')
+        
+        # For scanning a single file
+        columns = get_longest_columns_dataframe('/path/to/csv/files', single_file='/path/to/csv/file.csv')
+    """
+
+    cols = [x for x in range(99999)]
 
     '''Get one file only to scan'''
     if single_file is not None:
@@ -124,8 +150,7 @@ def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: st
         if len(single.columns) < len(cols):
             cols = single.columns
         
-        return list(cols)       
-
+        return list(cols)
 
     '''Get multiple file to scan'''
     files = [x for x in os.listdir(path) if x.startswith(ticker)]

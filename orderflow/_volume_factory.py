@@ -13,6 +13,23 @@ from dateutil.parser import parse
 
 def half_hour(x) -> str:
 
+    """
+    Determines whether a given minute falls in the first or second half of an hour.
+
+    Args:
+        x (int): The minute part of a time, expected to be between 0 and 59.
+
+    Returns:
+        str: Returns "30" if the given minute is 30 or more, indicating the second half of an hour.
+             Returns "00" if the minute is less than 30, indicating the first half of an hour.
+
+    Example:
+        >>> half_hour(45)
+        '30'
+        >>> half_hour(10)
+        '00'
+    """
+
     print(f"Half hour...")
 
     if x >= 30:

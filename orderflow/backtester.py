@@ -2,7 +2,7 @@ from tqdm import tqdm
 import random
 import numpy as np
 import pandas as pd
-from .exceptions import SessionTypeAbsent
+from .exceptions import SessionTypeAbsent, IndexAbsent
 
 
 def update_datetime_signal_index(datetime_all, datetime_signal, index_, signal_idx_):
@@ -32,7 +32,8 @@ def backtester(
     save_path: str    = '',
     adapt_sl_tp_to_slippage: bool = False,
     trade_in_RTH: bool = False
-) -> (pd.DataFrame, pd.DataFrame):
+    ) -> (pd.DataFrame, pd.DataFrame):
+
 
     '''
     This function is a high speed for loop to tick by tick check all the trades given take profit and stop loss.
@@ -53,7 +54,7 @@ def backtester(
     '''
 
 
-    # ##########################################
+    #region UNCOMMENT TO TEST THE BACKTESTER FUNCTION
     # ##########################################
     # # Uncomment below to test this function...
     # data          = ticker
@@ -65,8 +66,22 @@ def backtester(
     # commission    = 4.0
     # n_contacts    = 1
     # slippage_max  = 1
-    # ###########################################
-    # ###########################################
+    #endregion
+
+
+    if not 'Index' in data.columns:
+        raise IndexAbsent('Please, provide DataFrame with Index column to procede.')
+
+    if trade_in_RTH and 'SessionType' not in data.columns:
+        raise SessionTypeAbsent('No SessionType column inside DataFrame passed but trade_in_RTH set to True: provide SessionType column.')
+
+    present = 0
+    for el in ['Date', 'Time']:
+        if el in data.columns:
+            present += 1
+
+    if present < 2:
+        raise Exception('Please, provide a dataset with Date and Time columns.')
 
 
     #############################################
@@ -77,12 +92,6 @@ def backtester(
     signal_tradetype = np.array(signal.TradeType)
     #############################################
 
-
-    if not 'Index' in data.columns:
-        raise Exception('Please, provide DataFrame with Index column.')
-
-    if trade_in_RTH and 'Sessions' not in data.columns:
-        raise SessionTypeAbsent('No SessionType column inside DataFrame passed but trade_in_RTH set to True: provide SessionType column.')
 
     RTH_indexes = pd.DataFrame()
     if trade_in_RTH:
@@ -96,16 +105,14 @@ def backtester(
                         reset_index())
         
         # Let's filter the entries to avoid ENTERING OUTSIDE RTH hours...
-        
+        datetime_signal_RTH = np.zeros(0)
+        for idx, row in RTH_indexes.iterrows():
+            datetime_signal_filtered = datetime_signal[(datetime_signal >= row['IndexFirst']) & (datetime_signal <= row['IndexLast'])]
+            datetime_signal_RTH      = np.append(datetime_signal_RTH, datetime_signal_filtered)
 
+        # We have filtered out all those trading indexes that were NOT in the RTH, so preventing ENTERING during incorrect time...
+        datetime_signal = datetime_signal_RTH
 
-    present = 0
-    for el in ['Date', 'Time']:
-        if el in data.columns:
-            present += 1
-
-    if present < 2:
-        raise Exception('Please, provide a dataset with Date and Time columns.')
 
     entry_time_      = []
     exit_time_       = []
@@ -124,20 +131,13 @@ def backtester(
     SL_CONSTANT      = sl
     TP_CONSTANT      = tp
 
+
     #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
     ###############################################################################
 
-    print('\n')
-    for i in tqdm(range(len_)):
 
-        if trade_in_RTH:
-            # If we are not in position...
-            if entry_price == 0:
-                any(np.where((RTH_indexes['IndexFirst'] <= datetime_signal[i]) & (datetime_signal[i] <= RTH_indexes['IndexLast']), True, False))
-            # ...if we are in position.
-            else:
-                pass
+    for i in tqdm(range(len_)):
 
         if entries_times[i] and not entry_price:
 
@@ -232,12 +232,12 @@ def backtester(
                         datetime_all, datetime_signal, i, signal_idx
                     )
 
+
     profit_     = success * tp * n_contacts * tick_value
     loss_       = loss * sl * n_contacts * tick_value
     commission_ = entry_counter * n_contacts * commission
     net_profit_ = profit_ - loss_ - commission_
     profit_net_factor =  net_profit_ / loss_ if loss_ else net_profit_
-
 
 
     print("\n")

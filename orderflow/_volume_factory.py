@@ -1,15 +1,34 @@
 import os
+import pytz
 import polars
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.configuration import *
+from datetime import datetime, timedelta
 from .exceptions import ColumnNotPresent
 from dateutil.parser import parse
 
 
 def half_hour(x) -> str:
+
+    """
+    Determines whether a given minute falls in the first or second half of an hour.
+
+    Args:
+        x (int): The minute part of a time, expected to be between 0 and 59.
+
+    Returns:
+        str: Returns "30" if the given minute is 30 or more, indicating the second half of an hour.
+             Returns "00" if the minute is less than 30, indicating the first half of an hour.
+
+    Example:
+        >>> half_hour(45)
+        '30'
+        >>> half_hour(10)
+        '00'
+    """
 
     print(f"Half hour...")
 
@@ -17,6 +36,52 @@ def half_hour(x) -> str:
         return "30"
     else:
         return "00"
+
+
+def get_days_tz_diff(start_date, end_date, tz_start_str:str='Europe/Rome', tz_end_str:str='America/Chicago'):
+
+    """
+    Calculates and prints the time difference in hours between two timezones for each day in a specified date range.
+    
+    This function iterates through each day from the start_date to the end_date, calculates the time difference
+    between the start timezone (defaulting to Europe/Rome) and the end timezone (defaulting to America/Chicago),
+    and prints the difference in hours along with the date. This can be useful for analyzing the impact of daylight
+    saving time changes over the specified period.
+
+    Parameters:
+    - start_date (datetime.date or datetime.datetime): The start date of the period for which to calculate time differences.
+    - end_date (datetime.date or datetime.datetime): The end date of the period for which to calculate time differences.
+    - tz_start_str (str, optional): The IANA timezone database string for the start timezone. Defaults to 'Europe/Rome'.
+    - tz_end_str (str, optional): The IANA timezone database string for the end timezone. Defaults to 'America/Chicago'.
+
+    Returns:
+    - None: This function prints the time difference for each day in the specified range but does not return any value.
+
+    Note:
+    - The function assumes that both start_date and end_date are provided as timezone-naive objects and that
+      the times for comparison at both locations are equivalent (i.e., same local time in both timezones).
+    - The time difference calculation accounts for daylight saving time changes, if any, in the specified timezones.
+    """
+
+    #####################################
+    # # Start and end dates
+    # start_date = datetime(2021, 1, 1)
+    # end_date   = datetime(2023, 12, 31)
+    #####################################
+
+    # Define the timezones for Chicago and Rome
+    end_tz       = pytz.timezone(tz_end_str)
+    start_tz     = pytz.timezone(tz_start_str)
+    current_date = start_date
+
+    while current_date < end_date:
+
+        ref_end_tz      = end_tz.localize(current_date)
+        ref_start_tz    = start_tz.localize(current_date)
+        time_difference = (ref_start_tz - ref_end_tz).total_seconds() / 3600
+        
+        print(f"Week starting {current_date.strftime('%Y-%m-%d')}, Chicago to Rome time difference: {time_difference} hours")
+        current_date += timedelta(days=1)
 
 
 def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
@@ -49,8 +114,34 @@ def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
 
 def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: str = '') -> list:
 
-    cols = [x for x in range(99999)]
+    """
+    Scans CSV files in a given directory (optionally, a single file) to identify the file with the least number of columns.
+    This is useful for determining a consistent set of columns when dealing with multiple CSV files that may have different structures.
 
+    Args:
+        path (str): The directory path containing CSV files to scan. Ignored if `single_file` is specified.
+        ticker (str): A filter to select files starting with this ticker symbol. Defaults to "ES".
+                      Only used when scanning multiple files in a directory.
+        single_file (str): Path to a single CSV file to scan. If specified, `path` is ignored, and only this file is scanned.
+
+    Returns:
+        list: A list containing the names of the columns of the file with the least number of columns. 
+              If `single_file` is specified, it returns the columns from that file.
+
+    Note:
+        - This function assumes that all CSV files are delimited by semicolons (`;`).
+        - Only the first few rows of each file (2 for multiple files, 5 for a single file) are read to determine the columns,
+          which improves performance when working with large files.
+
+    Example:
+        # For scanning all files in a directory
+        columns = get_longest_columns_dataframe('/path/to/csv/files', ticker='AAPL')
+        
+        # For scanning a single file
+        columns = get_longest_columns_dataframe('/path/to/csv/files', single_file='/path/to/csv/file.csv')
+    """
+
+    cols = [x for x in range(99999)]
 
     '''Get one file only to scan'''
     if single_file is not None:
@@ -59,8 +150,7 @@ def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: st
         if len(single.columns) < len(cols):
             cols = single.columns
         
-        return list(cols)       
-
+        return list(cols)
 
     '''Get multiple file to scan'''
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
@@ -399,10 +489,11 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_o
     return ask, bid
 
 
-def get_orders_in_row_v2(trades: pd.DataFrame, 
-                         seconds_split: float             = 1.0, 
+def get_orders_in_row_v2(trades: pd.DataFrame,
+                         seconds_split: float             = 1.0,
                          orders_on_same_price_level: bool = True,
                          min_volume_summation:int         = 1_000_000,
+                         min_num_of_trades                = 1,
                          reset_counter_at_summation: bool = True) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -436,6 +527,7 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
                              side:                   int   = 1,
                              same_price_level:       bool  = True,
                              reset_cnt_at_summation: bool  = True,
+                             min_num_of_trades:      int   = 1,
                              min_vol_summation:      int   = 0) -> pd.DataFrame:
 
         trades_on_side = trades_on_side[(trades_on_side['TradeType'] == side)].reset_index(drop=True)
@@ -470,7 +562,7 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
                 start_time  = datetime_arr[j]
                 start_price = price_arr[j]
 
-            if start_vol >= min_vol_summation:
+            if (start_vol >= min_vol_summation) & (counter >= min_num_of_trades):
                 count_.append(counter)
                 vol_.append(start_vol)
                 idx_.append(index_arr[j])
@@ -498,8 +590,9 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
         ask = manage_speed_of_tape(trades,
                                    2,
                                    orders_on_same_price_level,
-                                   min_volume_summation,
-                                   reset_counter_at_summation).sort_values(['Datetime'], ascending=True)
+                                   reset_counter_at_summation,
+                                   min_num_of_trades,
+                                   min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
         print(e)
 
@@ -508,8 +601,9 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
         bid = manage_speed_of_tape(trades,
                                    1,
                                    orders_on_same_price_level,
-                                   min_volume_summation,
-                                   reset_counter_at_summation).sort_values(['Datetime'], ascending=True)
+                                   reset_counter_at_summation,
+                                   min_num_of_trades,
+                                   min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
         print(e)
 

@@ -491,19 +491,21 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_o
 
 def get_orders_in_row_v2(trades: pd.DataFrame,
                          seconds_split: float             = 1.0,
-                         orders_on_same_price_level: bool = True,
-                         min_volume_summation:int         = 1_000_000,
+                         orders_on_prices_level_range     = 0,
+                         tick_size: float                 = 0.25,
+                         min_volume_summation: int        = 1_000_000,
                          min_num_of_trades                = 1,
                          reset_counter_at_summation: bool = True) -> (pd.DataFrame, pd.DataFrame):
 
     '''
     This function gets prints "anxiety" over the tape :-)
-    !!! Attention !!! Pass to this function a dataset in which the  the "Datetime" columns is in datetime format.
+    !!! Attention !!! Pass to this function a dataset in which the "Datetime" columns is in datetime format.
     This version includes also single trade with volume greater than min summation
 
     :param trades: canonical trades executed
     :param seconds_split: seconds to measure the speed of the tape
-    :param orders_on_same_price_level: if True, the anxiety is considered on orders at same price level
+    :param orders_on_prices_level_range: it is the range in ticks within the volume summation is valid, default = 0 = same price level
+    :param tick_size: single tick size (e.g. for the ES ticker, tick_value=0.25)
     :param min_volume_summation: minimum value of volume summation to reach in order to trigger a new order
     :param reset_counter_at_summation: if True when the summation of volume reaches the min the counter restart
     :return: anxiety over the market on both ask/bid sides
@@ -525,7 +527,8 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
 
     def manage_speed_of_tape(trades_on_side:         pd.DataFrame,
                              side:                   int   = 1,
-                             same_price_level:       bool  = True,
+                             prices_level_range:     int   = 0,
+                             tick_size:              float = 0.25,
                              reset_cnt_at_summation: bool  = True,
                              min_num_of_trades:      int   = 1,
                              min_vol_summation:      int   = 0) -> pd.DataFrame:
@@ -553,7 +556,7 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
             delta_time = (datetime_arr[j] - start_time).total_seconds()
             ###########################################################
 
-            if (delta_time <= seconds_split) & ((not same_price_level) | (same_price_level and start_price == price_arr[j])):
+            if (delta_time <= seconds_split) & ((abs(start_price - price_arr[j]) / tick_size) <= prices_level_range):
                 start_vol  += volume_arr[j]
                 counter    += 1
             else:
@@ -589,7 +592,8 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
     try:
         ask = manage_speed_of_tape(trades,
                                    2,
-                                   orders_on_same_price_level,
+                                   orders_on_prices_level_range,
+                                   tick_size,
                                    reset_counter_at_summation,
                                    min_num_of_trades,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
@@ -600,7 +604,8 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
     try:
         bid = manage_speed_of_tape(trades,
                                    1,
-                                   orders_on_same_price_level,
+                                   orders_on_prices_level_range,
+                                   tick_size,
                                    reset_counter_at_summation,
                                    min_num_of_trades,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)

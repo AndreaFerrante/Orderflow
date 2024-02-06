@@ -70,14 +70,14 @@ def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_
     #####################################
 
     # Define the timezones for Chicago and Rome
-    from_tz       = pytz.timezone(tz_from_str)
+    from_tz   = pytz.timezone(tz_from_str)
     to_tz     = pytz.timezone(tz_to_str)
     current_date = start_date
 
     while current_date < end_date:
 
         ref_from_tz  = from_tz.localize(current_date)
-        ref_to_tz    = current_date.astimezone(to_tz)
+        ref_to_tz    = ref_from_tz.astimezone(to_tz)
 
         time_difference_current_date_from_tz      = int(ref_from_tz.strftime('%z')[1:3])
         time_difference_current_date_from_tz_sign = ref_from_tz.strftime('%z')[0]
@@ -91,7 +91,7 @@ def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_
         else:
             time_difference = time_difference_current_date_to_tz - time_difference_current_date_from_tz
 
-        print(f"Datetime {current_date.strftime('%Y-%m-%d  %H:%M:%S')}, Chicago to Rome time difference: {time_difference} hours")
+        print(f"Datetime {ref_from_tz.strftime('%Y-%m-%d  %H:%M:%S')}, Chicago to Rome time difference: {time_difference} hours")
         current_date += timedelta(days=1)
 
 def convert_datetime_tz(datetime_array:np.array, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago') -> np.array:
@@ -113,7 +113,7 @@ def convert_datetime_tz(datetime_array:np.array, tz_from_str:str='Europe/Rome', 
 
     for dt in enumerate(datetime_array):
         ref_from_tz = from_tz.localize(dt[1])
-        ref_to_tz = dt[1].astimezone(to_tz)
+        ref_to_tz = ref_from_tz.astimezone(to_tz)
         result_array.append(ref_to_tz)
 
     return result_array

@@ -2,6 +2,7 @@ from tqdm import tqdm
 import random
 import numpy as np
 import pandas as pd
+import polars as pl
 from .exceptions import SessionTypeAbsent, IndexAbsent
 
 
@@ -95,15 +96,18 @@ def backtester(
 
     RTH_indexes = pd.DataFrame()
     if trade_in_RTH:
-        RTH_indexes = (data.
-                        query('SessionType == "RTH"').
-                        assign(IndexFirst = data.Index).
-                        assign(IndexLast  = data.Index).
-                        groupby(['Date', 'SessionType']).
-                        agg({'IndexFirst': 'first',
-                             'IndexLast':  'last'}).
-                        reset_index())
         
+        data_ = pl.from_pandas(data[["SessionType", "Date", "Index"]])
+        data_ = data_.filter(pl.col("SessionType") == "RTH")
+        data_ = data_.with_columns(IndexFirst = data_['Index'])
+        data_ = data_.with_columns(IndexLast  = data_['Index'])
+        data_ = (data_.
+                group_by(["Date", "SessionType"]).
+                agg([pl.col("IndexFirst").first(),
+                    pl.col("IndexLast").last()]))
+        data_       = data_.sort("IndexFirst")
+        RTH_indexes = data_.to_pandas()
+                
         # Let's filter the entries to avoid ENTERING OUTSIDE RTH hours...
         datetime_signal_RTH = np.zeros(0)
         for idx, row in RTH_indexes.iterrows():
@@ -169,6 +173,78 @@ def backtester(
             else:
                 sl = SL_CONSTANT
                 tp = TP_CONSTANT
+
+        # Check if we must trade during RTH...
+        elif trade_in_RTH:
+            
+            datetime_signal_RTH = 0
+            for idx, row in RTH_indexes.iterrows():
+                datetime_signal_filtered =  (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
+                datetime_signal_RTH      += datetime_signal_filtered
+
+            if datetime_signal_RTH == 0:
+
+                # ---> We are having a long trade AND real time turned on...
+                if entry_price != 0 and trade_type == 2:
+
+                    position = 'LONG'
+
+                    if entry_price - price_array[i] >= sl * tick_size:
+                        exit_index_.append( datetime_all[i] )
+                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_price_.append( price_array[i] )
+                        entry_type_.append( 'LONG' )
+                        entry_price = 0
+                        loss += 1
+
+                        if signal_idx < len(datetime_signal) - 1:
+                            signal_idx = update_datetime_signal_index(
+                                datetime_all, datetime_signal, i, signal_idx
+                            )
+
+                    elif price_array[i] - entry_price > tp * tick_size:
+                        exit_index_.append( datetime_all[i] )
+                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_price_.append( price_array[i] )
+                        entry_type_.append( 'LONG' )
+                        entry_price = 0
+                        success += 1
+
+                        if signal_idx < len(datetime_signal) - 1:
+                            signal_idx = update_datetime_signal_index(
+                                datetime_all, datetime_signal, i, signal_idx
+                            )
+
+                # ---> We are having a short AND real time turned on...
+                elif entry_price != 0 and trade_type == 1:
+
+                    position = 'SHORT'
+
+                    if entry_price - price_array[i] > tp * tick_size:
+                        exit_index_.append( datetime_all[i])
+                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i])
+                        exit_price_.append( price_array[i])
+                        entry_type_.append( 'SHORT')
+                        entry_price = 0
+                        success += 1
+
+                        if signal_idx < len(datetime_signal) - 1:
+                            signal_idx = update_datetime_signal_index(
+                                datetime_all, datetime_signal, i, signal_idx
+                            )
+
+                    elif price_array[i] - entry_price >= sl * tick_size:
+                        exit_index_.append( datetime_all[i] )
+                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_price_.append( price_array[i] )
+                        entry_type_.append( 'SHORT' )
+                        entry_price = 0
+                        loss += 1
+
+                        if signal_idx < len(datetime_signal) - 1:
+                            signal_idx = update_datetime_signal_index(
+                                datetime_all, datetime_signal, i, signal_idx
+                            )
 
         # ---> We are having a long trade...
         elif entry_price != 0 and trade_type == 2:

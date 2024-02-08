@@ -104,7 +104,7 @@ def backtester(
         data_ = (data_.
                 group_by(["Date", "SessionType"]).
                 agg([pl.col("IndexFirst").first(),
-                    pl.col("IndexLast").last()]))
+                     pl.col("IndexLast").last()]))
         data_       = data_.sort("IndexFirst")
         RTH_indexes = data_.to_pandas()
                 
@@ -174,18 +174,20 @@ def backtester(
                 sl = SL_CONSTANT
                 tp = TP_CONSTANT
 
-        # Check if we must trade during RTH...
-        elif trade_in_RTH:
+            continue
+
+        # Check if we must trade during RTH since we are in potision...
+        elif trade_in_RTH and entry_price != 0:
             
             datetime_signal_RTH = 0
             for idx, row in RTH_indexes.iterrows():
-                datetime_signal_filtered =  (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
-                datetime_signal_RTH      += datetime_signal_filtered
+                datetime_signal_RTH += (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
 
+            # If the current datetime_all[i] index is OUTSIDE the possible index we close the position...
             if datetime_signal_RTH == 0:
 
                 # ---> We are having a long trade AND real time turned on...
-                if entry_price != 0 and trade_type == 2:
+                if trade_type == 2:
 
                     position = 'LONG'
 
@@ -216,7 +218,7 @@ def backtester(
                             )
 
                 # ---> We are having a short AND real time turned on...
-                elif entry_price != 0 and trade_type == 1:
+                elif trade_type == 1:
 
                     position = 'SHORT'
 
@@ -247,7 +249,7 @@ def backtester(
                             )
 
         # ---> We are having a long trade...
-        elif entry_price != 0 and trade_type == 2:
+        if entry_price != 0 and trade_type == 2:
 
             position = 'LONG'
 

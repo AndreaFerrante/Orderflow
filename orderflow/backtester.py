@@ -182,7 +182,7 @@ def backtester(
             datetime_signal_RTH = 0
             for idx, row in RTH_indexes.iterrows():
                 datetime_signal_RTH += (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
-
+            
             # If the current datetime_all[i] index is OUTSIDE the possible index we close the position...
             if datetime_signal_RTH == 0:
 

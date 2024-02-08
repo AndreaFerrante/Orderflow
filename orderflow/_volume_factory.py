@@ -94,6 +94,7 @@ def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_
         print(f"Datetime {ref_from_tz.strftime('%Y-%m-%d  %H:%M:%S')}, Chicago to Rome time difference: {time_difference} hours")
         current_date += timedelta(days=1)
 
+
 def convert_datetime_tz(datetime_array:np.array, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago') -> np.array:
     """
     Calculates and convert naive datetime array from one timezone to another.
@@ -117,6 +118,7 @@ def convert_datetime_tz(datetime_array:np.array, tz_from_str:str='Europe/Rome', 
         result_array.append(ref_to_tz)
 
     return result_array
+
 
 def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
 

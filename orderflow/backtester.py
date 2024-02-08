@@ -2,6 +2,8 @@ from tqdm import tqdm
 import random
 import numpy as np
 import pandas as pd
+import polars as pl
+from .exceptions import SessionTypeAbsent, IndexAbsent
 
 
 def update_datetime_signal_index(datetime_all, datetime_signal, index_, signal_idx_):
@@ -29,8 +31,10 @@ def backtester(
     n_contacts: int   = 1,
     slippage_max: int = 0,
     save_path: str    = '',
-    adapt_sl_tp_to_slippage: bool = False
-) -> (pd.DataFrame, pd.DataFrame):
+    adapt_sl_tp_to_slippage: bool = False,
+    trade_in_RTH: bool = False
+    ) -> (pd.DataFrame, pd.DataFrame):
+
 
     '''
     This function is a high speed for loop to tick by tick check all the trades given take profit and stop loss.
@@ -46,11 +50,12 @@ def backtester(
     :param slippage_max: max number of random ticks of slippage to pick
     :param save_path: if not empty, path where to save the final trades
     :param adapt_sl_tp_to_slippage: move tp and sl given slippage
+    :param trade_in_RTH: close/open trades just during RTH trading session (not before/after RTH session)
     :return: 2 dataframes: one for the backtest, and one with all single trades ticks
     '''
 
 
-    # ##########################################
+    #region UNCOMMENT TO TEST THE BACKTESTER FUNCTION
     # ##########################################
     # # Uncomment below to test this function...
     # data          = ticker
@@ -62,12 +67,14 @@ def backtester(
     # commission    = 4.0
     # n_contacts    = 1
     # slippage_max  = 1
-    # ###########################################
-    # ###########################################
+    #endregion
 
 
     if not 'Index' in data.columns:
-        raise Exception('Please, provide DataFrame with Index column !')
+        raise IndexAbsent('Please, provide DataFrame with Index column to procede.')
+
+    if trade_in_RTH and 'SessionType' not in data.columns:
+        raise SessionTypeAbsent('No SessionType column inside DataFrame passed but trade_in_RTH set to True: provide SessionType column.')
 
     present = 0
     for el in ['Date', 'Time']:
@@ -77,13 +84,39 @@ def backtester(
     if present < 2:
         raise Exception('Please, provide a dataset with Date and Time columns.')
 
-    ############################################
+
+    #############################################
     len_             = data.shape[0]
     price_array      = np.array(data.Price)
     datetime_all     = np.array(data.Index)
     datetime_signal  = np.array(signal.Index)
     signal_tradetype = np.array(signal.TradeType)
-    ############################################
+    #############################################
+
+
+    RTH_indexes = pd.DataFrame()
+    if trade_in_RTH:
+        
+        data_ = pl.from_pandas(data[["SessionType", "Date", "Index"]])
+        data_ = data_.filter(pl.col("SessionType") == "RTH")
+        data_ = data_.with_columns(IndexFirst = data_['Index'])
+        data_ = data_.with_columns(IndexLast  = data_['Index'])
+        data_ = (data_.
+                group_by(["Date", "SessionType"]).
+                agg([pl.col("IndexFirst").first(),
+                    pl.col("IndexLast").last()]))
+        data_       = data_.sort("IndexFirst")
+        RTH_indexes = data_.to_pandas()
+                
+        # Let's filter the entries to avoid ENTERING OUTSIDE RTH hours...
+        datetime_signal_RTH = np.zeros(0)
+        for idx, row in RTH_indexes.iterrows():
+            datetime_signal_filtered = datetime_signal[(datetime_signal >= row['IndexFirst']) & (datetime_signal <= row['IndexLast'])]
+            datetime_signal_RTH      = np.append(datetime_signal_RTH, datetime_signal_filtered)
+
+        # We have filtered out all those trading indexes that were NOT in the RTH, so preventing ENTERING during incorrect time...
+        datetime_signal = datetime_signal_RTH
+
 
     entry_time_      = []
     exit_time_       = []
@@ -102,11 +135,12 @@ def backtester(
     SL_CONSTANT      = sl
     TP_CONSTANT      = tp
 
+
     #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
     ###############################################################################
 
-    print('\n')
+
     for i in tqdm(range(len_)):
 
         if entries_times[i] and not entry_price:
@@ -140,7 +174,79 @@ def backtester(
                 sl = SL_CONSTANT
                 tp = TP_CONSTANT
 
-        # ---> Long trade...
+        # Check if we must trade during RTH...
+        elif trade_in_RTH:
+            
+            datetime_signal_RTH = 0
+            for idx, row in RTH_indexes.iterrows():
+                datetime_signal_filtered =  (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
+                datetime_signal_RTH      += datetime_signal_filtered
+
+            if datetime_signal_RTH == 0:
+
+                # ---> We are having a long trade AND real time turned on...
+                if entry_price != 0 and trade_type == 2:
+
+                    position = 'LONG'
+
+                    if entry_price - price_array[i] >= sl * tick_size:
+                        exit_index_.append( datetime_all[i] )
+                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_price_.append( price_array[i] )
+                        entry_type_.append( 'LONG' )
+                        entry_price = 0
+                        loss += 1
+
+                        if signal_idx < len(datetime_signal) - 1:
+                            signal_idx = update_datetime_signal_index(
+                                datetime_all, datetime_signal, i, signal_idx
+                            )
+
+                    elif price_array[i] - entry_price > tp * tick_size:
+                        exit_index_.append( datetime_all[i] )
+                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_price_.append( price_array[i] )
+                        entry_type_.append( 'LONG' )
+                        entry_price = 0
+                        success += 1
+
+                        if signal_idx < len(datetime_signal) - 1:
+                            signal_idx = update_datetime_signal_index(
+                                datetime_all, datetime_signal, i, signal_idx
+                            )
+
+                # ---> We are having a short AND real time turned on...
+                elif entry_price != 0 and trade_type == 1:
+
+                    position = 'SHORT'
+
+                    if entry_price - price_array[i] > tp * tick_size:
+                        exit_index_.append( datetime_all[i])
+                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i])
+                        exit_price_.append( price_array[i])
+                        entry_type_.append( 'SHORT')
+                        entry_price = 0
+                        success += 1
+
+                        if signal_idx < len(datetime_signal) - 1:
+                            signal_idx = update_datetime_signal_index(
+                                datetime_all, datetime_signal, i, signal_idx
+                            )
+
+                    elif price_array[i] - entry_price >= sl * tick_size:
+                        exit_index_.append( datetime_all[i] )
+                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_price_.append( price_array[i] )
+                        entry_type_.append( 'SHORT' )
+                        entry_price = 0
+                        loss += 1
+
+                        if signal_idx < len(datetime_signal) - 1:
+                            signal_idx = update_datetime_signal_index(
+                                datetime_all, datetime_signal, i, signal_idx
+                            )
+
+        # ---> We are having a long trade...
         elif entry_price != 0 and trade_type == 2:
 
             position = 'LONG'
@@ -171,7 +277,7 @@ def backtester(
                         datetime_all, datetime_signal, i, signal_idx
                     )
 
-        # ---> Short trade...
+        # ---> We are having a short trade...
         elif entry_price != 0 and trade_type == 1:
 
             position = 'SHORT'
@@ -202,12 +308,12 @@ def backtester(
                         datetime_all, datetime_signal, i, signal_idx
                     )
 
+
     profit_     = success * tp * n_contacts * tick_value
     loss_       = loss * sl * n_contacts * tick_value
     commission_ = entry_counter * n_contacts * commission
     net_profit_ = profit_ - loss_ - commission_
     profit_net_factor =  net_profit_ / loss_ if loss_ else net_profit_
-
 
 
     print("\n")

@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.configuration import *
 from datetime import datetime, timedelta
-from .exceptions import ColumnNotPresent
+# from .exceptions import ColumnNotPresent
 from dateutil.parser import parse
 
 
@@ -38,7 +38,7 @@ def half_hour(x) -> str:
         return "00"
 
 
-def get_days_tz_diff(start_date, end_date, tz_start_str:str='Europe/Rome', tz_end_str:str='America/Chicago'):
+def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago'):
 
     """
     Calculates and prints the time difference in hours between two timezones for each day in a specified date range.
@@ -51,8 +51,8 @@ def get_days_tz_diff(start_date, end_date, tz_start_str:str='Europe/Rome', tz_en
     Parameters:
     - start_date (datetime.date or datetime.datetime): The start date of the period for which to calculate time differences.
     - end_date (datetime.date or datetime.datetime): The end date of the period for which to calculate time differences.
-    - tz_start_str (str, optional): The IANA timezone database string for the start timezone. Defaults to 'Europe/Rome'.
-    - tz_end_str (str, optional): The IANA timezone database string for the end timezone. Defaults to 'America/Chicago'.
+    - tz_from_str (str, optional): The IANA timezone database string for the from timezone. Defaults to 'Europe/Rome'.
+    - tz_to_str (str, optional): The IANA timezone database string for the to timezone. Defaults to 'America/Chicago'.
 
     Returns:
     - None: This function prints the time difference for each day in the specified range but does not return any value.
@@ -65,23 +65,59 @@ def get_days_tz_diff(start_date, end_date, tz_start_str:str='Europe/Rome', tz_en
 
     #####################################
     # # Start and end dates
-    # start_date = datetime(2021, 1, 1)
-    # end_date   = datetime(2023, 12, 31)
+    # start_date = datetime(2023, 10, 29, 1, 0 , 0)
+    # end_date   = datetime(2023, 11, 29, 1, 0 , 0)
     #####################################
 
     # Define the timezones for Chicago and Rome
-    end_tz       = pytz.timezone(tz_end_str)
-    start_tz     = pytz.timezone(tz_start_str)
+    from_tz   = pytz.timezone(tz_from_str)
+    to_tz     = pytz.timezone(tz_to_str)
     current_date = start_date
 
     while current_date < end_date:
 
-        ref_end_tz      = end_tz.localize(current_date)
-        ref_start_tz    = start_tz.localize(current_date)
-        time_difference = (ref_start_tz - ref_end_tz).total_seconds() / 3600
-        
-        print(f"Week starting {current_date.strftime('%Y-%m-%d')}, Chicago to Rome time difference: {time_difference} hours")
+        ref_from_tz  = from_tz.localize(current_date)
+        ref_to_tz    = ref_from_tz.astimezone(to_tz)
+
+        time_difference_current_date_from_tz      = int(ref_from_tz.strftime('%z')[1:3])
+        time_difference_current_date_from_tz_sign = ref_from_tz.strftime('%z')[0]
+        time_difference_current_date_to_tz        = int(ref_to_tz.strftime('%z')[1:3])
+        time_difference_current_date_to_tz_sign   = ref_to_tz.strftime('%z')[0]
+
+        if time_difference_current_date_from_tz_sign != time_difference_current_date_to_tz_sign:
+            time_difference = time_difference_current_date_from_tz + time_difference_current_date_to_tz
+        elif time_difference_current_date_from_tz > time_difference_current_date_to_tz:
+            time_difference = time_difference_current_date_from_tz - time_difference_current_date_to_tz
+        else:
+            time_difference = time_difference_current_date_to_tz - time_difference_current_date_from_tz
+
+        print(f"Datetime {ref_from_tz.strftime('%Y-%m-%d  %H:%M:%S')}, Chicago to Rome time difference: {time_difference} hours")
         current_date += timedelta(days=1)
+
+
+def convert_datetime_tz(datetime_array:np.array, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago') -> np.array:
+    """
+    Calculates and convert naive datetime array from one timezone to another.
+
+    :param datetime_array: an array of naive datetime elements to convert
+    :param tz_from_str: The IANA timezone database string for the from timezone. Defaults to 'Europe/Rome'
+    :param tz_to_str: The IANA timezone database string for the to timezone. Defaults to 'America/Chicago'.
+    :return: an array of converted aware datetime elements
+    """
+
+    # Define the timezones for Chicago and Rome
+    from_tz = pytz.timezone(tz_from_str)
+    to_tz   = pytz.timezone(tz_to_str)
+
+    len_         = len(datetime_array)
+    result_array = []
+
+    for dt in enumerate(datetime_array):
+        ref_from_tz = from_tz.localize(dt[1])
+        ref_to_tz = ref_from_tz.astimezone(to_tz)
+        result_array.append(ref_to_tz)
+
+    return result_array
 
 
 def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
@@ -379,6 +415,7 @@ def get_tickers_in_folder(
     stacked = correct_time_nanoseconds(stacked)
     stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
     stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
+    
     return apply_offset(stacked)
 
 
@@ -694,7 +731,7 @@ def get_market_evening_session(data: pd.DataFrame):
     print(f"Assign sessions labels...")
 
     condlist   = [(data.Datetime.dt.time >= SESSION_START_TIME) & (data.Datetime.dt.time <= SESSION_END_TIME),
-                (data.Datetime.dt.time <= SESSION_START_TIME) | (data.Datetime.dt.time >= SESSION_END_TIME)]
+                  (data.Datetime.dt.time <= SESSION_START_TIME) | (data.Datetime.dt.time >= SESSION_END_TIME)]
     choicelist = ['RTH', 'ETH']
 
     return np.select(condlist, choicelist)

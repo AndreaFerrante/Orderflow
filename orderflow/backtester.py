@@ -117,6 +117,8 @@ def backtester(
         # We have filtered out all those trading indexes that were NOT in the RTH, so preventing ENTERING during incorrect time...
         datetime_signal = datetime_signal_RTH
 
+        print(f'Len of datetime_signal is {len(datetime_signal)}')
+
 
     entry_time_      = []
     exit_time_       = []
@@ -138,6 +140,7 @@ def backtester(
 
     #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
+    print(f'The length of the entries is {len(entries_times)}')
     ###############################################################################
 
 
@@ -154,12 +157,12 @@ def backtester(
                 slippage_tick = random.randint(0, slippage_max)
                 slippage      = float(tick_size * slippage_tick)
                 entry_price   = float(price_array[i]) - slippage
-                #print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
+                print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             else:
                 slippage_tick = random.randint(0, slippage_max)
                 slippage      = float(tick_size * slippage_tick)
                 entry_price   = float(price_array[i]) + slippage
-                #print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
+                print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             ######################################################################################################
 
             entry_index_.append( datetime_signal[signal_idx] )
@@ -186,6 +189,8 @@ def backtester(
             # If the current datetime_all[i] index is OUTSIDE the possible index we close the position...
             if datetime_signal_RTH == 0:
 
+                print('Trade in ETH, cancelling order.\n')
+                
                 # ---> We are having a long trade AND real time turned on...
                 if trade_type == 2:
 
@@ -353,6 +358,7 @@ def backtester(
         "-- NUM. CONTRACTS",
         n_contacts,
     )
+
 
     backtest_results = pd.DataFrame({'Profit': [round(profit_, 2)],
                                      'Loss': [round(loss_, 2)],

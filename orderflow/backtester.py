@@ -179,7 +179,7 @@ def backtester(
 
             continue
 
-        # Check if we must trade during RTH since we are in potision...
+        # Check if we must trade during RTH since we are in position...
         elif trade_in_RTH and entry_price != 0:
             
             datetime_signal_RTH = 0
@@ -191,12 +191,12 @@ def backtester(
 
                 print('Trade in ETH, cancelling order.\n')
                 
-                # ---> We are having a long trade AND real time turned on...
+                # ---> We are having a long trade AND regular time turned on...
                 if trade_type == 2:
 
                     position = 'LONG'
 
-                    if entry_price - price_array[i] >= sl * tick_size:
+                    if entry_price > price_array[i]:
                         exit_index_.append( datetime_all[i] )
                         exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
                         exit_price_.append( price_array[i] )
@@ -209,7 +209,7 @@ def backtester(
                                 datetime_all, datetime_signal, i, signal_idx
                             )
 
-                    elif price_array[i] - entry_price > tp * tick_size:
+                    elif entry_price <= price_array[i]:
                         exit_index_.append( datetime_all[i] )
                         exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
                         exit_price_.append( price_array[i] )
@@ -227,7 +227,7 @@ def backtester(
 
                     position = 'SHORT'
 
-                    if entry_price - price_array[i] > tp * tick_size:
+                    if entry_price >= price_array[i]:
                         exit_index_.append( datetime_all[i])
                         exit_time_.append(  data.Date[i] + ' ' + data.Time[i])
                         exit_price_.append( price_array[i])
@@ -240,7 +240,7 @@ def backtester(
                                 datetime_all, datetime_signal, i, signal_idx
                             )
 
-                    elif price_array[i] - entry_price >= sl * tick_size:
+                    elif entry_price < price_array[i]:
                         exit_index_.append( datetime_all[i] )
                         exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
                         exit_price_.append( price_array[i] )

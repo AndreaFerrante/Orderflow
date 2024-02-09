@@ -344,7 +344,7 @@ def backtester(
         round( profit_net_factor, 2 ),
         "\n",
         "-- PROFIT RATE",
-        round( success / (success + loss), 2),
+        round( success / (success + loss) if (success + loss) > 0 else 1, 2),
         "\n",
         "-- MIN DATE",
         data.Date.min(),
@@ -366,7 +366,7 @@ def backtester(
                                      'Net Profit': [round(net_profit_, 2)],
                                      'Total Trades': [entry_counter],
                                      'Profit Net Factor': [round( profit_net_factor, 2 )],
-                                     'Profit Rate': [round( success / (success + loss), 2)],
+                                     'Profit Rate': [round( success / (success + loss) if (success + loss) > 0 else 1, 2)],
                                      'Min Date': [data['Date'].min()],
                                      'Max Date': [data['Date'].max()]})
 

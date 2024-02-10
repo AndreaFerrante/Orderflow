@@ -273,6 +273,7 @@ def get_tickers_in_folder(
     files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
     stacked = polars.DataFrame()
 
+    '''Read more than one file'''
     for idx, file in tqdm(enumerate(files)):
 
         print(f"Reading file {file} ...")

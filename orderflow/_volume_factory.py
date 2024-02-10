@@ -600,8 +600,13 @@ def get_market_evening_session(data: pd.DataFrame, ticker: str):
 
     print(f"Assign sessions labels...")
 
-    condlist   = [(data.Datetime.dt.time >= FUTURE_VALUES.loc[FUTURE_VALUES[ticker] == 'RTH_StartTime', 'Tick_Size'].values[0]) & (data.Datetime.dt.time <= FUTURE_VALUES.loc[FUTURE_VALUES[ticker] == 'RTH_EndTime', 'Tick_Size'].values[0]),
-                  (data.Datetime.dt.time <= FUTURE_VALUES.loc[FUTURE_VALUES[ticker] == 'RTH_StartTime', 'Tick_Size'].values[0]) | (data.Datetime.dt.time >= FUTURE_VALUES.loc[FUTURE_VALUES[ticker] == 'RTH_EndTime', 'Tick_Size'].values[0])]
+    condlist = [
+        (data.Datetime.dt.time >= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_StartTime'].values[0]) & (
+                    data.Datetime.dt.time <= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_EndTime'].values[
+                0]),
+        (data.Datetime.dt.time <= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_StartTime'].values[0]) | (
+                    data.Datetime.dt.time >= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_EndTime'].values[
+                0])]
     choicelist = ['RTH', 'ETH']
 
     return np.select(condlist, choicelist)

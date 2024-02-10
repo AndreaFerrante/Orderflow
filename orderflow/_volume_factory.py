@@ -55,7 +55,7 @@ def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: st
     '''Get one file only to scan'''
     if single_file is not None:
         
-        single = pd.read_csv(single_file, sep=";", nrows=5)
+        single = pd.read_csv( path + single_file, sep=";", nrows=5)
         if len(single.columns) < len(cols):
             cols = single.columns
         
@@ -210,6 +210,9 @@ def get_tickers_in_folder(
     Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
     """
 
+    if path is None:
+        raise Exception("Pass to the function a path where the files are stored in.")
+
     def correct_time_nanoseconds(ticker_to_correct:polars.DataFrame=None):
         
         '''
@@ -256,16 +259,13 @@ def get_tickers_in_folder(
         
         print("Reading one single file, only...")
         
-        single_file_polars = polars.read_csv(single_file, separator=separator, columns=cols, infer_schema_length=10_000)
-        single_file_polars = single_file_polars.filter((single_file_polars['Date'] != "1899-12-30") & (single_file_polars['Price'] > 0))
+        single_file_polars = polars.read_csv(path + single_file, separator=separator, columns=cols, infer_schema_length=10_000)
+        single_file_polars = single_file_polars.filter((polars.col('Date') != "1899-12-30") & (polars.col('Price') > 0))
         single_file_polars = correct_time_nanoseconds(single_file_polars)
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Datetime'].str.to_datetime())
         
         return apply_offset(single_file_polars)
-
-    if path is None:
-        raise Exception("Pass to the function a path where the files are stored in.")
 
     print("Get tickers in folder...")
 
@@ -273,13 +273,14 @@ def get_tickers_in_folder(
     files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
     stacked = polars.DataFrame()
 
+    '''Read more than one file'''
     for idx, file in tqdm(enumerate(files)):
 
         print(f"Reading file {file} ...")
 
         if file.endswith(str(extension).upper()):
-            single_file = polars.read_csv(os.path.join(path, file), separator=';', columns=cols, infer_schema_length=10_000)
-            single_file = single_file.filter((single_file['Date'] != "1899-12-30") & (single_file['Price'] > 0))
+            single_file = polars.read_csv(os.path.join(path, file), separator=separator, columns=cols, infer_schema_length=10_000)
+            single_file = single_file.filter((polars.col('Date') != "1899-12-30") & (polars.col('Price') > 0))
             stacked     = polars.concat([stacked, single_file])
 
         if idx >= break_at:

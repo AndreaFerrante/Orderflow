@@ -109,14 +109,9 @@ def backtester(
         RTH_indexes = data_.to_pandas()
                 
         # Let's filter the entries to avoid ENTERING OUTSIDE RTH hours...
-        datetime_signal_RTH = np.zeros(0)
-        for idx, row in RTH_indexes.iterrows():
-            datetime_signal_filtered = datetime_signal[(datetime_signal >= row['IndexFirst']) & (datetime_signal <= row['IndexLast'])]
-            datetime_signal_RTH      = np.append(datetime_signal_RTH, datetime_signal_filtered)
-
-        # We have filtered out all those trading indexes that were NOT in the RTH, so preventing ENTERING during incorrect time...
-        datetime_signal = datetime_signal_RTH
-
+        datetime_signal = [datetime_signal[(datetime_signal >= ifirst) & (datetime_signal <= ilast)]
+                           for ifirst, ilast in zip(RTH_indexes['IndexFirst'], RTH_indexes['IndexLast'])]
+        datetime_signal = np.concatenate(datetime_signal)
         print(f'Len of datetime_signal is {len(datetime_signal)}')
 
 

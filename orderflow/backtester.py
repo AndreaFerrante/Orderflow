@@ -135,7 +135,6 @@ def backtester(
 
     #################### SPEED IS LOOPING OVER BOOLEAN ARRAY ######################
     entries_times = np.where( np.isin(datetime_all, datetime_signal), True, False )
-    print(f'The length of the entries is {len(entries_times)}')
     ###############################################################################
 
 
@@ -152,12 +151,12 @@ def backtester(
                 slippage_tick = random.randint(0, slippage_max)
                 slippage      = float(tick_size * slippage_tick)
                 entry_price   = float(price_array[i]) - slippage
-                print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
+                #print(f'\nSHORT - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             else:
                 slippage_tick = random.randint(0, slippage_max)
                 slippage      = float(tick_size * slippage_tick)
                 entry_price   = float(price_array[i]) + slippage
-                print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
+                #print(f'\nLONG - Price array {price_array[i]}, slippage {slippage}, so price is {entry_price}')
             ######################################################################################################
 
             entry_index_.append( datetime_signal[signal_idx] )

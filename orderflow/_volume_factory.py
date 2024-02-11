@@ -623,3 +623,7 @@ def print_constants():
     print(VWAP_BAND_OFFSET_2)
     print(VWAP_BAND_OFFSET_3)
     print(VWAP_BAND_OFFSET_4)
+
+
+
+

@@ -94,7 +94,6 @@ def backtester(
     #############################################
 
 
-    RTH_indexes = pd.DataFrame()
     if trade_in_RTH:
         
         data_ = pl.from_pandas(data[["SessionType", "Date", "Index"]])
@@ -310,11 +309,11 @@ def backtester(
                     )
 
 
-    profit_     = success * tp * n_contacts * tick_value
-    loss_       = loss * sl * n_contacts * tick_value
-    commission_ = entry_counter * n_contacts * commission
-    net_profit_ = profit_ - loss_ - commission_
-    profit_net_factor =  net_profit_ / loss_ if loss_ else net_profit_
+    profit_           = success * tp * n_contacts * tick_value
+    loss_             = loss * sl * n_contacts * tick_value
+    commission_       = entry_counter * n_contacts * commission
+    net_profit_       = profit_ - loss_ - commission_
+    profit_net_factor = net_profit_ / loss_ if loss_ else net_profit_
 
 
     print("\n")

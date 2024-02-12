@@ -3,7 +3,7 @@ import random
 import numpy as np
 import pandas as pd
 import polars as pl
-from .exceptions import SessionTypeAbsent, IndexAbsent
+from .exceptions import SessionTypeAbsent, IndexAbsent, DatetimeTypeAbsent
 
 
 def update_datetime_signal_index(datetime_all, datetime_signal, index_, signal_idx_):
@@ -72,6 +72,9 @@ def backtester(
 
     if not 'Index' in data.columns:
         raise IndexAbsent('Please, provide DataFrame with Index column to procede.')
+    
+    if not 'Datetime' in data.columns:
+        raise DatetimeTypeAbsent('Please, provide DataFrame with Datetime column to procede.')
 
     if trade_in_RTH and 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column inside DataFrame passed but trade_in_RTH set to True: provide SessionType column.')
@@ -159,7 +162,7 @@ def backtester(
             ######################################################################################################
 
             entry_index_.append( datetime_signal[signal_idx] )
-            entry_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+            entry_time_.append( data.Datetime[i] )
             entry_price_.append( entry_price )
             entry_price_pure.append( price_array[i] )
 
@@ -191,29 +194,25 @@ def backtester(
 
                     if entry_price > price_array[i]:
                         exit_index_.append( datetime_all[i] )
-                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_time_.append( data.Datetime[i] )
                         exit_price_.append( price_array[i] )
                         entry_type_.append( 'LONG' )
                         entry_price = 0
-                        loss += 1
+                        loss       += 1
 
                         if signal_idx < len(datetime_signal) - 1:
-                            signal_idx = update_datetime_signal_index(
-                                datetime_all, datetime_signal, i, signal_idx
-                            )
+                            signal_idx = update_datetime_signal_index(datetime_all, datetime_signal, i, signal_idx)
 
                     elif entry_price <= price_array[i]:
                         exit_index_.append( datetime_all[i] )
-                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_time_.append( data.Datetime[i] )
                         exit_price_.append( price_array[i] )
                         entry_type_.append( 'LONG' )
                         entry_price = 0
-                        success += 1
+                        success    += 1
 
                         if signal_idx < len(datetime_signal) - 1:
-                            signal_idx = update_datetime_signal_index(
-                                datetime_all, datetime_signal, i, signal_idx
-                            )
+                            signal_idx = update_datetime_signal_index(datetime_all, datetime_signal, i, signal_idx)
 
                 # ---> We are having a short AND real time turned on...
                 elif trade_type == 1:
@@ -222,29 +221,25 @@ def backtester(
 
                     if entry_price >= price_array[i]:
                         exit_index_.append( datetime_all[i])
-                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i])
+                        exit_time_.append( data.Datetime[i])
                         exit_price_.append( price_array[i])
                         entry_type_.append( 'SHORT')
                         entry_price = 0
-                        success += 1
+                        success    += 1
 
                         if signal_idx < len(datetime_signal) - 1:
-                            signal_idx = update_datetime_signal_index(
-                                datetime_all, datetime_signal, i, signal_idx
-                            )
+                            signal_idx = update_datetime_signal_index(datetime_all, datetime_signal, i, signal_idx)
 
                     elif entry_price < price_array[i]:
                         exit_index_.append( datetime_all[i] )
-                        exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                        exit_time_.append( data.Datetime[i] )
                         exit_price_.append( price_array[i] )
                         entry_type_.append( 'SHORT' )
                         entry_price = 0
-                        loss += 1
+                        loss       += 1
 
                         if signal_idx < len(datetime_signal) - 1:
-                            signal_idx = update_datetime_signal_index(
-                                datetime_all, datetime_signal, i, signal_idx
-                            )
+                            signal_idx = update_datetime_signal_index(datetime_all, datetime_signal, i, signal_idx)
 
         # ---> We are having a long trade...
         if entry_price != 0 and trade_type == 2:
@@ -253,29 +248,25 @@ def backtester(
 
             if entry_price - price_array[i] >= sl * tick_size:
                 exit_index_.append( datetime_all[i] )
-                exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                exit_time_.append( data.Datetime[i] )
                 exit_price_.append( price_array[i] )
                 entry_type_.append( 'LONG' )
                 entry_price = 0
-                loss += 1
+                loss       += 1
 
                 if signal_idx < len(datetime_signal) - 1:
-                    signal_idx = update_datetime_signal_index(
-                        datetime_all, datetime_signal, i, signal_idx
-                    )
+                    signal_idx = update_datetime_signal_index(datetime_all, datetime_signal, i, signal_idx)
 
             elif price_array[i] - entry_price > tp * tick_size:
                 exit_index_.append( datetime_all[i] )
-                exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                exit_time_.append( data.Datetime[i] )
                 exit_price_.append( price_array[i] )
                 entry_type_.append( 'LONG' )
                 entry_price = 0
-                success += 1
+                success    += 1
 
                 if signal_idx < len(datetime_signal) - 1:
-                    signal_idx = update_datetime_signal_index(
-                        datetime_all, datetime_signal, i, signal_idx
-                    )
+                    signal_idx = update_datetime_signal_index(datetime_all, datetime_signal, i, signal_idx)
 
         # ---> We are having a short trade...
         elif entry_price != 0 and trade_type == 1:
@@ -284,29 +275,25 @@ def backtester(
 
             if entry_price - price_array[i] > tp * tick_size:
                 exit_index_.append( datetime_all[i])
-                exit_time_.append(  data.Date[i] + ' ' + data.Time[i])
+                exit_time_.append( data.Datetime[i])
                 exit_price_.append( price_array[i])
                 entry_type_.append( 'SHORT')
                 entry_price = 0
-                success += 1
+                success    += 1
 
                 if signal_idx < len(datetime_signal) - 1:
-                    signal_idx = update_datetime_signal_index(
-                        datetime_all, datetime_signal, i, signal_idx
-                    )
+                    signal_idx = update_datetime_signal_index(datetime_all, datetime_signal, i, signal_idx)
 
             elif price_array[i] - entry_price >= sl * tick_size:
                 exit_index_.append( datetime_all[i] )
-                exit_time_.append(  data.Date[i] + ' ' + data.Time[i] )
+                exit_time_.append( data.Datetime[i] )
                 exit_price_.append( price_array[i] )
                 entry_type_.append( 'SHORT' )
                 entry_price = 0
-                loss += 1
+                loss       += 1
 
                 if signal_idx < len(datetime_signal) - 1:
-                    signal_idx = update_datetime_signal_index(
-                        datetime_all, datetime_signal, i, signal_idx
-                    )
+                    signal_idx = update_datetime_signal_index(datetime_all, datetime_signal, i, signal_idx)
 
 
     profit_           = success * tp * n_contacts * tick_value
@@ -373,13 +360,13 @@ def backtester(
         '''
 
         exit_index_.append( datetime_all[ len_ - 1 ])
-        exit_time_.append( data.Date[ len_ - 1 ] + ' ' + data.Time[ len_ - 1 ])
+        exit_time_.append( data.Datetime[ len_ - 1 ] )
         exit_price_.append( price_array[ len_ - 1 ])
         entry_type_.append( position )
 
 
     # Define backtest results here...
-    backtest =  pd.DataFrame(
+    backtest = pd.DataFrame(
                 {
                     "ENTRY_TIMES":           entry_time_,
                     "EXIT_TIMES":            exit_time_,

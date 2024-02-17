@@ -177,13 +177,21 @@ def backtester(
 
         # Check if we must trade during RTH since we are in position...
         elif trade_in_RTH and entry_price != 0:
-            
-            datetime_signal_RTH = 0
-            for idx, row in RTH_indexes.iterrows():
-                datetime_signal_RTH += (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
-            
+
+            try:
+                first_last_index_row = RTH_indexes[RTH_indexes['Date'] == data.Date[i]].iloc[0]
+            except IndexError:
+                print("Date not in RTH ranges. Stop backtest.")
+                return False
+            # datetime_signal_RTH = 0
+            # for idx, row in RTH_indexes.iterrows():
+            #     datetime_signal_RTH += (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
+            #
+            # # If the current datetime_all[i] index is OUTSIDE the possible index we close the position...
+            # if datetime_signal_RTH == 0:
+            if (first_last_index_row['IndexFirst'] > datetime_all[i]) or (datetime_all[i] > first_last_index_row['IndexLast']):
+                print('Trade in ETH, cancelling order.\n')
             # If the current datetime_all[i] index is OUTSIDE the possible index we close the position...
-            if datetime_signal_RTH == 0:
 
                 print('Trade in ETH, cancelling order.\n')
                 

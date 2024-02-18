@@ -183,16 +183,18 @@ def backtester(
                 if first_last_index_row['IndexFirst'] <= datetime_all[i] <= first_last_index_row['IndexLast']:
                     in_rth = True
             except IndexError:
-                print("Date not found in RTH ranges. Return out of ETH.")
+                # print("Date not found in RTH ranges. Return out of ETH.")
                 pass
+            
             # datetime_signal_RTH = 0
             # for idx, row in RTH_indexes.iterrows():
             #     datetime_signal_RTH += (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
             #
             # # If the current datetime_all[i] index is OUTSIDE the possible index we close the position...
             # if datetime_signal_RTH == 0:
+
             if not in_rth:
-                print('Trade in ETH, cancelling order.\n')
+                # print('Trade in ETH, cancelling order.\n')
 
                 # ---> We are having a long trade AND regular time turned on...
                 if trade_type == 2:

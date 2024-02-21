@@ -114,6 +114,7 @@ def backtester(
         datetime_signal = [datetime_signal[(datetime_signal >= ifirst) & (datetime_signal <= ilast)]
                            for ifirst, ilast in zip(RTH_indexes['IndexFirst'], RTH_indexes['IndexLast'])]
         datetime_signal = np.concatenate(datetime_signal)
+        signal_tradetype = signal[signal['Index'].isin(datetime_signal)]['TradeType'].tolist()
         print(f'Len of datetime_signal is {len(datetime_signal)}')
 
 

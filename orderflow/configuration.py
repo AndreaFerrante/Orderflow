@@ -61,6 +61,11 @@ FUTURE_VALUES          = pd.DataFrame({'Ticker':    ['ES',
                                                      'ZN',
                                                      'FESX',
                                                      'FGBL'],
+                                       'Ticker_Future_Letters': ['H M U Z',
+                                                                 'H M U Z',
+                                                                 'H M U Z',
+                                                                 'H M U Z',
+                                                                 'H M U Z'],
                                        'Tick_Value':[12.5,
                                                      31.25,
                                                      15.625,
@@ -71,14 +76,14 @@ FUTURE_VALUES          = pd.DataFrame({'Ticker':    ['ES',
                                                      0.015625,
                                                      1,
                                                      0.1],
-                                        'RTH_StartTime' : [
+                                       'RTH_StartTime' : [
                                             pd.to_datetime('08:30:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('08:30:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('08:30:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('09:30:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('09:30:00', format='%H:%M:%S').time()
                                         ],
-                                        'RTH_EndTime' : [
+                                       'RTH_EndTime' : [
                                             pd.to_datetime('16:00:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('16:00:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('16:00:00', format='%H:%M:%S').time(),

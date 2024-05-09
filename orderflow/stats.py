@@ -6,6 +6,8 @@ In this file we collect all the analysis like if they were pure Python functions
 
 import os
 import datetime
+
+import numpy as np
 import polars as pl
 from tqdm import tqdm
 from Orderflow.orderflow.paths import get_current_os
@@ -18,13 +20,13 @@ current_path   = get_current_os()
 current_ticker = FUTURE_VALUES['Ticker_Future_Letters'][2].split(' ')
 current_ticker = [ticker + str(x) + year for x in current_ticker]
 all_files      = os.listdir(current_path)
-all_files = [item for item in all_files if any(sub in item for sub in current_ticker)]
+all_files      = [item for item in all_files if any(sub in item for sub in current_ticker)]
 
 
 dataframe = pl.DataFrame()
 for file in tqdm(all_files):
     dataframe = pl.concat([dataframe, pl.read_csv(current_path + '/' + file, separator=';')])
-    print(dataframe['Time'][-1])
+    print(dataframe['Time'][-1], '\n')
 
 dataframe     = dataframe.with_columns(pl.col("Time").str.strptime(pl.Time))
 dataframe     = dataframe.with_columns(pl.col("Time").dt.hour().alias('Hour'))
@@ -43,3 +45,16 @@ for date in tqdm(dates):
 
 
 pl.Series(hours).value_counts(sort=True)
+
+
+
+
+tmp = pl.read_csv(current_path + '/' + file, separator=';')
+tmp = tmp.with_columns(Index       = pl.Series(np.arange(0, tmp.shape[0], 1)))
+tmp = tmp.with_columns(Datetime    = tmp['Date'] + ' ' + tmp['Time'])
+
+
+tmp = tmp.with_columns(Datetime_DT = pl.col("date_str").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S.%f"))
+
+
+

@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.configuration import *
 from datetime import datetime, timedelta
-# from .exceptions import ColumnNotPresent
 from dateutil.parser import parse
 
 
@@ -36,6 +35,120 @@ def half_hour(x) -> str:
         return "30"
     else:
         return "00"
+
+
+def quarter_hour(x):
+
+    if x <= 15:
+        return "15"
+    elif x <= 30:
+        return "30"
+    elif x <= 45:
+        return "45"
+    else:
+        return "60"
+
+
+def correct_time_nanoseconds(ticker_to_correct: polars.DataFrame = None):
+
+    '''
+    OS sometimes record incorrectly the immediate initial nanoseconds at the beginning of a single second.
+    This function gets all the nanoseconds recorded at the same padding length.
+    '''
+
+    if ticker_to_correct is None:
+        raise Exception("Pass a DataFrame to clear the Time column on !")
+
+    if isinstance(ticker_to_correct, pd.DataFrame):
+        ticker_to_correct = polars.DataFrame(ticker_to_correct)
+
+    def pad_after_period(value):
+        if '.' in value:
+            before_dot, after_dot = value.split('.', 1)
+            padded_after_dot = after_dot.rjust(6, '0')
+            return f"{before_dot}.{padded_after_dot}"
+        else:
+            return value
+
+    #####################################################################################################################################
+    '''This is the apply pandas function but in Polars, much faster'''
+    ticker_to_correct = ticker_to_correct.with_columns(
+        Time=ticker_to_correct['Time'].map_elements(pad_after_period))
+    #####################################################################################################################################
+
+    return ticker_to_correct
+
+
+def apply_offset_given_dataframe(pl_df:polars.DataFrame):
+
+    """
+        Applies a time offset to the 'Datetime' column in a given Polars DataFrame based on the value
+        of the last hour recorded in the 'Hour' column.
+
+        This function modifies the 'Datetime' column by subtracting a certain number of hours. The
+        number of hours subtracted is determined by the last hour value in the 'Hour' column. If the
+        last hour is 23, 7 hours are subtracted; if 22, then 6 hours; and so forth, until 19, after
+        which 3 hours are subtracted. If the last hour is less than 19, the DataFrame is returned
+        without modifications to the 'Datetime' column.
+
+        Args:
+            pl_df (polars.DataFrame): A Polars DataFrame that must contain 'Hour' and 'Datetime'
+                                      columns. 'Hour' should be an integer type column representing
+                                      the hour of the day, and 'Datetime' should be a datetime type
+                                      column.
+
+        Returns:
+            polars.DataFrame: A Polars DataFrame with adjusted 'Datetime' column based on the last
+                              recorded hour in the 'Hour' column. The DataFrame is sorted by the
+                              'Datetime' column in ascending order.
+
+        Raises:
+            ValueError: If the 'Datetime' column does not exist in the input DataFrame.
+
+        Examples:
+            df = pl.DataFrame({
+                    "Datetime": pl.date_range(low=pl.datetime(2023, 1, 1), high=pl.datetime(2023, 1, 1, 23), every='1h'),
+                    "Hour": list(range(24))
+                })
+            modified_df = apply_offset_given_dataframe(df)
+            print(modified_df)
+            shape: (24, 2)
+            ┌─────────────────────┬─────┐
+            │ Datetime            ┆ Hour│
+            │ ---                 ┆ --- │
+            │ datetime[μs]        ┆ i64 │
+            ├─────────────────────┼─────┤
+            │ ...                 ┆ ... │
+            └─────────────────────┴─────┘
+
+        Note:
+            The function will return `None` if any issues arise with the input data validation,
+            especially related to the presence of necessary columns or recorded values in the 'Hour' column.
+        """
+
+    ##################################
+    last_hour = int(pl_df['Hour'][-1])
+    ##################################
+
+    if 'Datetime' not in pl_df.columns:
+        '''Add Datetime column (datetime datatype, too) inside Polars DataFrame'''
+        return None
+
+    if last_hour == 23:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(7) + "h"))
+    elif last_hour == 22:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(6) + "h"))
+    elif last_hour == 21:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(5) + "h"))
+    elif last_hour == 20:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(4) + "h"))
+    elif last_hour == 19:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(3) + "h"))
+    else:
+        '''If we had a possible issue in file recorded, better to skip the timestamp correction'''
+        return None
+
+    return pl_df.sort(['Datetime'], descending=False)
 
 
 def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago'):
@@ -118,34 +231,6 @@ def convert_datetime_tz(datetime_array:np.array, tz_from_str:str='Europe/Rome', 
         result_array.append(ref_to_tz)
 
     return result_array
-
-
-def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
-
-    """
-    Given usual data recorded, this function returns it corrected since its CSV recoding so it adds pandas datatypes
-    for data reshaping and data plotting
-    :param data: given usual data recorded
-    :return: dataframe corrected
-    """
-
-    # es = es.assign(Index    = np.arange(0, es.shape[0], 1))  # Set an index fro reference plotting...
-    # es = es.assign(Hour     = es.Time.str[:2].astype(str))   # Extract the hour...
-    # es = es.assign(Minute   = es.Time.str[3:5].astype(int))  # Extract the minute...
-    # es = es.assign(HalfHour = es.Hour.str.zfill(2) + es.Minute.apply(half_hour)) # Identifies half hours...
-
-    print(f"Prepare data...")
-
-    data = (
-        data.assign(Index=np.arange(0, data.shape[0], 1))
-        .assign(Hour=data.Time.str[:2].astype(str))
-        .assign(Minute=data.Time.str[3:5].astype(int))
-        .assign(HalfHour=data.Hour.str.zfill(2) + data.Minute.apply(half_hour))
-        .assign(DateTime=data.Date.astype(str) + " " + data.Time.astype(str))
-        .assign(DateTime_TS=pd.to_datetime(data.DateTime))
-    )
-
-    return data
 
 
 def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: str = '') -> list:
@@ -311,112 +396,153 @@ def get_tickers_in_pg_table(
 
 
 def get_tickers_in_folder(
-        path:        str  = None, 
-        single_file: str  = None,
-        ticker:      str  = "ES", 
-        cols:        list = None, 
-        break_at:    int  = 99999, 
-        offset:      int  = 0, 
-        extension:   str  = 'txt',
-        separator:   str  = ';'
+        path:           str  = None,
+        single_file:    str  = None,
+        ticker:         str  = "ES",
+        year:           int  = 0,
+        future_letters: list = None,
+        cols:           list = None,
+        break_at:       int  = 99999,
+        extension:      str  = 'txt',
+        separator:      str  = ';'
 ) -> polars.DataFrame:
 
     """
-    Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES).
-    This package leverages a polars speed !
-    :param path: path to ticker data to read
-    :param ticker: ticker to read in the form of ES, ZN, ZB, AAPL, MSFT. . .
-    :param cols: columns to import...
-    :param break_at: how many ticker files do we have to read ?
-    :param offset: offset to a created datetime column
-    :param extension: this it the file extension
-    :param single_file: this is the whole path and file name in case we would like to read a specific file
-    :return: polars.DataFrame of all read ticker files
+     Processes files within a specified directory or a single file to extract and adjust financial ticker data,
+     returning a Polars DataFrame with the adjusted data.
 
-    Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
-    """
+     This function reads multiple files specified by the combination of ticker symbols, future letters, and year,
+     or a single specified file. It applies data corrections, filters out invalid data, and adjusts the datetime
+     information based on the last recorded hour to align with a standard time (like Chicago Time for trading data).
 
-    def correct_time_nanoseconds(ticker_to_correct:polars.DataFrame=None):
-        
-        '''
-        OS sometimes record incorrectly the immediate initial nanoseconds at the beginning of a single second.
-        This function gets all the nanoseconds recorded at the same padding length.
-        '''
-        
-        if ticker_to_correct is None:
-            raise Exception("Pass a DataFrame to clear the Time column on !")
-        
-        if isinstance(ticker_to_correct, pd.DataFrame):
-            ticker_to_correct = polars.DataFrame(ticker_to_correct)
-        
-        def pad_after_period(value):
-            if '.' in value:
-                before_dot, after_dot = value.split('.', 1)
-                padded_after_dot      = after_dot.rjust(6, '0')
-                return f"{before_dot}.{padded_after_dot}"
-            else:
-                return value
+     Args:
+         path (str, optional): The path to the directory containing the files to be processed. Required if 'single_file' is not provided.
+         single_file (str, optional): Specific single file to be processed. If provided, 'path' must also be specified.
+         ticker (str, optional): The root ticker symbol used to identify files. Defaults to 'ES'.
+         year (int, optional): The year associated with the futures contracts to help identify files. Defaults to 23.
+         future_letters (list, optional): List of future letters to identify specific contracts within the files.
+         cols (list, optional): List of columns to read from the files. If not provided, it will be determined by calling 'get_longest_columns_dataframe'.
+         break_at (int, optional): The maximum number of files to process before stopping. Defaults to a very large number to process all files.
+         extension (str, optional): File extension of the files to be processed. Defaults to 'txt'.
+         separator (str, optional): The character used to separate values in the file. Defaults to ';'.
 
-        #####################################################################################################################################
-        '''This is the apply pandas function but in Polars, much faster'''
-        ticker_to_correct = ticker_to_correct.with_columns(Time = ticker_to_correct['Time'].map_elements(pad_after_period))
-        #####################################################################################################################################
-        
-        return ticker_to_correct
+     Returns:
+         polars.DataFrame: A DataFrame containing the processed ticker data with additional datetime columns like 'Hour', 'Minute', and 'Second',
+         and adjustments based on the last recorded hour.
 
-    def apply_offset(stacked):
-        
-        '''Data needs sometime time to be shifted due to sytem time rgistration'''
-        
-        if offset:
-            stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
-            return stacked.sort(['Datetime'], descending=False)
-        else:
-            return stacked.sort(['Datetime'], descending=False)
+     Raises:
+         Exception: If 'path' is not specified when required.
+         Exception: If 'future_letters' is not provided but is required for processing multiple files.
+         Exception: If there is an issue with the datetime data in the file being processed.
+         Exception: If there no year of the ticker has been passed (i.e. ticker == 0).
+
+     Example:
+         >>> df = get_tickers_in_folder(path="/data/tickers", ticker="ES", year=2023, future_letters=["H", "M", "U", "Z"])
+         >>> print(df.shape)
+         (500, 8)
+
+     Note:
+         This function assumes the presence of a helper function 'apply_offset_given_dataframe' to adjust the datetime
+         columns based on trading hours and another 'correct_time_nanoseconds' to correct the timestamps. Ensure these
+         functions are correctly implemented and available in the scope.
+     """
+
+    print("Get tickers in folder...")
 
     if cols is None:
         cols = get_longest_columns_dataframe(path=path, ticker=ticker, single_file=single_file)
 
-    '''Read one file only'''
-    if single_file is not None:
-        
-        print("Reading one single file, only...")
-        
-        single_file_polars = polars.read_csv(single_file, separator=separator, columns=cols, infer_schema_length=10_000)
-        single_file_polars = single_file_polars.filter((single_file_polars['Date'] != "1899-12-30") & (single_file_polars['Price'] > 0))
-        single_file_polars = correct_time_nanoseconds(single_file_polars)
-        single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])
-        single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Datetime'].str.to_datetime())
-        
-        return apply_offset(single_file_polars)
-
     if path is None:
-        raise Exception("Pass to the function a path where the files are stored in.")
+        raise Exception("Pass to the function the path where the files are stored in.")
 
-    print("Get tickers in folder...")
+    if future_letters is None:
+        raise Exception("Pass to the funtion get_tickers_in_folder a list of Future Letters.")
 
-    ticker  = str(ticker).upper()
-    files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
-    stacked = polars.DataFrame()
+    if year == 0:
+        raise Exception("Pass to the function get_tickers_in_folder the year of the future yuo want to read.")
 
-    for idx, file in tqdm(enumerate(files)):
+    '''
+    1. Read initially one single file (if desired)
+    2. Read all the files in a folder
+    '''
 
-        print(f"Reading file {file} ...")
+    try:
 
-        if file.endswith(str(extension).upper()):
-            single_file = polars.read_csv(os.path.join(path, file), separator=';', columns=cols, infer_schema_length=10_000)
-            single_file = single_file.filter((single_file['Date'] != "1899-12-30") & (single_file['Price'] > 0))
-            stacked     = polars.concat([stacked, single_file])
+        '''Read single file...'''
+        if single_file is not None:
 
-        if idx >= break_at:
-            break
+            print("Reading one single file, only...")
 
-    print(f"Correcting Time and adding Datetime...")
-    stacked = correct_time_nanoseconds(stacked)
-    stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
-    stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
+            single_file = polars.read_csv(os.path.join(path, single_file),
+                                          separator           = separator,
+                                          columns             = cols,
+                                          infer_schema_length = 10_000)
+
+            single_file = correct_time_nanoseconds(single_file)
+            single_file = single_file.filter(single_file['Price'] > 0)             # Additional dummy check . . .
+            single_file = single_file.filter(single_file['Date'] != "1899-12-30")  # Additional dummy check . . .
+            single_file = single_file.with_columns(Datetime = single_file['Date'] + ' ' + single_file['Time'])
+            single_file = single_file.with_columns(Datetime = single_file['Datetime'].str.to_datetime())
+            single_file = single_file.with_columns(Hour     = single_file['Datetime'].dt.hour())
+            single_file = single_file.with_columns(Minute   = single_file['Datetime'].dt.minute())
+            single_file = single_file.with_columns(Second   = single_file['Datetime'].dt.second())
+            single_file = apply_offset_given_dataframe(single_file)
+
+            if single_file is None:
+                '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
+                raise Exception("Attention, the function get_tickers_in_folder for a single file has incorrect Datetime")
+
+            return single_file
+
+
+        '''Read all the files in a folder...'''
+        current_ticker = [str(ticker).upper() + str(x).upper() + str(year).upper() for x in future_letters]
+        files          = [item for item in os.listdir(path) if any(sub in item for sub in current_ticker)]
+        ####################################################################################################################
+
+        print('\nReading muiltiple files and stacking them up ... \n')
+        stacked = polars.DataFrame()
+        for idx, file in tqdm(enumerate(files)):
+
+            print(f"Reading file named {file} ...")
+            if file.endswith(str(extension)):
+
+                '''
+                1. read the file
+                2. correct timestamp (nanoseconds correction)P
+                3. filter possible old incorrect price/date
+                4. create datetime and all the possible derivates: hour, minute, second
+                5. correct timestamp given last recording hour (Chicago Time is the correct reference time)
+                '''
+
+                single_file = polars.read_csv(os.path.join(path, file),
+                                              separator           = separator,
+                                              columns             = cols,
+                                              infer_schema_length = 10_000)
+
+                single_file = correct_time_nanoseconds(single_file)
+                single_file = single_file.filter(single_file['Price'] > 0)             # Additional dummy check . . .
+                single_file = single_file.filter(single_file['Date'] != "1899-12-30")  # Additional dummy check . . .
+                single_file = single_file.with_columns(Datetime = single_file['Date'] + ' ' + single_file['Time'])
+                single_file = single_file.with_columns(Datetime = single_file['Datetime'].str.to_datetime())
+                single_file = single_file.with_columns(Hour     = single_file['Datetime'].dt.hour())
+                single_file = single_file.with_columns(Minute   = single_file['Datetime'].dt.minute())
+                single_file = single_file.with_columns(Second   = single_file['Datetime'].dt.second())
+                single_file = apply_offset_given_dataframe(single_file)
+
+                if single_file is None:
+                    '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
+                    continue
+
+                stacked = polars.concat([stacked, single_file])
+
+            if idx >= break_at:
+                break
+
+    except Exception as ex:
+        raise Exception(f"While reading files, this exception occured: {ex}")
     
-    return apply_offset(stacked)
+    return stacked
 
 
 def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_on_same_price_level: bool = False,

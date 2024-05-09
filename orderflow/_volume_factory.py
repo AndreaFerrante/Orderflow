@@ -79,71 +79,83 @@ def correct_time_nanoseconds(ticker_to_correct: polars.DataFrame = None):
     return ticker_to_correct
 
 
-def apply_offset_given_dataframe(pl_df:polars.DataFrame):
+def apply_offset_given_dataframe(pl_df:polars.DataFrame, market:str=''):
 
     """
-        Applies a time offset to the 'Datetime' column in a given Polars DataFrame based on the value
-        of the last hour recorded in the 'Hour' column.
+    Adjusts the 'Datetime' column in the provided Polars DataFrame by applying a time offset. The offset amount
+    is determined by the 'market' parameter and the last hour recorded in the 'Hour' column of the DataFrame.
 
-        This function modifies the 'Datetime' column by subtracting a certain number of hours. The
-        number of hours subtracted is determined by the last hour value in the 'Hour' column. If the
-        last hour is 23, 7 hours are subtracted; if 22, then 6 hours; and so forth, until 19, after
-        which 3 hours are subtracted. If the last hour is less than 19, the DataFrame is returned
-        without modifications to the 'Datetime' column.
+    The offset is computed to align the 'Datetime' values with a standard trading closing time, depending on the
+    specified market ('CBOT' or 'CME'). For instance, if the last hour is 23, and the market is 'CBOT', 8 hours
+    are subtracted; if 'CME', 7 hours are subtracted. This adjustment is aimed at standardizing the time to a
+    reference market close time, providing a uniform time series data irrespective of the actual closing times
+    recorded in the data.
 
-        Args:
-            pl_df (polars.DataFrame): A Polars DataFrame that must contain 'Hour' and 'Datetime'
-                                      columns. 'Hour' should be an integer type column representing
-                                      the hour of the day, and 'Datetime' should be a datetime type
-                                      column.
+    Args:
+        pl_df (polars.DataFrame): A DataFrame with at least 'Datetime' and 'Hour' columns. 'Datetime' should be
+                                  in datetime format, and 'Hour' should be extracted from 'Datetime' if not present.
+        market (str, optional): Market identifier, should be either 'CBOT' or 'CME'. This is required to determine
+                                the correct offset to apply. Defaults to an empty string.
 
-        Returns:
-            polars.DataFrame: A Polars DataFrame with adjusted 'Datetime' column based on the last
-                              recorded hour in the 'Hour' column. The DataFrame is sorted by the
-                              'Datetime' column in ascending order.
+    Returns:
+        polars.DataFrame: A DataFrame with the 'Datetime' column adjusted according to the specified market's
+                          standard closing time.
 
-        Raises:
-            ValueError: If the 'Datetime' column does not exist in the input DataFrame.
+    Raises:
+        ValueError: If 'Datetime' column is not present in the DataFrame.
+        ValueError: If 'market' is not 'CBOT' or 'CME'.
+        Exception: If the DataFrame cannot be processed due to incorrect or missing market information.
 
-        Examples:
-            df = pl.DataFrame({
-                    "Datetime": pl.date_range(low=pl.datetime(2023, 1, 1), high=pl.datetime(2023, 1, 1, 23), every='1h'),
-                    "Hour": list(range(24))
-                })
-            modified_df = apply_offset_given_dataframe(df)
-            print(modified_df)
-            shape: (24, 2)
-            ┌─────────────────────┬─────┐
-            │ Datetime            ┆ Hour│
-            │ ---                 ┆ --- │
-            │ datetime[μs]        ┆ i64 │
-            ├─────────────────────┼─────┤
-            │ ...                 ┆ ... │
-            └─────────────────────┴─────┘
+    Examples:
+        >>> data = {
+                "Datetime": pl.date_range(low=pl.datetime(2023, 1, 1), high=pl.datetime(2023, 1, 1, 23), every='1h'),
+                "Hour": list(range(24))
+            }
+        >>> df = pl.DataFrame(data)
+        >>> modified_df = apply_offset_given_dataframe(df, market='CBOT')
+        >>> print(modified_df)
 
-        Note:
-            The function will return `None` if any issues arise with the input data validation,
-            especially related to the presence of necessary columns or recorded values in the 'Hour' column.
-        """
+    Notes:
+        - The function requires that 'market' be specified accurately to ensure correct time adjustments.
+        - It is assumed that the input DataFrame is properly formatted with the necessary columns.
+        - The function includes error handling to ensure robust processing against common data issues.
 
-    ##################################
+    """
+
+    if market == '':
+        raise Exception("To ofset datetime you must pass the market from which the ticker has been extracted from !")
+
+    ################################################################
+    '''
+    1. Extract hour from datetime columns
+    2. Select the very last hour as reference !
+    '''
+    pl_df     = pl_df.with_columns(Hour=pl_df['Datetime'].dt.hour())
     last_hour = int(pl_df['Hour'][-1])
-    ##################################
+    ################################################################
 
     if 'Datetime' not in pl_df.columns:
         '''Add Datetime column (datetime datatype, too) inside Polars DataFrame'''
         return None
 
+    '''CBOT closes at 15:59:59, CME closes at 16:59:59'''
+    if str(market).lower() == 'cbot':
+        offset_addition = 1
+    elif str(market).lower() == 'cme':
+        offset_addition = 0
+    else:
+        raise Exception("Attention ! Pass a market that is CME or CBOT")
+
     if last_hour == 23:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(7) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(7 + offset_addition) + "h"))
     elif last_hour == 22:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(6) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(6 + offset_addition) + "h"))
     elif last_hour == 21:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(5) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(5 + offset_addition) + "h"))
     elif last_hour == 20:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(4) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(4 + offset_addition) + "h"))
     elif last_hour == 19:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(3) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(3 + offset_addition) + "h"))
     else:
         '''If we had a possible issue in file recorded, better to skip the timestamp correction'''
         return None
@@ -398,54 +410,65 @@ def get_tickers_in_pg_table(
 def get_tickers_in_folder(
         path:           str  = None,
         single_file:    str  = None,
-        ticker:         str  = "ES",
+        ticker:         str  = "ZN",
         year:           int  = 0,
-        future_letters: list = None,
-        cols:           list = None,
+        future_letters: list  = None,
+        cols:           list  = None,
         break_at:       int  = 99999,
         extension:      str  = 'txt',
-        separator:      str  = ';'
+        separator:      str  = ';',
+        market:         str  = ''
 ) -> polars.DataFrame:
 
     """
-     Processes files within a specified directory or a single file to extract and adjust financial ticker data,
-     returning a Polars DataFrame with the adjusted data.
+    Processes files within a specified directory or a single file to extract and adjust financial ticker data,
+    returning a Polars DataFrame with the adjusted data.
 
-     This function reads multiple files specified by the combination of ticker symbols, future letters, and year,
-     or a single specified file. It applies data corrections, filters out invalid data, and adjusts the datetime
-     information based on the last recorded hour to align with a standard time (like Chicago Time for trading data).
+    This function reads multiple files specified by the combination of ticker symbols, future letters, and year,
+    or a single specified file. It applies data corrections, filters out invalid data, and adjusts the datetime
+    information based on the last recorded hour to align with a standard time (like Chicago Time for trading data).
 
-     Args:
-         path (str, optional): The path to the directory containing the files to be processed. Required if 'single_file' is not provided.
-         single_file (str, optional): Specific single file to be processed. If provided, 'path' must also be specified.
-         ticker (str, optional): The root ticker symbol used to identify files. Defaults to 'ES'.
-         year (int, optional): The year associated with the futures contracts to help identify files. Defaults to 23.
-         future_letters (list, optional): List of future letters to identify specific contracts within the files.
-         cols (list, optional): List of columns to read from the files. If not provided, it will be determined by calling 'get_longest_columns_dataframe'.
-         break_at (int, optional): The maximum number of files to process before stopping. Defaults to a very large number to process all files.
-         extension (str, optional): File extension of the files to be processed. Defaults to 'txt'.
-         separator (str, optional): The character used to separate values in the file. Defaults to ';'.
+    Args:
+        path (str, optional): The path to the directory containing the files to be processed. Required if 'single_file' is not provided.
+        single_file (str, optional): Specific single file to be processed. If provided, 'path' must also be specified.
+        ticker (str, optional): The root ticker symbol used to identify files. Defaults to 'ES'.
+        year (int, optional): The year associated with the futures contracts to help identify files. Defaults to 0, which must be updated by the user.
+        future_letters (list, optional): List of future letters to identify specific contracts within the files.
+        cols (list, optional): List of columns to read from the files. If not provided, it will be determined by calling 'get_longest_columns_dataframe'.
+        break_at (int, optional): The maximum number of files to process before stopping. Defaults to a very large number to process all files.
+        extension (str, optional): File extension of the files to be processed. Defaults to 'txt'.
+        separator (str, optional): The character used to separate values in the file. Defaults to ';'.
+        market (str, optional): The market identifier from which the ticker has been extracted. Required to apply the correct datetime offset.
 
-     Returns:
-         polars.DataFrame: A DataFrame containing the processed ticker data with additional datetime columns like 'Hour', 'Minute', and 'Second',
-         and adjustments based on the last recorded hour.
+    Returns:
+        polars.DataFrame: A DataFrame containing the processed ticker data with additional datetime columns like 'Hour', 'Minute', and 'Second',
+        and adjustments based on the last recorded hour.
 
-     Raises:
-         Exception: If 'path' is not specified when required.
-         Exception: If 'future_letters' is not provided but is required for processing multiple files.
-         Exception: If there is an issue with the datetime data in the file being processed.
-         Exception: If there no year of the ticker has been passed (i.e. ticker == 0).
+    Raises:
+        Exception: If 'path' is not specified when required.
+        Exception: If 'future_letters' is not provided but is required for processing multiple files.
+        Exception: If there is an issue with the datetime data in the file being processed.
+        Exception: If no year of the ticker has been passed (i.e., year == 0).
+        Exception: If 'market' is not specified.
 
-     Example:
-         >>> df = get_tickers_in_folder(path="/data/tickers", ticker="ES", year=2023, future_letters=["H", "M", "U", "Z"])
-         >>> print(df.shape)
-         (500, 8)
+    Example:
+        df = get_tickers_in_folder(path="/data/tickers", ticker="ES", year=2023, future_letters=["H", "M", "U", "Z"])
+        print(df.shape)
+        (500, 8)
 
-     Note:
-         This function assumes the presence of a helper function 'apply_offset_given_dataframe' to adjust the datetime
-         columns based on trading hours and another 'correct_time_nanoseconds' to correct the timestamps. Ensure these
-         functions are correctly implemented and available in the scope.
-     """
+    Note:
+        This function assumes the presence of helper functions 'apply_offset_given_dataframe' to adjust the datetime
+        columns based on trading hours and another 'correct_time_nanoseconds' to correct the timestamps. Ensure these
+        functions are correctly implemented and available in the scope.
+
+        The function performs the following steps:
+        1. Reads a single file if 'single_file' is specified, applying necessary data corrections and transformations.
+        2. Reads and processes multiple files in a directory if 'path' and 'future_letters' are provided.
+        3. Applies filters to remove invalid data entries.
+        4. Constructs a 'Datetime' column by combining 'Date' and 'Time' columns and applies offset corrections.
+        5. Concatenates data from all processed files into a single Polars DataFrame.
+
+    """
 
     print("Get tickers in folder...")
 
@@ -457,9 +480,15 @@ def get_tickers_in_folder(
 
     if future_letters is None:
         raise Exception("Pass to the funtion get_tickers_in_folder a list of Future Letters.")
+    else:
+        '''Be sure all future letters are in capital letters...'''
+        future_letters = [str(letter).upper() for letter in future_letters]
 
     if year == 0:
         raise Exception("Pass to the function get_tickers_in_folder the year of the future yuo want to read.")
+
+    if market == '':
+        raise Exception("To offset datetime you must pass the market from which the ticker has been extracted from !")
 
     '''
     1. Read initially one single file (if desired)
@@ -486,7 +515,7 @@ def get_tickers_in_folder(
             single_file = single_file.with_columns(Hour     = single_file['Datetime'].dt.hour())
             single_file = single_file.with_columns(Minute   = single_file['Datetime'].dt.minute())
             single_file = single_file.with_columns(Second   = single_file['Datetime'].dt.second())
-            single_file = apply_offset_given_dataframe(single_file)
+            single_file = apply_offset_given_dataframe(single_file, market)
 
             if single_file is None:
                 '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
@@ -521,14 +550,16 @@ def get_tickers_in_folder(
                                               infer_schema_length = 10_000)
 
                 single_file = correct_time_nanoseconds(single_file)
+
                 single_file = single_file.filter(single_file['Price'] > 0)             # Additional dummy check . . .
                 single_file = single_file.filter(single_file['Date'] != "1899-12-30")  # Additional dummy check . . .
                 single_file = single_file.with_columns(Datetime = single_file['Date'] + ' ' + single_file['Time'])
                 single_file = single_file.with_columns(Datetime = single_file['Datetime'].str.to_datetime())
+                single_file = apply_offset_given_dataframe(single_file, market)
+
                 single_file = single_file.with_columns(Hour     = single_file['Datetime'].dt.hour())
                 single_file = single_file.with_columns(Minute   = single_file['Datetime'].dt.minute())
                 single_file = single_file.with_columns(Second   = single_file['Datetime'].dt.second())
-                single_file = apply_offset_given_dataframe(single_file)
 
                 if single_file is None:
                     '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
@@ -653,11 +684,11 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_o
 
 
 def get_orders_in_row_v2(trades: pd.DataFrame,
-                         seconds_split: float             = 1.0,
-                         orders_on_prices_level_range     = 0,
-                         tick_size: float                 = 0.25,
-                         min_volume_summation: int        = 1_000_000,
-                         min_num_of_trades                = 1,
+                         seconds_split: float              = 1.0,
+                         orders_on_prices_level_range    = 0,
+                         tick_size: float                  = 0.25,
+                         min_volume_summation: int       = 1_000_000,
+                         min_num_of_trades               = 1,
                          reset_counter_at_summation: bool = True) -> (pd.DataFrame, pd.DataFrame):
 
     '''
@@ -874,3 +905,5 @@ def print_constants():
     print(VWAP_BAND_OFFSET_2)
     print(VWAP_BAND_OFFSET_3)
     print(VWAP_BAND_OFFSET_4)
+
+

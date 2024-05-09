@@ -3,7 +3,6 @@ from orderflow.backtester import (
 )
 
 from orderflow._volume_factory import (
-    prepare_data,
     get_tickers_in_folder,
     get_tickers_in_pg_table,
     plot_half_hour_volume,

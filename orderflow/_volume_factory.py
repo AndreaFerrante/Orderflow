@@ -573,7 +573,7 @@ def get_tickers_in_folder(
     except Exception as ex:
         raise Exception(f"While reading files, this exception occured: {ex}")
     
-    return stacked
+    return stacked.sort('Datetime', descending=False)
 
 
 def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_on_same_price_level: bool = False,

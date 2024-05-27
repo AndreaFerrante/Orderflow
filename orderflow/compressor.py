@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 
 
-def compress_to_range_bars(tick_data:pd.DataFrame, price_range:int) -> pd.DataFrame:
+def compress_to_range_bars(tick_data:pd.DataFrame, price_range:int, tick_size:float=None) -> pd.DataFrame:
 
     """
     Transforms tick-by-tick data into range bars using NumPy.
@@ -22,6 +22,9 @@ def compress_to_range_bars(tick_data:pd.DataFrame, price_range:int) -> pd.DataFr
 
     if 'Volume' not in tick_data.columns:
         raise Exception('Volume is not in columns, pass it to the compress_to_range_bars function.')
+
+    if tick_size is None:
+        raise Exception('Attention, yuo must pass tick_size parameter specific for the instrument used.')
 
     #############################################
     price_array = tick_data['Price'].to_numpy()
@@ -42,11 +45,11 @@ def compress_to_range_bars(tick_data:pd.DataFrame, price_range:int) -> pd.DataFr
 
     for price, volume in tqdm(zip(price_array, vol_array)):
 
-        running_high = np.max(running_high, price)
-        running_low  = np.min(running_low, price)
+        running_high = max(running_high, price)
+        running_low  = min(running_low, price)
         running_vol += volume
 
-        if abs(running_high - running_low) >= price_range:
+        if abs(running_high - running_low) / tick_size >= price_range:
 
             opens.append(running_open)
             highs.append(running_high)

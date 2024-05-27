@@ -2,6 +2,11 @@ from orderflow.backtester import (
     backtester
 )
 
+from orderflow.compressor import (
+    compress_to_range_bars,
+    compress_to_volume_bars
+)
+
 from orderflow._volume_factory import (
     get_tickers_in_folder,
     get_tickers_in_pg_table,

@@ -29,8 +29,12 @@ def compress_to_range_bars(tick_data:pd.DataFrame, price_range:int, tick_size:fl
     #############################################
     price_array = tick_data['Price'].to_numpy()
     vol_array   = tick_data['Volume'].to_numpy()
+    date_array  = tick_data['Date'].to_numpy()
+    time_array  = tick_data['Datetime'].dt.time.astype(str).to_numpy()
     #############################################
 
+    dates   = deque()
+    times   = deque()
     opens   = deque()
     highs   = deque()
     lows    = deque()
@@ -43,7 +47,7 @@ def compress_to_range_bars(tick_data:pd.DataFrame, price_range:int, tick_size:fl
     running_low  = price_array[0]
     running_vol  = 0
 
-    for price, volume in tqdm(zip(price_array, vol_array)):
+    for price, volume, date, time in tqdm(zip(price_array, vol_array, date_array, time_array)):
 
         running_high = max(running_high, price)
         running_low  = min(running_low, price)
@@ -51,6 +55,8 @@ def compress_to_range_bars(tick_data:pd.DataFrame, price_range:int, tick_size:fl
 
         if abs(running_high - running_low) / tick_size >= price_range:
 
+            dates.append(date)
+            times.append(time)
             opens.append(running_open)
             highs.append(running_high)
             lows.append(running_low)
@@ -64,6 +70,8 @@ def compress_to_range_bars(tick_data:pd.DataFrame, price_range:int, tick_size:fl
             running_vol  = 0
 
     range_bars_df = pd.DataFrame({
+        'Date':   dates,
+        'Time':   times,
         'Open':   opens,
         'High':   highs,
         'Low':    lows,

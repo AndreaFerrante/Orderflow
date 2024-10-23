@@ -544,28 +544,28 @@ def get_tickers_in_folder(
                 5. correct timestamp given last recording hour (Chicago Time is the correct reference time)
                 '''
 
-                single_file = polars.read_csv(os.path.join(path, file),
+                single_file_ = polars.read_csv(os.path.join(path, file),
                                               separator           = separator,
                                               columns             = cols,
                                               infer_schema_length = 10_000)
 
-                single_file = correct_time_nanoseconds(single_file)
+                single_file_ = correct_time_nanoseconds(single_file_)
 
-                single_file = single_file.filter(single_file['Price'] > 0)             # Additional dummy check . . .
-                single_file = single_file.filter(single_file['Date'] != "1899-12-30")  # Additional dummy check . . .
-                single_file = single_file.with_columns(Datetime = single_file['Date'] + ' ' + single_file['Time'])
-                single_file = single_file.with_columns(Datetime = single_file['Datetime'].str.to_datetime())
-                single_file = apply_offset_given_dataframe(single_file, market)
+                single_file_ = single_file_.filter(single_file_['Price'] > 0)             # Additional dummy check . . .
+                single_file_ = single_file_.filter(single_file_['Date'] != "1899-12-30")  # Additional dummy check . . .
+                single_file_ = single_file_.with_columns(Datetime = single_file_['Date'] + ' ' + single_file_['Time'])
+                single_file_ = single_file_.with_columns(Datetime = single_file_['Datetime'].str.to_datetime())
+                single_file_ = apply_offset_given_dataframe(single_file_, market)
 
-                single_file = single_file.with_columns(Hour     = single_file['Datetime'].dt.hour())
-                single_file = single_file.with_columns(Minute   = single_file['Datetime'].dt.minute())
-                single_file = single_file.with_columns(Second   = single_file['Datetime'].dt.second())
+                single_file_ = single_file_.with_columns(Hour     = single_file_['Datetime'].dt.hour())
+                single_file_ = single_file_.with_columns(Minute   = single_file_['Datetime'].dt.minute())
+                single_file_ = single_file_.with_columns(Second   = single_file_['Datetime'].dt.second())
 
-                if single_file is None:
+                if single_file_ is None:
                     '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
                     continue
 
-                stacked = polars.concat([stacked, single_file])
+                stacked = polars.concat([stacked, single_file_])
 
             if idx >= break_at:
                 break

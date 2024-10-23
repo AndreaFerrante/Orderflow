@@ -530,7 +530,7 @@ def get_tickers_in_folder(
         ####################################################################################################################
 
         print('\nReading muiltiple files and stacking them up ... \n')
-        stacked = polars.DataFrame()
+        stacked = list()
         for idx, file in tqdm(enumerate(files)):
 
             print(f"Reading file named {file} ...")
@@ -565,7 +565,7 @@ def get_tickers_in_folder(
                     '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
                     continue
 
-                stacked = polars.concat([stacked, single_file_])
+                stacked.append(single_file_)
 
             if idx >= break_at:
                 break
@@ -573,7 +573,10 @@ def get_tickers_in_folder(
     except Exception as ex:
         raise Exception(f"While reading files, this exception occured: {ex}")
     
-    return stacked.sort('Datetime', descending=False)
+    stacked = polars.concat(stacked, how="vertical")
+    stacked.sort('Datetime', descending=False)
+    
+    return stacked
 
 
 def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_on_same_price_level: bool = False,

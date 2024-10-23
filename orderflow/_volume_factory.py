@@ -125,14 +125,16 @@ def apply_offset_given_dataframe(pl_df:polars.DataFrame, market:str=''):
     if market == '':
         raise Exception("To ofset datetime you must pass the market from which the ticker has been extracted from !")
 
-    ################################################################
+    ####################################################################################################################
     '''
     1. Extract hour from datetime columns
     2. Select the very last hour as reference !
     '''
-    pl_df     = pl_df.with_columns(Hour=pl_df['Datetime'].dt.hour())
-    last_hour = int(pl_df['Hour'][-1])
-    ################################################################
+    pl_df_gb  = pl_df.group_by('Date').agg([polars.col("Datetime").last()])
+    pl_df_gb  = pl_df_gb.with_columns(Hour=pl_df_gb['Datetime'].dt.hour())
+    last_hour = pl_df_gb.select(polars.col("Hour").mode())
+    last_hour = int(last_hour['Hour'][0]) # ---> We take the most frequent LAST HOUR in the dataframe <---
+    ####################################################################################################################
 
     if 'Datetime' not in pl_df.columns:
         '''Add Datetime column (datetime datatype, too) inside Polars DataFrame'''
@@ -557,13 +559,13 @@ def get_tickers_in_folder(
                 single_file_ = single_file_.with_columns(Datetime = single_file_['Datetime'].str.to_datetime())
                 single_file_ = apply_offset_given_dataframe(single_file_, market)
 
-                single_file_ = single_file_.with_columns(Hour     = single_file_['Datetime'].dt.hour())
-                single_file_ = single_file_.with_columns(Minute   = single_file_['Datetime'].dt.minute())
-                single_file_ = single_file_.with_columns(Second   = single_file_['Datetime'].dt.second())
-
                 if single_file_ is None:
                     '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
                     continue
+
+                single_file_ = single_file_.with_columns(Hour     = single_file_['Datetime'].dt.hour())
+                single_file_ = single_file_.with_columns(Minute   = single_file_['Datetime'].dt.minute())
+                single_file_ = single_file_.with_columns(Second   = single_file_['Datetime'].dt.second())
 
                 stacked.append(single_file_)
 

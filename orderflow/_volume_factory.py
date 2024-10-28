@@ -674,7 +674,7 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_o
                                    orders_on_same_price_level,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
-        print(e)
+        print(f"While managing ASK the Speed of Tape, this error couured: {e}")
 
     # Manage speed of tape on the BID, secondly.
     try:
@@ -683,7 +683,7 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_o
                                    orders_on_same_price_level,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
-        print(e)
+        print(f"While managing BID the Speed of Tape, this error couured: {e}")
 
     return ask, bid
 
@@ -910,5 +910,3 @@ def print_constants():
     print(VWAP_BAND_OFFSET_2)
     print(VWAP_BAND_OFFSET_3)
     print(VWAP_BAND_OFFSET_4)
-
-

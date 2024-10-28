@@ -184,8 +184,32 @@ def backtester(
 
             if datetime_signal_RTH == 0:
 
+<<<<<<< Updated upstream
                 # ---> We are having a long trade AND real time turned on...
                 if entry_price != 0 and trade_type == 2:
+=======
+            try:
+                first_last_index_row = RTH_indexes[RTH_indexes['Date'] == data.Date[i]].iloc[0]
+            except IndexError:
+                print("Date not in RTH ranges. Stop backtest.")
+                return False
+            
+            # datetime_signal_RTH = 0
+            # for idx, row in RTH_indexes.iterrows():
+            #     datetime_signal_RTH += (datetime_all[i] >= row['IndexFirst']) & (datetime_all[i] <= row['IndexLast'])
+            #
+            # # If the current datetime_all[i] index is OUTSIDE the possible index we close the position...
+            # if datetime_signal_RTH == 0:
+
+            if (first_last_index_row['IndexFirst'] > datetime_all[i]) or (datetime_all[i] > first_last_index_row['IndexLast']):
+                print('Trade in ETH, cancelling order.\n')
+            # If the current datetime_all[i] index is OUTSIDE the possible index we close the position...
+
+                print('Trade in ETH, cancelling order.\n')
+                
+                # ---> We are having a long trade AND regular time turned on...
+                if trade_type == 2:
+>>>>>>> Stashed changes
 
                     position = 'LONG'
 
@@ -411,7 +435,6 @@ def backtester(
         backtest.to_csv(save_path, sep=';')
 
     return backtest, trades, backtest_results
-
 
 
 

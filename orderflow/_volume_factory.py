@@ -884,7 +884,7 @@ def get_new_start_date(data: pd.DataFrame, sort_values: bool = False) -> pd.Data
     return data.drop(['Date_Shift'], axis=1)
 
 
-def get_market_evening_session(data: pd.DataFrame):
+def get_market_evening_session(data: pd.DataFrame, ticker: str):
     '''
     This function defines session start and end given Chicago Time.
     Pass to this function a DataFrame with Datetime offset !
@@ -892,9 +892,14 @@ def get_market_evening_session(data: pd.DataFrame):
 
     print(f"Assign sessions labels...")
 
-    condlist   = [(data.Datetime.dt.time >= SESSION_START_TIME) & (data.Datetime.dt.time <= SESSION_END_TIME),
-                  (data.Datetime.dt.time <= SESSION_START_TIME) | (data.Datetime.dt.time >= SESSION_END_TIME)]
-    choicelist = ['RTH', 'ETH']
+    condlist = [
+          (data.Datetime.dt.time >= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_StartTime'].values[0]) & (
+           data.Datetime.dt.time <= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_EndTime'].values[0]),
+          (data.Datetime.dt.time <= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_StartTime'].values[0]) | (
+           data.Datetime.dt.time >= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_EndTime'].values[0])
+         ]
+    choicelist = ['RTH', 
+                  'ETH']
 
     return np.select(condlist, choicelist)
 

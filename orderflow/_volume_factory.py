@@ -281,7 +281,8 @@ def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: st
     '''Get one file only to scan'''
     if single_file is not None:
         
-        single = pd.read_csv(os.path.join(path, single_file), sep=";", nrows=5)
+        single = pd.read_csv( path + single_file, sep=";", nrows=5)
+
         if len(single.columns) < len(cols):
             cols = single.columns
         
@@ -472,113 +473,89 @@ def get_tickers_in_folder(
 
     """
 
-    print("Get tickers in folder...")
+    if path is None:
+        raise Exception("Pass to the function a path where the files are stored in.")
+
+    def correct_time_nanoseconds(ticker_to_correct:polars.DataFrame=None):
+        
+        '''
+        OS sometimes record incorrectly the immediate initial nanoseconds at the beginning of a single second.
+        This function gets all the nanoseconds recorded at the same padding length.
+        '''
+        
+        if ticker_to_correct is None:
+            raise Exception("Pass a DataFrame to clear the Time column on !")
+        
+        if isinstance(ticker_to_correct, pd.DataFrame):
+            ticker_to_correct = polars.DataFrame(ticker_to_correct)
+        
+        def pad_after_period(value):
+            if '.' in value:
+                before_dot, after_dot = value.split('.', 1)
+                padded_after_dot      = after_dot.rjust(6, '0')
+                return f"{before_dot}.{padded_after_dot}"
+            else:
+                return value
+
+        #####################################################################################################################################
+        '''This is the apply pandas function but in Polars, much faster'''
+        ticker_to_correct = ticker_to_correct.with_columns(Time = ticker_to_correct['Time'].map_elements(pad_after_period))
+        #####################################################################################################################################
+        
+        return ticker_to_correct
+
+    def apply_offset(stacked):
+        
+        '''Data needs sometime time to be shifted due to sytem time rgistration'''
+        
+        if offset:
+            stacked = stacked.with_columns(Datetime = stacked['Datetime'].dt.offset_by("-" + str(offset) + "h"))
+            return stacked.sort(['Datetime'], descending=False)
+        else:
+            return stacked.sort(['Datetime'], descending=False)
 
     if cols is None:
         cols = get_longest_columns_dataframe(path=path, ticker=ticker, single_file=single_file)
 
-    if path is None:
-        raise Exception("Pass to the function the path where the files are stored in.")
+    '''Read one file only'''
+    if single_file is not None:
+        
+        print("Reading one single file, only...")
+        
+        single_file_polars = polars.read_csv(path + single_file, separator=separator, columns=cols, infer_schema_length=10_000)
+        single_file_polars = single_file_polars.filter((polars.col('Date') != "1899-12-30") & (polars.col('Price') > 0))
+        single_file_polars = correct_time_nanoseconds(single_file_polars)
+        single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])
+        single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Datetime'].str.to_datetime())
+        
+        return apply_offset(single_file_polars)
 
-    if future_letters is None:
-        raise Exception("Pass to the funtion get_tickers_in_folder a list of Future Letters.")
-    else:
-        '''Be sure all future letters are in capital letters...'''
-        future_letters = [str(letter).upper() for letter in future_letters]
+    print("Get tickers in folder...")
 
-    if year == 0:
-        raise Exception("Pass to the function get_tickers_in_folder the year of the future yuo want to read.")
+    ticker  = str(ticker).upper()
+    files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
+    stacked = list()
 
-    if market == '':
-        raise Exception("To offset datetime you must pass the market from which the ticker has been extracted from !")
+    '''Read more than one file'''
+    for idx, file in tqdm(enumerate(files)):
 
-    '''
-    1. Read initially one single file (if desired)
-    2. Read all the files in a folder
-    '''
+        print(f"Reading file {file} ...")
 
-    try:
+        if file.endswith(str(extension).upper()):
+            single_file = polars.read_csv(os.path.join(path, file), separator=separator, columns=cols, infer_schema_length=10_000)
+            single_file = single_file.filter((polars.col('Date') != "1899-12-30") & (polars.col('Price') > 0))
+            stacked.append(single_file)
 
-        '''Read single file...'''
-        if single_file is not None:
+        if idx >= break_at:
+            break
 
-            print("Reading one single file, only...")
-
-            single_file = polars.read_csv(os.path.join(path, single_file),
-                                          separator           = separator,
-                                          columns             = cols,
-                                          infer_schema_length = 10_000)
-
-            single_file = correct_time_nanoseconds(single_file)
-            single_file = single_file.filter(single_file['Price'] > 0)             # Additional dummy check . . .
-            single_file = single_file.filter(single_file['Date'] != "1899-12-30")  # Additional dummy check . . .
-            single_file = single_file.with_columns(Datetime = single_file['Date'] + ' ' + single_file['Time'])
-            single_file = single_file.with_columns(Datetime = single_file['Datetime'].str.to_datetime())
-            single_file = single_file.with_columns(Hour     = single_file['Datetime'].dt.hour())
-            single_file = single_file.with_columns(Minute   = single_file['Datetime'].dt.minute())
-            single_file = single_file.with_columns(Second   = single_file['Datetime'].dt.second())
-            single_file = apply_offset_given_dataframe(single_file, market)
-
-            if single_file is None:
-                '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
-                raise Exception("Attention, the function get_tickers_in_folder for a single file has incorrect Datetime")
-
-            return single_file
-
-
-        '''Read all the files in a folder...'''
-        current_ticker = [str(ticker).upper() + str(x).upper() + str(year).upper() for x in future_letters]
-        files          = [item for item in os.listdir(path) if any(sub in item for sub in current_ticker)]
-        ####################################################################################################################
-
-        print('\nReading muiltiple files and stacking them up ... \n')
-        stacked = list()
-        for idx, file in tqdm(enumerate(files)):
-
-            print(f"Reading file named {file} ...")
-            if file.endswith(str(extension)):
-
-                '''
-                1. read the file
-                2. correct timestamp (nanoseconds correction)P
-                3. filter possible old incorrect price/date
-                4. create datetime and all the possible derivates: hour, minute, second
-                5. correct timestamp given last recording hour (Chicago Time is the correct reference time)
-                '''
-
-                single_file_ = polars.read_csv(os.path.join(path, file),
-                                              separator           = separator,
-                                              columns             = cols,
-                                              infer_schema_length = 10_000)
-
-                single_file_ = correct_time_nanoseconds(single_file_)
-
-                single_file_ = single_file_.filter(single_file_['Price'] > 0)             # Additional dummy check . . .
-                single_file_ = single_file_.filter(single_file_['Date'] != "1899-12-30")  # Additional dummy check . . .
-                single_file_ = single_file_.with_columns(Datetime = single_file_['Date'] + ' ' + single_file_['Time'])
-                single_file_ = single_file_.with_columns(Datetime = single_file_['Datetime'].str.to_datetime())
-                single_file_ = apply_offset_given_dataframe(single_file_, market)
-
-                if single_file_ is None:
-                    '''We had an issue in recording, we skip the file (see apply_offset_given_dataframe function)'''
-                    continue
-
-                single_file_ = single_file_.with_columns(Hour     = single_file_['Datetime'].dt.hour())
-                single_file_ = single_file_.with_columns(Minute   = single_file_['Datetime'].dt.minute())
-                single_file_ = single_file_.with_columns(Second   = single_file_['Datetime'].dt.second())
-
-                stacked.append(single_file_)
-
-            if idx >= break_at:
-                break
-
-    except Exception as ex:
-        raise Exception(f"While reading files, this exception occured: {ex}")
-    
+    print(f"Correcting Time and adding Datetime...")
     stacked = polars.concat(stacked, how="vertical")
-    stacked.sort('Datetime', descending=False)
+    stacked = correct_time_nanoseconds(stacked)
+    stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
+    stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
     
-    return stacked
+    return apply_offset(stacked)
 
 
 def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_on_same_price_level: bool = False,
@@ -915,3 +892,7 @@ def print_constants():
     print(VWAP_BAND_OFFSET_2)
     print(VWAP_BAND_OFFSET_3)
     print(VWAP_BAND_OFFSET_4)
+
+
+
+

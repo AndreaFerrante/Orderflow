@@ -7,8 +7,12 @@ class SessionTypeAbsent(BaseException):
     """Raised when the column SessionType is not present inside DataFrame"""
     pass
 
+class DatetimeTypeAbsent(BaseException):
+    """Raised when the column Datetime is not present inside DataFrame"""
+    pass
+
 class IndexAbsent(BaseException):
-    """Raised when the column SessionType is not present inside DataFrame"""
+    """Raised when the column Index is not present inside DataFrame"""
     pass
 
 class ColumnNotPresent(BaseException):

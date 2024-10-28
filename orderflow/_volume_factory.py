@@ -1,15 +1,33 @@
 import os
+import pytz
 import polars
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.configuration import *
-from .exceptions import ColumnNotPresent
+from datetime import datetime, timedelta
 from dateutil.parser import parse
 
 
 def half_hour(x) -> str:
+
+    """
+    Determines whether a given minute falls in the first or second half of an hour.
+
+    Args:
+        x (int): The minute part of a time, expected to be between 0 and 59.
+
+    Returns:
+        str: Returns "30" if the given minute is 30 or more, indicating the second half of an hour.
+             Returns "00" if the minute is less than 30, indicating the first half of an hour.
+
+    Example:
+        >>> half_hour(45)
+        '30'
+        >>> half_hour(10)
+        '00'
+    """
 
     print(f"Half hour...")
 
@@ -19,48 +37,256 @@ def half_hour(x) -> str:
         return "00"
 
 
-def prepare_data(data: pd.DataFrame) -> pd.DataFrame:
+def quarter_hour(x):
+
+    if x <= 15:
+        return "15"
+    elif x <= 30:
+        return "30"
+    elif x <= 45:
+        return "45"
+    else:
+        return "60"
+
+
+def correct_time_nanoseconds(ticker_to_correct: polars.DataFrame = None):
+
+    '''
+    OS sometimes record incorrectly the immediate initial nanoseconds at the beginning of a single second.
+    This function gets all the nanoseconds recorded at the same padding length.
+    '''
+
+    if ticker_to_correct is None:
+        raise Exception("Pass a DataFrame to clear the Time column on !")
+
+    if isinstance(ticker_to_correct, pd.DataFrame):
+        ticker_to_correct = polars.DataFrame(ticker_to_correct)
+
+    def pad_after_period(value):
+        if '.' in value:
+            before_dot, after_dot = value.split('.', 1)
+            padded_after_dot = after_dot.rjust(6, '0')
+            return f"{before_dot}.{padded_after_dot}"
+        else:
+            return value
+
+    #####################################################################################################################################
+    '''This is the apply pandas function but in Polars, much faster'''
+    ticker_to_correct = ticker_to_correct.with_columns(
+        Time=ticker_to_correct['Time'].map_elements(pad_after_period))
+    #####################################################################################################################################
+
+    return ticker_to_correct
+
+
+def apply_offset_given_dataframe(pl_df:polars.DataFrame, market:str=''):
 
     """
-    Given usual data recorded, this function returns it corrected since its CSV recoding so it adds pandas datatypes
-    for data reshaping and data plotting
-    :param data: given usual data recorded
-    :return: dataframe corrected
+    Adjusts the 'Datetime' column in the provided Polars DataFrame by applying a time offset. The offset amount
+    is determined by the 'market' parameter and the last hour recorded in the 'Hour' column of the DataFrame.
+
+    The offset is computed to align the 'Datetime' values with a standard trading closing time, depending on the
+    specified market ('CBOT' or 'CME'). For instance, if the last hour is 23, and the market is 'CBOT', 8 hours
+    are subtracted; if 'CME', 7 hours are subtracted. This adjustment is aimed at standardizing the time to a
+    reference market close time, providing a uniform time series data irrespective of the actual closing times
+    recorded in the data.
+
+    Args:
+        pl_df (polars.DataFrame): A DataFrame with at least 'Datetime' and 'Hour' columns. 'Datetime' should be
+                                  in datetime format, and 'Hour' should be extracted from 'Datetime' if not present.
+        market (str, optional): Market identifier, should be either 'CBOT' or 'CME'. This is required to determine
+                                the correct offset to apply. Defaults to an empty string.
+
+    Returns:
+        polars.DataFrame: A DataFrame with the 'Datetime' column adjusted according to the specified market's
+                          standard closing time.
+
+    Raises:
+        ValueError: If 'Datetime' column is not present in the DataFrame.
+        ValueError: If 'market' is not 'CBOT' or 'CME'.
+        Exception: If the DataFrame cannot be processed due to incorrect or missing market information.
+
+    Examples:
+        >>> data = {
+                "Datetime": pl.date_range(low=pl.datetime(2023, 1, 1), high=pl.datetime(2023, 1, 1, 23), every='1h'),
+                "Hour": list(range(24))
+            }
+        >>> df = pl.DataFrame(data)
+        >>> modified_df = apply_offset_given_dataframe(df, market='CBOT')
+        >>> print(modified_df)
+
+    Notes:
+        - The function requires that 'market' be specified accurately to ensure correct time adjustments.
+        - It is assumed that the input DataFrame is properly formatted with the necessary columns.
+        - The function includes error handling to ensure robust processing against common data issues.
+
     """
 
-    # es = es.assign(Index    = np.arange(0, es.shape[0], 1))  # Set an index fro reference plotting...
-    # es = es.assign(Hour     = es.Time.str[:2].astype(str))   # Extract the hour...
-    # es = es.assign(Minute   = es.Time.str[3:5].astype(int))  # Extract the minute...
-    # es = es.assign(HalfHour = es.Hour.str.zfill(2) + es.Minute.apply(half_hour)) # Identifies half hours...
+    if market == '':
+        raise Exception("To ofset datetime you must pass the market from which the ticker has been extracted from !")
 
-    print(f"Prepare data...")
+    ####################################################################################################################
+    '''
+    1. Extract hour from datetime columns
+    2. Select the very last hour as reference !
+    '''
+    pl_df_gb  = pl_df.group_by('Date').agg([polars.col("Datetime").last()])
+    pl_df_gb  = pl_df_gb.with_columns(Hour=pl_df_gb['Datetime'].dt.hour())
+    last_hour = pl_df_gb.select(polars.col("Hour").mode())
+    last_hour = int(last_hour['Hour'][0]) # ---> We take the most frequent LAST HOUR in the dataframe <---
+    ####################################################################################################################
 
-    data = (
-        data.assign(Index=np.arange(0, data.shape[0], 1))
-        .assign(Hour=data.Time.str[:2].astype(str))
-        .assign(Minute=data.Time.str[3:5].astype(int))
-        .assign(HalfHour=data.Hour.str.zfill(2) + data.Minute.apply(half_hour))
-        .assign(DateTime=data.Date.astype(str) + " " + data.Time.astype(str))
-        .assign(DateTime_TS=pd.to_datetime(data.DateTime))
-    )
+    if 'Datetime' not in pl_df.columns:
+        '''Add Datetime column (datetime datatype, too) inside Polars DataFrame'''
+        return None
 
-    return data
+    '''CBOT closes at 15:59:59, CME closes at 16:59:59'''
+    if str(market).lower() == 'cbot':
+        offset_addition = 1
+    elif str(market).lower() == 'cme':
+        offset_addition = 0
+    else:
+        raise Exception("Attention ! Pass a market that is CME or CBOT")
+
+    if last_hour == 23:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(7 + offset_addition) + "h"))
+    elif last_hour == 22:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(6 + offset_addition) + "h"))
+    elif last_hour == 21:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(5 + offset_addition) + "h"))
+    elif last_hour == 20:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(4 + offset_addition) + "h"))
+    elif last_hour == 19:
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(3 + offset_addition) + "h"))
+    else:
+        '''If we had a possible issue in file recorded, better to skip the timestamp correction'''
+        return None
+
+    return pl_df.sort(['Datetime'], descending=False)
+
+
+def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago'):
+
+    """
+    Calculates and prints the time difference in hours between two timezones for each day in a specified date range.
+    
+    This function iterates through each day from the start_date to the end_date, calculates the time difference
+    between the start timezone (defaulting to Europe/Rome) and the end timezone (defaulting to America/Chicago),
+    and prints the difference in hours along with the date. This can be useful for analyzing the impact of daylight
+    saving time changes over the specified period.
+
+    Parameters:
+    - start_date (datetime.date or datetime.datetime): The start date of the period for which to calculate time differences.
+    - end_date (datetime.date or datetime.datetime): The end date of the period for which to calculate time differences.
+    - tz_from_str (str, optional): The IANA timezone database string for the from timezone. Defaults to 'Europe/Rome'.
+    - tz_to_str (str, optional): The IANA timezone database string for the to timezone. Defaults to 'America/Chicago'.
+
+    Returns:
+    - None: This function prints the time difference for each day in the specified range but does not return any value.
+
+    Note:
+    - The function assumes that both start_date and end_date are provided as timezone-naive objects and that
+      the times for comparison at both locations are equivalent (i.e., same local time in both timezones).
+    - The time difference calculation accounts for daylight saving time changes, if any, in the specified timezones.
+    """
+
+    #####################################
+    # # Start and end dates
+    # start_date = datetime(2023, 10, 29, 1, 0 , 0)
+    # end_date   = datetime(2023, 11, 29, 1, 0 , 0)
+    #####################################
+
+    # Define the timezones for Chicago and Rome
+    from_tz   = pytz.timezone(tz_from_str)
+    to_tz     = pytz.timezone(tz_to_str)
+    current_date = start_date
+
+    while current_date < end_date:
+
+        ref_from_tz  = from_tz.localize(current_date)
+        ref_to_tz    = ref_from_tz.astimezone(to_tz)
+
+        time_difference_current_date_from_tz      = int(ref_from_tz.strftime('%z')[1:3])
+        time_difference_current_date_from_tz_sign = ref_from_tz.strftime('%z')[0]
+        time_difference_current_date_to_tz        = int(ref_to_tz.strftime('%z')[1:3])
+        time_difference_current_date_to_tz_sign   = ref_to_tz.strftime('%z')[0]
+
+        if time_difference_current_date_from_tz_sign != time_difference_current_date_to_tz_sign:
+            time_difference = time_difference_current_date_from_tz + time_difference_current_date_to_tz
+        elif time_difference_current_date_from_tz > time_difference_current_date_to_tz:
+            time_difference = time_difference_current_date_from_tz - time_difference_current_date_to_tz
+        else:
+            time_difference = time_difference_current_date_to_tz - time_difference_current_date_from_tz
+
+        print(f"Datetime {ref_from_tz.strftime('%Y-%m-%d  %H:%M:%S')}, Chicago to Rome time difference: {time_difference} hours")
+        current_date += timedelta(days=1)
+
+
+def convert_datetime_tz(datetime_array:np.array, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago') -> np.array:
+    """
+    Calculates and convert naive datetime array from one timezone to another.
+
+    :param datetime_array: an array of naive datetime elements to convert
+    :param tz_from_str: The IANA timezone database string for the from timezone. Defaults to 'Europe/Rome'
+    :param tz_to_str: The IANA timezone database string for the to timezone. Defaults to 'America/Chicago'.
+    :return: an array of converted aware datetime elements
+    """
+
+    # Define the timezones for Chicago and Rome
+    from_tz = pytz.timezone(tz_from_str)
+    to_tz   = pytz.timezone(tz_to_str)
+
+    len_         = len(datetime_array)
+    result_array = []
+
+    for dt in enumerate(datetime_array):
+        ref_from_tz = from_tz.localize(dt[1])
+        ref_to_tz = ref_from_tz.astimezone(to_tz)
+        result_array.append(ref_to_tz)
+
+    return result_array
 
 
 def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: str = '') -> list:
 
-    cols = [x for x in range(99999)]
+    """
+    Scans CSV files in a given directory (optionally, a single file) to identify the file with the least number of columns.
+    This is useful for determining a consistent set of columns when dealing with multiple CSV files that may have different structures.
 
+    Args:
+        path (str): The directory path containing CSV files to scan. Ignored if `single_file` is specified.
+        ticker (str): A filter to select files starting with this ticker symbol. Defaults to "ES".
+                      Only used when scanning multiple files in a directory.
+        single_file (str): Path to a single CSV file to scan. If specified, `path` is ignored, and only this file is scanned.
+
+    Returns:
+        list: A list containing the names of the columns of the file with the least number of columns. 
+              If `single_file` is specified, it returns the columns from that file.
+
+    Note:
+        - This function assumes that all CSV files are delimited by semicolons (`;`).
+        - Only the first few rows of each file (2 for multiple files, 5 for a single file) are read to determine the columns,
+          which improves performance when working with large files.
+
+    Example:
+        # For scanning all files in a directory
+        columns = get_longest_columns_dataframe('/path/to/csv/files', ticker='AAPL')
+        
+        # For scanning a single file
+        columns = get_longest_columns_dataframe('/path/to/csv/files', single_file='/path/to/csv/file.csv')
+    """
+
+    cols = [x for x in range(99999)]
 
     '''Get one file only to scan'''
     if single_file is not None:
         
         single = pd.read_csv( path + single_file, sep=";", nrows=5)
+
         if len(single.columns) < len(cols):
             cols = single.columns
         
-        return list(cols)       
-
+        return list(cols)
 
     '''Get multiple file to scan'''
     files = [x for x in os.listdir(path) if x.startswith(ticker)]
@@ -185,29 +411,66 @@ def get_tickers_in_pg_table(
 
 
 def get_tickers_in_folder(
-        path:        str  = None, 
-        single_file: str  = None,
-        ticker:      str  = "ES", 
-        cols:        list = None, 
-        break_at:    int  = 99999, 
-        offset:      int  = 0, 
-        extension:   str  = 'txt',
-        separator:   str  = ';'
+        path:           str  = None,
+        single_file:    str  = None,
+        ticker:         str  = "ZN",
+        year:           int  = 0,
+        future_letters: list  = None,
+        cols:           list  = None,
+        break_at:       int  = 99999,
+        extension:      str  = 'txt',
+        separator:      str  = ';',
+        market:         str  = ''
 ) -> polars.DataFrame:
 
     """
-    Given a path and a ticker sign, this functions read all file in it starting with the ticker symbol (e.g. ES).
-    This package leverages a polars speed !
-    :param path: path to ticker data to read
-    :param ticker: ticker to read in the form of ES, ZN, ZB, AAPL, MSFT. . .
-    :param cols: columns to import...
-    :param break_at: how many ticker files do we have to read ?
-    :param offset: offset to a created datetime column
-    :param extension: this it the file extension
-    :param single_file: this is the whole path and file name in case we would like to read a specific file
-    :return: polars.DataFrame of all read ticker files
+    Processes files within a specified directory or a single file to extract and adjust financial ticker data,
+    returning a Polars DataFrame with the adjusted data.
 
-    Attention ! Recorded dataframes have 19 / 39 DOM levels: this function reads the ones with less DOM cols for all of them.
+    This function reads multiple files specified by the combination of ticker symbols, future letters, and year,
+    or a single specified file. It applies data corrections, filters out invalid data, and adjusts the datetime
+    information based on the last recorded hour to align with a standard time (like Chicago Time for trading data).
+
+    Args:
+        path (str, optional): The path to the directory containing the files to be processed. Required if 'single_file' is not provided.
+        single_file (str, optional): Specific single file to be processed. If provided, 'path' must also be specified.
+        ticker (str, optional): The root ticker symbol used to identify files. Defaults to 'ES'.
+        year (int, optional): The year associated with the futures contracts to help identify files. Defaults to 0, which must be updated by the user.
+        future_letters (list, optional): List of future letters to identify specific contracts within the files.
+        cols (list, optional): List of columns to read from the files. If not provided, it will be determined by calling 'get_longest_columns_dataframe'.
+        break_at (int, optional): The maximum number of files to process before stopping. Defaults to a very large number to process all files.
+        extension (str, optional): File extension of the files to be processed. Defaults to 'txt'.
+        separator (str, optional): The character used to separate values in the file. Defaults to ';'.
+        market (str, optional): The market identifier from which the ticker has been extracted. Required to apply the correct datetime offset.
+
+    Returns:
+        polars.DataFrame: A DataFrame containing the processed ticker data with additional datetime columns like 'Hour', 'Minute', and 'Second',
+        and adjustments based on the last recorded hour.
+
+    Raises:
+        Exception: If 'path' is not specified when required.
+        Exception: If 'future_letters' is not provided but is required for processing multiple files.
+        Exception: If there is an issue with the datetime data in the file being processed.
+        Exception: If no year of the ticker has been passed (i.e., year == 0).
+        Exception: If 'market' is not specified.
+
+    Example:
+        df = get_tickers_in_folder(path="/data/tickers", ticker="ES", year=2023, future_letters=["H", "M", "U", "Z"])
+        print(df.shape)
+        (500, 8)
+
+    Note:
+        This function assumes the presence of helper functions 'apply_offset_given_dataframe' to adjust the datetime
+        columns based on trading hours and another 'correct_time_nanoseconds' to correct the timestamps. Ensure these
+        functions are correctly implemented and available in the scope.
+
+        The function performs the following steps:
+        1. Reads a single file if 'single_file' is specified, applying necessary data corrections and transformations.
+        2. Reads and processes multiple files in a directory if 'path' and 'future_letters' are provided.
+        3. Applies filters to remove invalid data entries.
+        4. Constructs a 'Datetime' column by combining 'Date' and 'Time' columns and applies offset corrections.
+        5. Concatenates data from all processed files into a single Polars DataFrame.
+
     """
 
     if path is None:
@@ -271,7 +534,7 @@ def get_tickers_in_folder(
 
     ticker  = str(ticker).upper()
     files   = [str(x).upper() for x in os.listdir(path) if x.startswith(ticker)]
-    stacked = polars.DataFrame()
+    stacked = list()
 
     '''Read more than one file'''
     for idx, file in tqdm(enumerate(files)):
@@ -281,12 +544,13 @@ def get_tickers_in_folder(
         if file.endswith(str(extension).upper()):
             single_file = polars.read_csv(os.path.join(path, file), separator=separator, columns=cols, infer_schema_length=10_000)
             single_file = single_file.filter((polars.col('Date') != "1899-12-30") & (polars.col('Price') > 0))
-            stacked     = polars.concat([stacked, single_file])
+            stacked.append(single_file)
 
         if idx >= break_at:
             break
 
     print(f"Correcting Time and adding Datetime...")
+    stacked = polars.concat(stacked, how="vertical")
     stacked = correct_time_nanoseconds(stacked)
     stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
     stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
@@ -387,7 +651,7 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_o
                                    orders_on_same_price_level,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
-        print(e)
+        print(f"While managing ASK the Speed of Tape, this error couured: {e}")
 
     # Manage speed of tape on the BID, secondly.
     try:
@@ -396,26 +660,28 @@ def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_o
                                    orders_on_same_price_level,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
-        print(e)
+        print(f"While managing BID the Speed of Tape, this error couured: {e}")
 
     return ask, bid
 
 
 def get_orders_in_row_v2(trades: pd.DataFrame,
-                         seconds_split: float             = 1.0,
-                         orders_on_same_price_level: bool = True,
-                         min_volume_summation:int         = 1_000_000,
-                         min_num_of_trades                = 1,
+                         seconds_split: float              = 1.0,
+                         orders_on_prices_level_range    = 0,
+                         tick_size: float                  = 0.25,
+                         min_volume_summation: int       = 1_000_000,
+                         min_num_of_trades               = 1,
                          reset_counter_at_summation: bool = True) -> (pd.DataFrame, pd.DataFrame):
 
     '''
     This function gets prints "anxiety" over the tape :-)
-    !!! Attention !!! Pass to this function a dataset in which the  the "Datetime" columns is in datetime format.
+    !!! Attention !!! Pass to this function a dataset in which the "Datetime" columns is in datetime format.
     This version includes also single trade with volume greater than min summation
 
     :param trades: canonical trades executed
     :param seconds_split: seconds to measure the speed of the tape
-    :param orders_on_same_price_level: if True, the anxiety is considered on orders at same price level
+    :param orders_on_prices_level_range: it is the range in ticks within the volume summation is valid, default = 0 = same price level
+    :param tick_size: single tick size (e.g. for the ES ticker, tick_value=0.25)
     :param min_volume_summation: minimum value of volume summation to reach in order to trigger a new order
     :param reset_counter_at_summation: if True when the summation of volume reaches the min the counter restart
     :return: anxiety over the market on both ask/bid sides
@@ -437,7 +703,8 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
 
     def manage_speed_of_tape(trades_on_side:         pd.DataFrame,
                              side:                   int   = 1,
-                             same_price_level:       bool  = True,
+                             prices_level_range:     int   = 0,
+                             tick_size:              float = 0.25,
                              reset_cnt_at_summation: bool  = True,
                              min_num_of_trades:      int   = 1,
                              min_vol_summation:      int   = 0) -> pd.DataFrame:
@@ -465,7 +732,7 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
             delta_time = (datetime_arr[j] - start_time).total_seconds()
             ###########################################################
 
-            if (delta_time <= seconds_split) & ((not same_price_level) | (same_price_level and start_price == price_arr[j])):
+            if (delta_time <= seconds_split) & ((abs(start_price - price_arr[j]) / tick_size) <= prices_level_range):
                 start_vol  += volume_arr[j]
                 counter    += 1
             else:
@@ -501,23 +768,25 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
     try:
         ask = manage_speed_of_tape(trades,
                                    2,
-                                   orders_on_same_price_level,
+                                   orders_on_prices_level_range,
+                                   tick_size,
                                    reset_counter_at_summation,
                                    min_num_of_trades,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
-        print(e)
-
+        print(f"While managing ASK the Speed of Tape, this error couured: {e}")
+        
     # Manage speed of tape on the BID, secondly.
     try:
         bid = manage_speed_of_tape(trades,
                                    1,
-                                   orders_on_same_price_level,
+                                   orders_on_prices_level_range,
+                                   tick_size,
                                    reset_counter_at_summation,
                                    min_num_of_trades,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
-        print(e)
+       print(f"While managing BID the Speed of Tape, this error couured: {e}")
 
     return ask, bid
 

@@ -797,8 +797,8 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
                                    min_num_of_trades,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
-        print(e)
-
+        print(f"While managing ASK the Speed of Tape, this error couured: {e}")
+        
     # Manage speed of tape on the BID, secondly.
     try:
         bid = manage_speed_of_tape(trades,
@@ -809,7 +809,7 @@ def get_orders_in_row_v2(trades: pd.DataFrame,
                                    min_num_of_trades,
                                    min_volume_summation).sort_values(['Datetime'], ascending=True)
     except Exception as e:
-        print(e)
+       print(f"While managing BID the Speed of Tape, this error couured: {e}")
 
     return ask, bid
 

@@ -281,7 +281,7 @@ def get_longest_columns_dataframe(path: str, ticker: str = "ES", single_file: st
     '''Get one file only to scan'''
     if single_file is not None:
         
-        single = pd.read_csv(single_file, sep=";", nrows=5)
+        single = pd.read_csv(os.path.join(path, single_file), sep=";", nrows=5)
         if len(single.columns) < len(cols):
             cols = single.columns
         

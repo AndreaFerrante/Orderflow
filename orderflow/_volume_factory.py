@@ -420,7 +420,7 @@ def get_tickers_in_folder(
         market:         str  = None,
         future_letters: list = None,
         cols:           list = None,
-        ticker:         str  = "ZN",
+        ticker:         str  = "ES",
         year:           int  = 0,
         break_at:       int  = 99999,
         extension:      str  = 'txt',
@@ -519,7 +519,7 @@ def get_tickers_in_folder(
         
         print("Reading one single file, only...")
         
-        single_file_polars = polars.read_csv(path + single_file, separator=separator, columns=cols, infer_schema_length=10_000)
+        single_file_polars = polars.read_csv(os.path.join(path, single_file), separator=separator, columns=cols, infer_schema_length=10_000)
         single_file_polars = single_file_polars.filter((polars.col('Date') != "1899-12-30") & (polars.col('Price') > 0))
         single_file_polars = correct_time_nanoseconds(single_file_polars)
         single_file_polars = single_file_polars.with_columns(Datetime = single_file_polars['Date'] + ' ' + single_file_polars['Time'])
@@ -570,8 +570,10 @@ def get_tickers_in_folder(
     return stacked
 
 
-def get_orders_in_row(trades: pd.DataFrame, seconds_split: float = 1.0, orders_on_same_price_level: bool = False,
-                         min_volume_summation:int = 100000) -> (pd.DataFrame, pd.DataFrame):
+def get_orders_in_row(trades: pd.DataFrame,
+                      seconds_split: float = 1.0,
+                      orders_on_same_price_level: bool = False,
+                      min_volume_summation:int = 100000) -> (pd.DataFrame, pd.DataFrame):
 
     '''
     This function gets prints "anxiety" over the tape :-)

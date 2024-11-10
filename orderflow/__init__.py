@@ -16,7 +16,8 @@ from orderflow._volume_factory import (
     get_orders_in_row,
     get_orders_in_row_v2,
     get_market_evening_session,
-    print_constants
+    print_constants,
+    get_rolling_mean_by_datetime
 )
 
 from orderflow.dom import (

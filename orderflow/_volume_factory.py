@@ -895,6 +895,42 @@ def get_market_evening_session(data: pd.DataFrame, ticker: str):
     return np.select(condlist, choicelist)
 
 
+def get_rolling_mean_by_datetime(pl_df, rolling_column_name, window_size='1m', return_pandas_series=False):
+
+    import pandas, polars
+
+    if isinstance(pl_df, pandas.core.frame.DataFrame):
+        pl_df = polars.DataFrame(pl_df)
+    elif not isinstance(pl_df, polars.dataframe.frame.DataFrame):
+        raise Exception(f"Pass to function a polars or a pandas dataframe.")
+
+    if "Date" not in pl_df.columns or "Datetime" not in pl_df.columns:
+        raise Exception(f"Pass to the 'get_rolling_mean_by_date' a dataframe with Date and Datetime column names.")
+
+    dates  = pl_df['Date'].unique().sort()
+    rolled = None
+
+    print(f'Getting the rolling mena for {rolling_column_name} by Datetime done...')
+    for date in tqdm(dates):
+        subset = pl_df.filter(pl_df['Date'] == date)
+        subset = subset.with_columns(pl.
+                                     col(rolling_column_name).
+                                     rolling_mean_by(window_size = window_size,
+                                                     by          = 'Datetime',
+                                                     closed      = 'both').
+                                     fill_null(strategy='backward').
+                                     alias('RolledColumn'))
+        if rolled is not None:
+            rolled = polars.concat([rolled, subset['RolledColumn']])
+        else:
+            rolled = subset['RolledColumn']
+
+    if return_pandas_series:
+        return pd.Series(rolled)
+
+    return rolled
+
+
 def print_constants():
     print(SESSION_START_TIME)
     print(SESSION_END_TIME)

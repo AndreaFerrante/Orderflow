@@ -913,7 +913,7 @@ def get_rolling_mean_by_datetime(pl_df, rolling_column_name, window_size='1m', r
     print(f'Getting the rolling mena for {rolling_column_name} by Datetime done...')
     for date in tqdm(dates):
         subset = pl_df.filter(pl_df['Date'] == date)
-        subset = subset.with_columns(pl.
+        subset = subset.with_columns(polars.
                                      col(rolling_column_name).
                                      rolling_mean_by(window_size = window_size,
                                                      by          = 'Datetime',

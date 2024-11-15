@@ -933,6 +933,58 @@ def get_rolling_mean_by_datetime(pl_df, rolling_column_name, window_size='1m', r
 
 def get_next_tick(signal_df, ticker_df) -> list:
 
+    """
+    Computes the indices in the ticker DataFrame where the next favorable price movement occurs for each signal in the signal DataFrame.
+
+    For each index in `signal_df['Index']`, starting from that index, the function searches forward in `ticker_df` to find the next tick where:
+
+    - **Short Trade (`TradeType` == 1):**
+        - If the price **decreases** from the initial price, the index where this occurs is recorded.
+        - If the price **increases** from the initial price, the search stops without recording.
+
+    - **Long Trade (`TradeType` == 2):**
+        - If the price **increases** from the initial price, the index where this occurs is recorded.
+        - If the price **decreases** from the initial price, the search stops without recording.
+
+    Parameters
+    ----------
+    signal_df : pandas.DataFrame or polars.DataFrame
+        DataFrame containing signal indices. Must contain an 'Index' column.
+    ticker_df : pandas.DataFrame or polars.DataFrame
+        DataFrame containing ticker data. Must contain 'Index', 'Price', and 'TradeType' columns.
+
+    Returns
+    -------
+    list of int
+        A list of indices in `ticker_df` where the next favorable price movement occurs for each signal.
+
+    Raises
+    ------
+    Exception
+        If 'Index' column is not present in `signal_df` or `ticker_df`.
+
+    Notes
+    -----
+    - The function converts input DataFrames to Polars DataFrames for efficient computation if they are not already.
+    - The 'TradeType' column in `ticker_df` should contain `1` for Short trades and `2` for Long trades.
+    - The function assumes that `ticker_df` is ordered by 'Index'.
+    - The function uses `tqdm` for progress indication during iteration; ensure `tqdm` is installed.
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> import numpy as np
+    >>> signal_df = pd.DataFrame({'Index': [0, 5, 10]})
+    >>> ticker_df = pd.DataFrame({
+    ...     'Index': np.arange(20),
+    ...     'Price': np.random.rand(20),
+    ...     'TradeType': [1, 2] * 10
+    ... })
+    >>> correct_indices = get_next_tick(signal_df, ticker_df)
+    >>> print(correct_indices)
+    [1, 6, 11]
+    """
+
     import polars
 
     if 'Index' not in signal_df.columns:

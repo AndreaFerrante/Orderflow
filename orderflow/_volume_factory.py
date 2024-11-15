@@ -931,6 +931,57 @@ def get_rolling_mean_by_datetime(pl_df, rolling_column_name, window_size='1m', r
     return rolled
 
 
+def get_next_tick(signal_df, ticker_df) -> list:
+
+    import polars
+
+    if 'Index' not in signal_df.columns:
+        raise Exception(f'Pass to function "get_next_tick" a "signal_df" with Index column inside.')
+
+    if 'Index' not in ticker_df.columns:
+        raise Exception(f'Pass to function "get_next_tick" a "ticker_df" with Index column inside.')
+
+    if not isinstance(ticker_df, polars.dataframe.frame.DataFrame):
+        ticker_df = polars.DataFrame(ticker_df)
+
+    if not isinstance(signal_df, polars.dataframe.frame.DataFrame):
+        signal_df = polars.DataFrame(signal_df)
+
+    correct_index    = list()
+    signal_indexes   = signal_df['Index']
+    ticker_df_single = ticker_df
+
+    for index in tqdm(signal_indexes):
+
+        ticker_df_single         = ticker_df_single.filter(pl.col('Index') >= index)
+        ticker_df_single_side    = ticker_df_single['TradeType'][0]
+        ticker_df_single_price   = ticker_df_single['Price'][0]
+
+        for single_index in range(len(ticker_df_single)):
+
+            # Short trade ...
+            if ticker_df_single_side == 1:
+                if ticker_df_single['Price'][single_index] > ticker_df_single_price:
+                    break # We are short, we had a tick up the current short price so we stop.
+                elif ticker_df_single['Price'][single_index] < ticker_df_single_price:
+                    correct_index.append(index + single_index)
+                    break
+                else:
+                    continue
+
+            # Long trade ...
+            elif ticker_df_single_side == 2:
+                if ticker_df_single['Price'][single_index] < ticker_df_single_price:
+                    break # We are long, we had a tick down the current short price so we stop.
+                elif ticker_df_single['Price'][single_index] > ticker_df_single_price:
+                    correct_index.append(single_index + index)
+                    break
+                else:
+                    continue
+
+    return correct_index
+
+
 def print_constants():
     print(SESSION_START_TIME)
     print(SESSION_END_TIME)

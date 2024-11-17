@@ -54,7 +54,7 @@ def get_dynamic_cumulative_delta(data: pd.DataFrame) -> pd.DataFrame:
     return datas
 
 
-def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFrame, volume_filter:int=100) -> pd.DataFrame:
+def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFrame, volume_filter:int=35) -> pd.DataFrame:
 
     """
         Compute cumulative delta metrics per trading session with a volume filter, distinguishing between bid and ask volumes,
@@ -179,9 +179,9 @@ def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFra
             cd_ask[i]  = cd_ask[i - 1] + volume[i] if volume[i] >= volume_filter else 0
 
 
-    return pd.DataFrame({'CD_Ask_Filtered':   cd_ask,
-                         'CD_Bid_Filtered':   cd_bid,
-                         'CD_Total_Filtered': total})
+    return pd.DataFrame({'CD_Ask_Filtered_' + str(volume_filter):   cd_ask,
+                         'CD_Bid_Filtered_' + str(volume_filter):   cd_bid,
+                         'CD_Total_Filtered_' + str(volume_filter): total})
 
 
 def get_dynamic_cumulative_delta_per_session(data: pd.DataFrame) -> pd.DataFrame:

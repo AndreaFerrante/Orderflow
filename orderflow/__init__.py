@@ -34,7 +34,7 @@ from orderflow.footprint import (
 
 from orderflow.volume_profile import (
     get_dynamic_cumulative_delta,
-    get_dynamic_cumulative_delta_with_volume_filter,
+    get_dynamic_cumulative_delta_per_session_with_volume_filter,
     get_dynamic_cumulative_delta_per_session,
     get_daily_session_moving_POC,
     get_volume_profile_areas,

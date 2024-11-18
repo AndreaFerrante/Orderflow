@@ -20,3 +20,4 @@ The structure of the data is the following:
 Main tools in development for data fun and research are <b>VWAP, Volume Profile, Imbalances</b>. Please, keep in mind that this is not a module for trading but <b>just</b> for research for those that love data !
 
 This module uses [Numpy](https://numpy.org/), [Pandas](https://pandas.pydata.org/) and [Polars](https://pola.rs/) for <b>amazing</b> speed in managing the data.
+Ehy, if you like this code or if you fork it leave a star! It will help this project to be spread.

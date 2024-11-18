@@ -2,8 +2,12 @@ from orderflow.backtester import (
     backtester
 )
 
+from orderflow.compressor import (
+    compress_to_range_bars,
+    compress_to_volume_bars
+)
+
 from orderflow._volume_factory import (
-    prepare_data,
     get_tickers_in_folder,
     get_tickers_in_pg_table,
     plot_half_hour_volume,
@@ -12,7 +16,8 @@ from orderflow._volume_factory import (
     get_orders_in_row,
     get_orders_in_row_v2,
     get_market_evening_session,
-    print_constants
+    print_constants,
+    get_rolling_mean_by_datetime
 )
 
 from orderflow.dom import (
@@ -29,7 +34,7 @@ from orderflow.footprint import (
 
 from orderflow.volume_profile import (
     get_dynamic_cumulative_delta,
-    get_dynamic_cumulative_delta_with_volume_filter,
+    get_dynamic_cumulative_delta_per_session_with_volume_filter,
     get_dynamic_cumulative_delta_per_session,
     get_daily_session_moving_POC,
     get_volume_profile_areas,

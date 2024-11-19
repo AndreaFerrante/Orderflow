@@ -149,19 +149,19 @@ def apply_offset_given_dataframe(pl_df:polars.DataFrame, market:str=None):
         raise Exception("Attention ! Pass a market that is CME or CBOT")
 
     if last_hour == 23:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(7 + offset_addition) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(8 + offset_addition) + "h"))
     elif last_hour == 22:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(6 + offset_addition) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(7 + offset_addition) + "h"))
     elif last_hour == 21:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(5 + offset_addition) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(6 + offset_addition) + "h"))
     elif last_hour == 20:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(4 + offset_addition) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(5 + offset_addition) + "h"))
     elif last_hour == 19:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(3 + offset_addition) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(4 + offset_addition) + "h"))
     elif last_hour == 18:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(2 + offset_addition) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(3 + offset_addition) + "h"))
     elif last_hour == 17:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(1 + offset_addition) + "h"))
+        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(2 + offset_addition) + "h"))
     else:
         '''If we had a possible issue in file recorded, better to skip the timestamp correction'''
         return None

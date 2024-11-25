@@ -130,10 +130,43 @@ def apply_offset_given_dataframe(pl_df:polars.DataFrame, market:str=None):
     1. Extract hour from datetime columns
     2. Select the very last hour as reference !
     '''
-    pl_df_gb  = pl_df.group_by('Date').agg([polars.col("Datetime").last()])
-    pl_df_gb  = pl_df_gb.with_columns(Hour=pl_df_gb['Datetime'].dt.hour())
-    last_hour = pl_df_gb.select(polars.col("Hour").mode())
-    last_hour = int(last_hour['Hour'][0]) # ---> We take the most frequent LAST HOUR in the dataframe <---
+    # Add ISO_WEEK Column and Weekday
+    pl_df_gb = pl_df.with_columns([
+        pl_df['Datetime'].dt.week().alias("ISO_Week"),
+        pl_df['Datetime'].dt.weekday().alias("Weekday")  # (1 = Monday, 7 = Sunday)
+    ])
+
+    # exclude sundays
+    pl_df_filtered = pl_df_gb.filter(polars.col("Weekday") != 7)
+
+    pl_df_gb = pl_df_filtered.with_columns([
+        polars.col("Date").str.strptime(polars.Date, "%Y-%m-%d").alias("Date")  # 'Date' in date type
+    ])
+
+    # identify the last day for each week
+    last_day_df = (
+        pl_df_gb
+        .group_by("ISO_Week")
+        .agg([
+            polars.col("Date").max().alias("Last_Date")  # last day of each week
+        ])
+        .join(pl_df_gb, left_on="Last_Date", right_on="Date")  # join with the original df
+    )
+    # get the latest hour for each last day of week
+    weekly_last_hour = (
+        last_day_df
+        .group_by("ISO_Week")
+        .agg([
+            polars.col("Datetime").dt.hour().last().alias("Last_Hour_Per_Week")
+        ])
+    )
+    # get the max last hour of all the weeks
+    last_hour = int(weekly_last_hour["Last_Hour_Per_Week"].max())
+
+    #pl_df_gb  = pl_df.group_by('Date').agg([polars.col("Datetime").last()])
+    #pl_df_gb  = pl_df_gb.with_columns(Hour=pl_df_gb['Datetime'].dt.hour())
+    #last_hour = pl_df_gb.select(polars.col("Hour").mode())
+    #last_hour = int(last_hour['Hour'][0]) # ---> We take the most frequent LAST HOUR in the dataframe <---
     ####################################################################################################################
 
     if 'Datetime' not in pl_df.columns:
@@ -141,12 +174,14 @@ def apply_offset_given_dataframe(pl_df:polars.DataFrame, market:str=None):
         return None
 
     '''CBOT closes at 15:59:59, CME closes at 16:59:59'''
-    if str(market).lower() == 'cbot':
-        offset_addition = 1
-    elif str(market).lower() == 'cme':
-        offset_addition = 0
-    else:
-        raise Exception("Attention ! Pass a market that is CME or CBOT")
+    # if str(market).lower() == 'cbot':
+    #     offset_addition = 1
+    # elif str(market).lower() == 'cme':
+    #     offset_addition = 0
+    # else:
+    #     raise Exception("Attention ! Pass a market that is CME or CBOT")
+
+    offset_addition = 0
 
     if last_hour == 23:
         pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(8 + offset_addition) + "h"))
@@ -550,11 +585,11 @@ def get_tickers_in_folder(
         if file.endswith(str(extension).upper()):
             single_file = polars.read_csv(os.path.join(path, file), separator=separator, columns=cols, infer_schema_length=10_000)
             single_file = single_file.filter((polars.col('Date') != "1899-12-30") & (polars.col('Price') > 0))
-            single_file = apply_offset_given_dataframe(pl_df=single_file, market=market)
+            # single_file = apply_offset_given_dataframe(pl_df=single_file, market=market)
 
-            if single_file is None:
-                print(f"File named {file}, was not time offset ! Please check it.")
-                continue
+            #if single_file is None:
+            #    print(f"File named {file}, was not time offset ! Please check it.")
+            #    continue
 
             stacked.append(single_file)
 
@@ -563,6 +598,7 @@ def get_tickers_in_folder(
 
     print(f"Correcting Time and adding Datetime...")
     stacked = polars.concat(stacked, how="vertical")
+    stacked = apply_offset_given_dataframe(pl_df=stacked, market=market)
     stacked = correct_time_nanoseconds(stacked)
     stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
     stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())

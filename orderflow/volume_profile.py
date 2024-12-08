@@ -54,7 +54,7 @@ def get_dynamic_cumulative_delta(data: pd.DataFrame) -> pd.DataFrame:
     return datas
 
 
-def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFrame, volume_filter:int=35) -> pd.DataFrame:
+def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFrame, volume_filter:int=35, skip_session_control:bool=False) -> pd.DataFrame:
 
     """
         Compute cumulative delta metrics per trading session with a volume filter, distinguishing between bid and ask volumes,
@@ -131,8 +131,9 @@ def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFra
         The cumulative deltas reset when the session changes from 'RTH' to 'ETH' between the second and third rows.
         """
 
-    if 'SessionType' not in data.columns:
-        raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
+    if not skip_session_control:
+        if 'SessionType' not in data.columns:
+            raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
     price          = np.array(data.Price)
     volume         = np.array(data.Volume)
@@ -143,7 +144,6 @@ def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFra
     total          = np.zeros( data.shape[0] )
     len_           = len(price)
 
-
     if type[0] == 1:
         total[0]  = volume[0] if volume[0] >= volume_filter else 0
         cd_bid[0] = volume[0] if volume[0] >= volume_filter else 0
@@ -152,7 +152,6 @@ def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFra
         total[0]  = volume[0] if volume[0] >= volume_filter else 0
         cd_bid[0] = 0
         cd_ask[0] = volume[0] if volume[0] >= volume_filter else 0
-
 
     for i in tqdm(range(1, len_)):
 
@@ -169,19 +168,22 @@ def get_dynamic_cumulative_delta_per_session_with_volume_filter(data: pd.DataFra
 
             continue
 
+        volume_ = volume[i] if volume[i] >= volume_filter else 0
+
         if type[i] == 1:
-            total[i]  = total[i - 1]  + volume[i] if volume[i] >= volume_filter else 0
-            cd_bid[i] = cd_bid[i - 1] + volume[i] if volume[i] >= volume_filter else 0
+            total[i]  = total[i - 1]  + volume_
+            cd_bid[i] = cd_bid[i - 1] + volume_
             cd_ask[i] = cd_ask[i - 1]
         else:
-            total[i]   = total[i - 1]  + volume[i] if volume[i] >= volume_filter else 0
-            cd_bid[i]  = cd_bid[i - 1]
-            cd_ask[i]  = cd_ask[i - 1] + volume[i] if volume[i] >= volume_filter else 0
+            total[i]  = total[i - 1]  + volume_
+            cd_ask[i] = cd_ask[i - 1] + volume_
+            cd_bid[i] = cd_bid[i - 1]
 
+    cd_filtered = pd.DataFrame({'CD_Ask_Filtered_' + str(volume_filter):   cd_ask,
+                                'CD_Bid_Filtered_' + str(volume_filter):   cd_bid,
+                                'CD_Total_Filtered_' + str(volume_filter): total})
 
-    return pd.DataFrame({'CD_Ask_Filtered_' + str(volume_filter):   cd_ask,
-                         'CD_Bid_Filtered_' + str(volume_filter):   cd_bid,
-                         'CD_Total_Filtered_' + str(volume_filter): total})
+    return cd_filtered.fillna(0)
 
 
 def get_dynamic_cumulative_delta_per_session(data: pd.DataFrame) -> pd.DataFrame:
@@ -265,7 +267,6 @@ def get_dynamic_cumulative_delta_per_session(data: pd.DataFrame) -> pd.DataFrame
     total          = np.zeros( data.shape[0] )
     len_           = len(price)
 
-
     if type[0] == 1:
         total[0]  = volume[0]
         cd_bid[0] = volume[0]
@@ -274,7 +275,6 @@ def get_dynamic_cumulative_delta_per_session(data: pd.DataFrame) -> pd.DataFrame
         total[0]  = volume[0]
         cd_bid[0] = 0
         cd_ask[0] = volume[0]
-
 
     for i in tqdm(range(1, len_)):
 

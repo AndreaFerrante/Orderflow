@@ -37,7 +37,7 @@ class MarkovChainPredictor:
     def predict_distribution(self, recent_states: List[str]) -> Dict[str, float]:
         
         if len(recent_states) < self.order:
-            raise ValueError(f"La lista degli ultimi stati deve avere almeno {self.order} elementi.")
+            raise ValueError(f"The list of all the last states should have at least {self.order} elements.")
 
         prev_states = tuple(recent_states[-self.order:])
 
@@ -45,15 +45,17 @@ class MarkovChainPredictor:
             return self.transition_probs[prev_states]
 
         for reduced_order in range(self.order-1, 0, -1):
+            
             reduced_prev_states = tuple(recent_states[-reduced_order:])
-            candidates = {k: v for k, v in self.transition_probs.items()
-                          if k[-reduced_order:] == reduced_prev_states}
+            candidates = {k: v for k, v in self.transition_probs.items() if k[-reduced_order:] == reduced_prev_states}
+            
             if candidates:
                 
                 aggregated_counts = defaultdict(float)
                 for dist in candidates.values():
                     for st, p in dist.items():
                         aggregated_counts[st] += p
+                        
                 # Normalize ...
                 total = sum(aggregated_counts.values())
                 return {st: p/total for st, p in aggregated_counts.items()}

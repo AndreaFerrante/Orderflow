@@ -87,6 +87,38 @@ def convert_prices_to_states(prices: List[float], threshold: float = 1e-8) -> Li
     return states
 
 
+def adaptive_threshold_states(prices: List[float], window: int = 20, base_threshold: float = 0.01) -> List[str]:
+    """
+    Converte una sequenza di prezzi in stati UP/DOWN/FLAT con threshold adattivo.
+    Il threshold viene scalato con la volatilità (deviazione standard) dei rendimenti
+    su una finestra mobile.
+
+    :param prices: Lista di prezzi
+    :param window: Finestra per calcolo volatilità
+    :param base_threshold: threshold base che verrà moltiplicato per la volatilità
+    :return: lista di stati ('UP', 'DOWN', 'FLAT')
+    """
+    if len(prices) < 2:
+        raise ValueError("Servono almeno due prezzi per calcolare gli stati.")
+
+    returns = np.diff(prices)
+    states = []
+    for i in range(1, len(prices)):
+        # Calcolo volatilità locale
+        start_idx = max(0, i - window)
+        local_returns = returns[start_idx:i] if i > 0 else returns[:1]
+        vol = np.std(local_returns) if len(local_returns) > 1 else 1e-8
+        threshold = base_threshold * max(vol, 1e-8)
+        
+        diff = prices[i] - prices[i-1]
+        if diff > threshold:
+            states.append("UP")
+        elif diff < -threshold:
+            states.append("DOWN")
+        else:
+            states.append("FLAT")
+    return states
+
 
 if __name__ == "__main__":
     
@@ -97,8 +129,8 @@ if __name__ == "__main__":
     predictor.fit(states)
     
     recent_states = states[-2:]
-    prediction = predictor.predict_next_state(recent_states)
-    dist = predictor.predict_distribution(recent_states)
+    prediction    = predictor.predict_next_state(recent_states)
+    dist          = predictor.predict_distribution(recent_states)
 
     print("Ultimi stati:", recent_states)
     print("Predizione del prossimo stato:", prediction)

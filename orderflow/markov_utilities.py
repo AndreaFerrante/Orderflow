@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 from typing import List
@@ -58,7 +59,7 @@ def adaptive_threshold_prices_states(prices: List[float], window: int = 20) -> L
     return states
 
 
-def simulate_market_data(num_steps: int = 500, seed: int = 42) -> pd.DataFrame:
+def simulate_market_data(num_steps: int = 10000, seed: int = 123) -> pd.DataFrame:
 
     """
     It is going to simulate prices regime over a num_steps of candles by including prices and fake volume.
@@ -74,15 +75,15 @@ def simulate_market_data(num_steps: int = 500, seed: int = 42) -> pd.DataFrame:
 
     # Simulated volume with average 1e5 and standard dev 1e4
     volume = np.random.normal(1e5, 1e4, size=len(prices))
-    volume = np.maximum(volume, 0.0)  # niente volumi negativi
+    volume = np.maximum(volume, 0.0)  # no negative volumes
 
     return pd.DataFrame({
-                        'price': prices,
+                        'price':  prices,
                         'volume': volume
                         })
 
 
-def compute_features(df: pd.DataFrame, window_volatility: int = 20, window_slope: int = 5) -> pd.DataFrame:
+def compute_df_features(df: pd.DataFrame, window_volatility: int = 20, window_slope: int = 5) -> pd.DataFrame:
 
     """
     Given a df with 'price' and 'volume' columns, we get:
@@ -196,6 +197,52 @@ def select_best_hmm_model(data: np.ndarray, n_states_range: List[int], covarianc
         raise ValueError("No model selected, check the data.")
 
     return best_model
+
+
+def reshape_sc_bar_data(data_path:str, file_extension:str='txt'):
+
+    '''
+    This function reads files extracted from SierraChart.
+    The name of the instrument is deducted from the file name, for instance, given this file name
+    ESH24-CME.scid_BarData.txt, the added colum will be "ESH24-CME.scid_BarData.txt".
+
+    :param data_path: path where the files are saved in
+    :return: dataframe of stacked data
+    '''
+
+    data_path = r'C:\Users\Factotum\Desktop'
+    file_extension = 'txt'
+
+    if data_path == '':
+        raise ValueError('data_path must not be null, it has to be a value.')
+
+    files = os.listdir(data_path)
+    data  = list()
+
+    for file in files:
+
+        if file.endswith(file_extension):
+
+            single_file         = pd.read_csv(os.path.join(data_path, file), sep=',')
+            single_file.columns = [str(x).strip() for x in single_file.columns]
+            single_file.insert(0, 'Instrument', file.split('.')[0])
+            data.append( single_file )
+
+    r_data = pd.concat(data)
+    r_data.reset_index(drop=True, inplace=True)
+
+    return r_data
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -266,26 +266,3 @@ def plot_distribution_of_float_series(series: pd.Series, bins: int = 75, title: 
     ax.set_ylabel("Frequency")
 
     plt.show()
-
-
-
-data_path = r'C:\Users\Factotum\Desktop'
-dataset = concat_sc_bar_data(data_path=data_path)
-dataset = dataset[ (dataset['Time'] >= '08:30:00') & (dataset['Time'] <= '15:00:00') ]
-
-
-dataset['PrevHigh']  = dataset['High'].shift(1).bfill()
-dataset['PrevLow']   = dataset['Low'].shift(1).bfill()
-dataset['Imbalance'] = (dataset['AskVolume'] - dataset['BidVolume']) / (dataset['Volume'])
-dataset['LastRatio'] = (dataset['Last'] - dataset['Open']) / (dataset['High'] - dataset['Low'])
-dataset['BarSpread'] = np.abs(dataset['High'] - dataset['Low'])
-
-plot_distribution_of_float_series(series=dataset['Imbalance'])
-
-
-
-
-
-
-
-

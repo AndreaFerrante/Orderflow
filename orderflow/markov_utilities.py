@@ -1,8 +1,13 @@
 import os
+import matplotlib
 import numpy as np
 import pandas as pd
 from typing import List
 from hmmlearn import hmm
+import matplotlib.pyplot as plt
+
+
+matplotlib.use('TkAgg')
 
 
 def threshold_prices_states(prices: List[float], threshold: float = 1e-8) -> List[str]:
@@ -199,7 +204,7 @@ def select_best_hmm_model(data: np.ndarray, n_states_range: List[int], covarianc
     return best_model
 
 
-def reshape_sc_bar_data(data_path:str, file_extension:str='txt'):
+def concat_sc_bar_data(data_path:str, file_extension:str='txt'):
 
     '''
     This function reads files extracted from SierraChart.
@@ -209,9 +214,6 @@ def reshape_sc_bar_data(data_path:str, file_extension:str='txt'):
     :param data_path: path where the files are saved in
     :return: dataframe of stacked data
     '''
-
-    data_path = r'C:\Users\Factotum\Desktop'
-    file_extension = 'txt'
 
     if data_path == '':
         raise ValueError('data_path must not be null, it has to be a value.')
@@ -228,17 +230,57 @@ def reshape_sc_bar_data(data_path:str, file_extension:str='txt'):
             single_file.insert(0, 'Instrument', file.split('.')[0])
             data.append( single_file )
 
+    ##########################################################################
     r_data = pd.concat(data)
+    r_data = r_data.map(lambda x: x.strip() if isinstance(x, str) else x)
     r_data.reset_index(drop=True, inplace=True)
+    ##########################################################################
 
     return r_data
 
 
+def plot_distribution_of_float_series(series: pd.Series, bins: int = 75, title: str = "Series Distribution") -> None:
+
+    """
+    Create a histogram plot with matplotlib to show
+    the distribution of a pandas Series of float values.
+
+    Parameters
+    ----------
+    series : pd.Series
+        The Series whose distribution we want to view
+    bins : int, optional
+        Number of 'bins' for the histogram (default: 30)
+    title : str, optional
+        Chart title (default: "Series distribution")
+    """
+
+    if not pd.api.types.is_float_dtype(series):
+        raise ValueError("The given series is not a float one. Pass a float series !")
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.hist(series, bins=bins, edgecolor='black', alpha=0.6)
+
+    ax.set_title(title)
+    ax.set_xlabel("Value")
+    ax.set_ylabel("Frequency")
+
+    plt.show()
 
 
 
+data_path = r'C:\Users\Factotum\Desktop'
+dataset = concat_sc_bar_data(data_path=data_path)
+dataset = dataset[ (dataset['Time'] >= '08:30:00') & (dataset['Time'] <= '15:00:00') ]
 
 
+dataset['PrevHigh']  = dataset['High'].shift(1).bfill()
+dataset['PrevLow']   = dataset['Low'].shift(1).bfill()
+dataset['Imbalance'] = (dataset['AskVolume'] - dataset['BidVolume']) / (dataset['Volume'])
+dataset['LastRatio'] = (dataset['Last'] - dataset['Open']) / (dataset['High'] - dataset['Low'])
+dataset['BarSpread'] = np.abs(dataset['High'] - dataset['Low'])
+
+plot_distribution_of_float_series(series=dataset['Imbalance'])
 
 
 

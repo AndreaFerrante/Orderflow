@@ -230,11 +230,13 @@ def concat_sc_bar_data(data_path:str, file_extension:str='txt'):
             single_file.insert(0, 'Instrument', file.split('.')[0])
             data.append( single_file )
 
-    ##########################################################################
+    ###############################################################################
     r_data = pd.concat(data)
     r_data = r_data.map(lambda x: x.strip() if isinstance(x, str) else x)
+    r_data = r_data.assign(Date = pd.to_datetime(r_data['Date']))
+    r_data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
     r_data.reset_index(drop=True, inplace=True)
-    ##########################################################################
+    ###############################################################################
 
     return r_data
 

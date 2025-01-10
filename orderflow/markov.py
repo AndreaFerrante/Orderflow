@@ -76,6 +76,7 @@ class MarkovChainPredictor(object):
 
 
 class AdaptiveMarkovChainPredictor(object):
+
     """
     Modello di previsione basato su catene di Markov di ordine variabile, con:
     - Selezione automatica dell'ordine (fino a max_order)
@@ -128,6 +129,7 @@ class AdaptiveMarkovChainPredictor(object):
         return transition_probs
 
     def fit(self, states: List[str], validation_ratio: float = 0.2) -> None:
+
         """
         Fit del modello testando ordini da 1 a max_order e scegliendo quello con migliore
         performance su un set di validazione interno.
@@ -135,6 +137,7 @@ class AdaptiveMarkovChainPredictor(object):
         :param states: Lista di stati storici.
         :param validation_ratio: Percentuale di dati da usare come validazione.
         """
+
         if len(states) < 10:
             raise ValueError("Troppi pochi stati per il fitting.")
         n = len(states)

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from typing import Optional, Tuple, Dict
-from markov_utilities import *
+from .markov_utilities import *
 import warnings
 
 

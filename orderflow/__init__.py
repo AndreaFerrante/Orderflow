@@ -77,9 +77,7 @@ from orderflow.vwap import (
     get_vwap
 )
 
-
 from orderflow.configuration import (
-
     SESSION_START_TIME,
     SESSION_END_TIME,
     EVENING_START_TIME,

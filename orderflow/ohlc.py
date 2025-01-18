@@ -6,7 +6,6 @@ import os
 import datetime
 import pandas as pd
 
-
 def get_third_friday_three_months_ago(ref_date:datetime.date):
 
     """
@@ -37,7 +36,7 @@ def get_third_friday_three_months_ago(ref_date:datetime.date):
 def trim_df_columns(df:pd.DataFrame):
 
     if not isinstance(df, pd.DataFrame):
-        raise Exception("Paramter named df, must be a DataFrame.")
+        raise Exception("Parameter named df, must be a DataFrame.")
 
     columns = [str(x).strip() for x in df.columns]
     df.columns = columns

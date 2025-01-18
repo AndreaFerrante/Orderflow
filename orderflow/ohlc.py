@@ -65,7 +65,10 @@ def read_and_clean_all_files(path_to_read_files:str):
             print(f'For file named {file}, last date is {single_file.Date.max()}. 3 Months Friday: {last_friday}')
 
     stacked = pd.concat(stacked)
-    stacked = stacked.sort_values('Date', ascending=True)
+    stacked = stacked.assign(Datetime = pd.to_datetime(stacked['Date'].astype(str) + ' ' + stacked['Time'].astype(str)))
+    stacked = stacked.assign(Time = stacked['Datetime'].dt.time)
+    stacked = stacked.assign(Weekday = stacked['Datetime'].dt.weekday)
+    stacked = stacked.sort_values(['Date', 'Time'], ascending=[True, True])
     stacked = stacked.reset_index(drop=True, inplace=False)
 
     return stacked

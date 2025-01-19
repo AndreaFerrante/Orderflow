@@ -115,6 +115,6 @@ def read_and_clean_all_files_polars(path_to_read_files: str,
         ]
     )
 
-    stacked = stacked.sort(["DateTime"])
+    stacked = stacked.sort(["Datetime"])
 
     return stacked

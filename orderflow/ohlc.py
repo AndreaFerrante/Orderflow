@@ -4,7 +4,7 @@ Overalll function to manage OHLC SC data for trend and mean reversion analysis, 
 
 import os
 import datetime
-import pandas as pd
+import polars as pl
 
 def get_third_friday_three_months_ago(ref_date:datetime.date):
 
@@ -33,42 +33,88 @@ def get_third_friday_three_months_ago(ref_date:datetime.date):
 
     return third_friday
 
-def trim_df_columns(df:pd.DataFrame):
+def trim_df_columns_polars(df: pl.DataFrame) -> pl.DataFrame:
 
-    if not isinstance(df, pd.DataFrame):
-        raise Exception("Parameter named df, must be a DataFrame.")
+    if not isinstance(df, pl.DataFrame):
+        raise ValueError("Parameter named df, must be a DataFrame from the Polars package.")
 
-    columns = [str(x).strip() for x in df.columns]
-    df.columns = columns
+    trimmed_cols = [col.strip() for col in df.columns]
+    df.columns   = trimmed_cols
+
+    # for col_name in df.columns:
+    #     if df.schema[col_name] == pl.Utf8:
+    #         df = df.with_column(pl.col(col_name).str.strip().alias(col_name))
 
     return df
 
-def read_and_clean_all_files(path_to_read_files:str):
+def read_and_clean_all_files_polars(path_to_read_files: str,
+                                    separator:str    = ',',
+                                    file_ext:str     = '.txt',
+                                    date_format:str  = '%Y/%m/%d',
+                                    schema           = {
+                                        "Date": pl.Utf8,  # or pl.Date
+                                        "Time": pl.Utf8,  # or plf.Time
+                                        "Open": pl.Float64,
+                                        "High": pl.Float64,
+                                        "Low": pl.Float64,
+                                        "Last": pl.Float64,
+                                        "Volume": pl.Int64,
+                                        "NumberOfTrades": pl.Int64,
+                                        "BidVolume": pl.Int64,
+                                        "AskVolume": pl.Int64
+                                    }
+                                    ) -> pl.DataFrame:
 
     if not isinstance(path_to_read_files, str):
-        raise Exception("Please, pass to the function parameter 'path_to_read_files' as a string object.")
+        raise ValueError("Please, pass to the function parameter 'path_to_read_files' as a string object.")
 
-    files   = os.listdir(path_to_read_files)
-    stacked = list()
+    files       = os.listdir(path_to_read_files)
+    stacked_dfs = list()
 
-    for file in files:
+    for file_name in files:
 
-        if file.endswith('txt'):
+        if file_name.endswith(file_ext):
 
-            single_file = pd.read_csv(os.path.join(path_to_read_files, file))
-            single_file = trim_df_columns(single_file)
-            single_file = single_file.assign(Date = pd.to_datetime(single_file.Date))
-            last_friday = get_third_friday_three_months_ago(single_file.Date.max())
-            last_monday = last_friday + datetime.timedelta(days=3)
-            single_file = single_file[single_file['Date'] >= pd.to_datetime(last_monday)]
-            stacked.append(single_file)
-            print(f'For file named {file}, last date is {single_file.Date.max()}. 3 Months Friday: {last_friday}')
+            full_path = os.path.join(path_to_read_files, file_name)
 
-    stacked = pd.concat(stacked)
-    stacked = stacked.assign(Datetime = pd.to_datetime(stacked['Date'].astype(str) + ' ' + stacked['Time'].astype(str)))
-    stacked = stacked.assign(Time = stacked['Datetime'].dt.time)
-    stacked = stacked.assign(Weekday = stacked['Datetime'].dt.weekday)
-    stacked = stacked.sort_values(['Date', 'Time'], ascending=[True, True])
-    stacked = stacked.reset_index(drop=True, inplace=False)
+            df = pl.read_csv( full_path, has_header=True, separator=separator, schema=schema)
+            df = trim_df_columns_polars(df)
+            df = df.with_columns(pl.col("Date").str.strptime(pl.Date, date_format, strict=False))
+
+            max_date         = df.select(pl.col("Date").max()).item()
+            last_friday      = get_third_friday_three_months_ago(max_date)
+            last_monday      = last_friday + datetime.timedelta(days=3)
+            df               = df.filter(pl.col("Date") >= pl.lit(last_monday))
+            current_max_date = df.select(pl.col("Date").max()).item()
+
+            print(
+                f"For file '{file_name}', last date is {current_max_date}. "
+                f"3 Months Friday: {last_friday}"
+            )
+
+            stacked_dfs.append(df)
+
+    if not stacked_dfs:
+        return pl.DataFrame()
+    else:
+        stacked = pl.concat(stacked_dfs, how="vertical")
+
+    # Get, in Polars, the column Datetime.
+    stacked = stacked.with_columns(
+        (
+                pl.col("Date").cast(pl.Utf8) + pl.lit(" ") + pl.col("Time").cast(pl.Utf8)
+        ).str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False)
+        .alias("Datetime")
+    )
+
+    # Override the column Time then sort and return the final dataframe !
+    stacked = stacked.with_columns(
+        [
+            pl.col("Datetime").dt.strftime("%H:%M:%S").alias("Time"),
+            pl.col("Datetime").dt.weekday().alias("Weekday")
+        ]
+    )
+
+    stacked = stacked.sort(["Date", "Time"])
 
     return stacked

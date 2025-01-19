@@ -1,7 +1,7 @@
 from orderflow.ohlc import (
     get_third_friday_three_months_ago,
-    trim_df_columns,
-    read_and_clean_all_files
+    trim_df_columns_polars,
+    read_and_clean_all_files_polars
 )
 
 from orderflow.markov import (

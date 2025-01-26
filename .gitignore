@@ -58,3 +58,5 @@ docs/_build
 /remora.py
 /backtesting.py
 /Sources/
+/data
+/orderflow/Sources

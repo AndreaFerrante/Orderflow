@@ -61,7 +61,6 @@ from orderflow.volume_profile import (
     get_daily_session_moving_POC,
     get_volume_profile_areas,
     get_volume_profile_peaks_valleys,
-    get_volume_profile_peaks_valleys_v2,
     get_daily_high_and_low_by_session,
     get_daily_high_and_low_by_date
 )

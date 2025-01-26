@@ -1,7 +1,13 @@
+import os
+import matplotlib
 import numpy as np
 import pandas as pd
 from typing import List
 from hmmlearn import hmm
+import matplotlib.pyplot as plt
+
+
+matplotlib.use('TkAgg')
 
 
 def threshold_prices_states(prices: List[float], threshold: float = 1e-8) -> List[str]:
@@ -58,7 +64,7 @@ def adaptive_threshold_prices_states(prices: List[float], window: int = 20) -> L
     return states
 
 
-def simulate_market_data(num_steps: int = 500, seed: int = 42) -> pd.DataFrame:
+def simulate_market_data(num_steps: int = 10000, seed: int = 123) -> pd.DataFrame:
 
     """
     It is going to simulate prices regime over a num_steps of candles by including prices and fake volume.
@@ -74,15 +80,15 @@ def simulate_market_data(num_steps: int = 500, seed: int = 42) -> pd.DataFrame:
 
     # Simulated volume with average 1e5 and standard dev 1e4
     volume = np.random.normal(1e5, 1e4, size=len(prices))
-    volume = np.maximum(volume, 0.0)  # niente volumi negativi
+    volume = np.maximum(volume, 0.0)  # no negative volumes
 
     return pd.DataFrame({
-                        'price': prices,
+                        'price':  prices,
                         'volume': volume
                         })
 
 
-def compute_features(df: pd.DataFrame, window_volatility: int = 20, window_slope: int = 5) -> pd.DataFrame:
+def compute_df_features(df: pd.DataFrame, window_volatility: int = 20, window_slope: int = 5) -> pd.DataFrame:
 
     """
     Given a df with 'price' and 'volume' columns, we get:
@@ -198,5 +204,67 @@ def select_best_hmm_model(data: np.ndarray, n_states_range: List[int], covarianc
     return best_model
 
 
+def concat_sc_bar_data(data_path:str, file_extension:str='txt'):
+
+    '''
+    This function reads files extracted from SierraChart.
+    The name of the instrument is deducted from the file name, for instance, given this file name
+    ESH24-CME.scid_BarData.txt, the added colum will be "ESH24-CME.scid_BarData.txt".
+
+    :param data_path: path where the files are saved in
+    :return: dataframe of stacked data
+    '''
+
+    if data_path == '':
+        raise ValueError('data_path must not be null, it has to be a value.')
+
+    files = os.listdir(data_path)
+    data  = list()
+
+    for file in files:
+
+        if file.endswith(file_extension):
+
+            single_file         = pd.read_csv(os.path.join(data_path, file), sep=',')
+            single_file.columns = [str(x).strip() for x in single_file.columns]
+            single_file.insert(0, 'Instrument', file.split('.')[0])
+            data.append( single_file )
+
+    ###############################################################################
+    r_data = pd.concat(data)
+    r_data = r_data.map(lambda x: x.strip() if isinstance(x, str) else x)
+    r_data = r_data.assign(Date = pd.to_datetime(r_data['Date']))
+    r_data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
+    r_data.reset_index(drop=True, inplace=True)
+    ###############################################################################
+
+    return r_data
 
 
+def plot_distribution_of_float_series(series: pd.Series, bins: int = 75, title: str = "Series Distribution") -> None:
+
+    """
+    Create a histogram plot with matplotlib to show
+    the distribution of a pandas Series of float values.
+
+    Parameters
+    ----------
+    series : pd.Series
+        The Series whose distribution we want to view
+    bins : int, optional
+        Number of 'bins' for the histogram (default: 30)
+    title : str, optional
+        Chart title (default: "Series distribution")
+    """
+
+    if not pd.api.types.is_float_dtype(series):
+        raise ValueError("The given series is not a float one. Pass a float series !")
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.hist(series, bins=bins, edgecolor='black', alpha=0.6)
+
+    ax.set_title(title)
+    ax.set_xlabel("Value")
+    ax.set_ylabel("Frequency")
+
+    plt.show()

@@ -1,6 +1,10 @@
 from collections import defaultdict
 from typing import Optional, Tuple, Dict
-from markov_utilities import *
+from .markov_utilities import *
+import warnings
+
+
+warnings.filterwarnings("ignore")
 
 
 class MarkovChainPredictor(object):
@@ -72,6 +76,7 @@ class MarkovChainPredictor(object):
 
 
 class AdaptiveMarkovChainPredictor(object):
+
     """
     Modello di previsione basato su catene di Markov di ordine variabile, con:
     - Selezione automatica dell'ordine (fino a max_order)
@@ -124,6 +129,7 @@ class AdaptiveMarkovChainPredictor(object):
         return transition_probs
 
     def fit(self, states: List[str], validation_ratio: float = 0.2) -> None:
+
         """
         Fit del modello testando ordini da 1 a max_order e scegliendo quello con migliore
         performance su un set di validazione interno.
@@ -131,6 +137,7 @@ class AdaptiveMarkovChainPredictor(object):
         :param states: Lista di stati storici.
         :param validation_ratio: Percentuale di dati da usare come validazione.
         """
+
         if len(states) < 10:
             raise ValueError("Troppi pochi stati per il fitting.")
         n = len(states)
@@ -238,10 +245,7 @@ class MultiFeatureHMM(object):
       - Estimation of next feature vector
     """
 
-    def __init__(
-        self,
-        model: Optional[hmm.GaussianHMM] = None
-    ):
+    def __init__(self, model: Optional[hmm.GaussianHMM] = None):
 
         """
         Initialize our HMM.
@@ -262,9 +266,9 @@ class MultiFeatureHMM(object):
         """
         It returns a sequence of states (Viterbi decoding).
         """
-        
+
         if not self.fitted:
-            raise RuntimeError("Modello non fittato.")
+            raise RuntimeError("Modello not fitted.")
 
         return self.model.predict(data)
 
@@ -296,22 +300,21 @@ class MultiFeatureHMM(object):
         return self.model.score(data)
 
 
-if __name__ == "__main__":
+def run_adaptive_markov_chain_predictor():
 
-    np.random.seed(123)
     prices = [100.0]
 
     for _ in range(100000):
         prices.append(prices[-1] + np.random.normal(0.01, 2.5))
 
-    states    = adaptive_threshold_prices_states(prices, window=3)
+    states = adaptive_threshold_prices_states(prices, window=3)
     predictor = AdaptiveMarkovChainPredictor(max_order=10, smoothing_alpha=1000)
     predictor.fit(states, validation_ratio=0.2)
 
-    #recent_states = states[-predictor.best_order:]
+    # recent_states = states[-predictor.best_order:]
     recent_states = [np.random.choice(['UP', 'DOWN', 'FLAT']) for x in range(predictor.best_order)]
-    prediction    = predictor.predict_next_state(recent_states)
-    dist          = predictor.predict_distribution(recent_states)
+    prediction = predictor.predict_next_state(recent_states)
+    dist = predictor.predict_distribution(recent_states)
 
     print("Distribuzione stati: \n", pd.Series(states).value_counts())
     print("Stati individuati:", list(set(states)))
@@ -320,3 +323,49 @@ if __name__ == "__main__":
     print("Predizione del prossimo stato:", prediction)
     print("Distribuzione di probabilità:", dist)
 
+
+def run_multi_feature_hmm():
+
+    # 1. Simuliamo dati di mercato (prezzi, volume)
+    df_market = simulate_market_data(num_steps=500, seed=42)
+
+    # 2. Calcoliamo le feature ingegnerizzate
+    df_features = compute_df_features(df_market, window_volatility=20, window_slope=5)
+    # Selezioniamo le colonne di input per l'HMM (multidimensionali)
+    # Esempio: 'return', 'volatility', 'slope', 'log_volume'
+    features_array = df_features[['return', 'volatility', 'slope', 'log_volume']].values
+
+    # 3. Selezione automatica del numero di stati nascosti
+    #    Proviamo un range da 2 a 5 stati, usando BIC
+    candidate_states = [2, 3, 4, 5]
+    best_hmm = select_best_hmm_model(
+        data=features_array,
+        n_states_range=candidate_states,
+        covariance_type='full',
+        criterion='bic',
+        random_state=123
+    )
+
+    # 4. Creiamo il wrapper di classe e confermiamo che è fittato
+    multi_hmm = MultiFeatureHMM(model=best_hmm)
+    # Fit finale (anche se best_hmm è già fit, in genere)
+    multi_hmm.fit(features_array)
+
+    # 5. Prediciamo gli stati con Viterbi
+    states_seq = multi_hmm.predict_states(features_array)
+    print("Stati nascosti (Viterbi) per ogni osservazione:\n", states_seq)
+
+    # 6. Calcoliamo la matrice di probabilità a posteriori (filtraggio & smoothing)
+    posterior_probs = multi_hmm.predict_proba_states(features_array)
+    print("\nMatrice di probabilità a posteriori (prime 10 righe):")
+    print(posterior_probs[:10])
+
+    # 7. Score del modello
+    loglike = multi_hmm.score(features_array)
+    print(f"\nLog-likelihood del modello sul dataset: {loglike:.2f}")
+
+
+if __name__ == "__main__":
+
+    run_adaptive_markov_chain_predictor()
+    run_multi_feature_hmm()

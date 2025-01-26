@@ -56,25 +56,25 @@ FUTURE_LETTERS         = pd.DataFrame({'Expiry_Month':['January',
                                            'V',
                                            'X',
                                            'Z']})
-FUTURE_VALUES          = pd.DataFrame({'Ticker':    ['ES',
+FUTURE_VALUES          = pd.DataFrame({'Ticker':        ['ES',
                                                      'ZB',
                                                      'ZN',
                                                      'FESX',
                                                      'FGBL',
                                                      'MES'],
-                                       'Tick_Value':[12.5,
+                                       'Tick_Value':    [12.5,
                                                      31.25,
                                                      15.625,
                                                      10,
                                                      10,
                                                      1.25],
-                                       'Tick_Size': [0.25,
+                                       'Tick_Size':     [0.25,
                                                      0.03125,
                                                      0.015625,
                                                      1,
                                                      0.1,
                                                      0.25],
-                                        'RTH_StartTime' : [
+                                       'RTH_StartTime': [
                                             pd.to_datetime('08:30:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('08:30:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('08:30:00', format='%H:%M:%S').time(),
@@ -82,11 +82,11 @@ FUTURE_VALUES          = pd.DataFrame({'Ticker':    ['ES',
                                             pd.to_datetime('09:30:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('08:30:00', format='%H:%M:%S').time()
                                         ],
-                                        'RTH_EndTime' : [
-                                            pd.to_datetime('15:59:59', format='%H:%M:%S').time(),
-                                            pd.to_datetime('15:59:59', format='%H:%M:%S').time(),
-                                            pd.to_datetime('15:59:59', format='%H:%M:%S').time(),
+                                       'RTH_EndTime':   [
+                                            pd.to_datetime('16:00:00', format='%H:%M:%S').time(),
+                                            pd.to_datetime('16:00:00', format='%H:%M:%S').time(),
+                                            pd.to_datetime('16:00:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('17:30:00', format='%H:%M:%S').time(),
                                             pd.to_datetime('17:30:00', format='%H:%M:%S').time(),
-                                            pd.to_datetime('15:59:59', format='%H:%M:%S').time()
+                                            pd.to_datetime('16:00:00', format='%H:%M:%S').time()
                                         ]})

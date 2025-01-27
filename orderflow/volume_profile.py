@@ -475,7 +475,7 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
     peaks_valleys  = np.zeros(len_)
     volume_profile = {}
 
-    for i in tqdm(range(len_ - 1)):
+    for i in tqdm(range(1, len_ - 1)):
 
         if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
             volume_profile.clear()
@@ -497,160 +497,36 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
             peaks_prices        = source[peaks_indexes]
             curr_price_position = np.searchsorted(peaks_prices, price[i])
 
-            if curr_price_position == 0 and peaks_volumes[0] >= peaks_volumes[1]:
-                peaks_valleys[i] = 2
-            elif curr_price_position == 0 and peaks_volumes[0] < peaks_volumes[1]:
-                peaks_valleys[i] = -2
-            elif curr_price_position == len(peaks_prices) - 1 and peaks_volumes[-2] > peaks_volumes[-1]:
-                peaks_valleys[i] = -2
-            elif curr_price_position == len(peaks_prices) - 1 and peaks_volumes[-2] <= peaks_volumes[-1]:
-                peaks_valleys[i] = 2
-            elif peaks_prices[curr_price_position] == price[i] and peaks_volumes[curr_price_position] < peaks_volumes[
-                curr_price_position + 1]:
-                peaks_valleys[i] = -2
-            elif peaks_prices[curr_price_position] == price[i] and peaks_volumes[curr_price_position] > peaks_volumes[
-                curr_price_position + 1]:
-                peaks_valleys[i] = 2
-            else:
-                distance_in_element      = (peaks_prices[curr_price_position] - peaks_prices[curr_price_position - 1]) / tick_size
-                half_distance_in_element = int(distance_in_element / 2)
-
-                try:
-                    if price[i] >= source[peaks_indexes[curr_price_position] - half_distance_in_element] and \
-                        peaks_volumes[curr_price_position] > peaks_volumes[curr_price_position - 1]:
-                        peaks_valleys[i] = 1
-                    elif price[i] >= source[peaks_indexes[curr_price_position] - half_distance_in_element] and \
-                        peaks_volumes[curr_price_position] < peaks_volumes[curr_price_position - 1]:
-                        peaks_valleys[i] = -1
-                    elif price[i] < source[peaks_indexes[curr_price_position] - half_distance_in_element] and \
-                        peaks_volumes[curr_price_position] > peaks_volumes[curr_price_position - 1]:
-                        peaks_valleys[i] = -1
-                    elif price[i] < source[peaks_indexes[curr_price_position] - half_distance_in_element] and \
-                        peaks_volumes[curr_price_position] < peaks_volumes[curr_price_position - 1]:
-                        peaks_valleys[i] = 1
-                    else:
-                        peaks_valleys[i] = 0
-                except Exception as ex:
-                    peaks_valleys[i] = 0
-                    print(f'Issue, i = {i}, curr_price_position = {curr_price_position}, half_distance_in_element = {half_distance_in_element}')
-                    print(f'Exception equal to {ex}')
-
-    return peaks_valleys
-
-def get_volume_profile_peaks_valleys_v2(data: pd.DataFrame, tick_size: float = 0.25) -> np.array:
-
-    """
-    Given the canonical dataframe recorded, this function returns an array with info if the price is in a
-    peak or valley of volumes
-    :param df: canonical dataframe recorded
-    :return: numpy array with values: High Peak = 2, High Peak Area = 1, Valley Peak = -2, Valley Peak Area = -1
-    """
-
-    if 'SessionType' not in data.columns:
-        raise ValueError('No SessionType column present into the DataFrame passed. Execution stops.')
-
-    price = data['Price'].values
-    volume = data['Volume'].values
-    session = data['SessionType'].values
-    n = len(price)
-
-    peaks_valleys = np.zeros(n, dtype=float)
-
-    def process_session(volume_profile: dict, start_idx: int, end_idx: int):
-        if not volume_profile:
-            return
-
-        source = np.array(sorted(volume_profile.keys()))
-        weight = np.array([volume_profile[k] for k in source])
-
-        if len(source) < 2:
-            return
-
-        kde = gaussian_kde_numba(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
-        if len(kde) <= 2:
-            return
-
-        peaks_indexes = get_kde_high_low_price_peaks(kde)
-        if len(peaks_indexes) == 0:
-            return
-
-        peaks_prices = source[peaks_indexes]
-        peaks_volumes = weight[peaks_indexes]
-
-        peaks_signs = np.zeros(len(peaks_indexes))
-        for idx, pi in enumerate(peaks_indexes):
-            if pi == 0 or pi == len(kde) - 1:
-                peaks_signs[idx] = -2
-            else:
-                cur, prev, nxt = kde[pi], kde[pi - 1], kde[pi + 1]
-                if cur > prev and cur > nxt:
-                    peaks_signs[idx] = 2
-                elif cur < prev and cur < nxt:
-                    peaks_signs[idx] = -2
-
-        session_prices = price[start_idx:end_idx]
-        session_len = end_idx - start_idx
-
-        local_peaks_valleys = np.zeros(session_len, dtype=float)
-
-        for p_i, sign_val in zip(peaks_prices, peaks_signs):
-            mask = (session_prices == p_i)
-            local_peaks_valleys[mask] = sign_val
-
-        for i in range(1, len(peaks_prices)):
-            dist = (peaks_prices[i] - peaks_prices[i - 1]) / tick_size
-            if dist <= 0:
-                continue
-            DistanceInElement = int(math.floor(dist))
-            if i == 1:
-                DistanceInElement += 1
-            if DistanceInElement <= 0:
-                continue
-            HalfDistanceInElement = DistanceInElement // 2
-
-            strong_condition = (peaks_volumes[i] > peaks_volumes[i - 1])
-
-            low_bound = peaks_prices[i - 1]
-            high_bound = peaks_prices[i]
-
-            segment_indices = np.where((session_prices > low_bound) & (session_prices < high_bound))[0]
-
-            actual_count = len(segment_indices)
-            # Se actual_count == 0, non c'è nulla da assegnare
-            if actual_count == 0:
-                continue
-
-            boundary = int(round(HalfDistanceInElement * (actual_count / DistanceInElement)))
-
-            for j, idx_ in enumerate(segment_indices):
-                in_first_half = (j < boundary)
-                if (in_first_half and strong_condition) or (not in_first_half and not strong_condition):
-                    # LowPeakArea
-                    val = -1
+            if peaks_prices[0] != price[i] and peaks_prices[-1] != price[i]:
+                if peaks_prices[curr_price_position] == price[i] and peaks_volumes[curr_price_position] < peaks_volumes[
+                    curr_price_position + 1]:
+                    peaks_valleys[i] = -2
+                elif peaks_prices[curr_price_position] == price[i] and peaks_volumes[curr_price_position] > peaks_volumes[
+                    curr_price_position + 1]:
+                    peaks_valleys[i] = 2
                 else:
-                    # HighPeakArea
-                    val = 1
+                    distance_in_element      = (peaks_prices[curr_price_position] - peaks_prices[curr_price_position - 1]) / tick_size
+                    half_distance_in_element = int(distance_in_element / 2)
 
-                if local_peaks_valleys[idx_] == 0:
-                    local_peaks_valleys[idx_] = val
-
-        peaks_valleys[start_idx:end_idx] = local_peaks_valleys
-
-    current_session = session[0]
-    volume_profile = {}
-    session_start_idx = 0
-
-    for i in range(n):
-        if i > 0 and session[i] != current_session:
-            process_session(volume_profile, session_start_idx, i)
-            volume_profile.clear()
-            current_session = session[i]
-            session_start_idx = i
-
-        volume_profile[price[i]] = volume_profile.get(price[i], 0) + volume[i]
-
-    if volume_profile:
-        process_session(volume_profile, session_start_idx, n)
+                    try:
+                        if price[i] >= source[peaks_indexes[curr_price_position] - half_distance_in_element] and \
+                            peaks_volumes[curr_price_position] > peaks_volumes[curr_price_position - 1]:
+                            peaks_valleys[i] = 1
+                        elif price[i] >= source[peaks_indexes[curr_price_position] - half_distance_in_element] and \
+                            peaks_volumes[curr_price_position] < peaks_volumes[curr_price_position - 1]:
+                            peaks_valleys[i] = -1
+                        elif price[i] < source[peaks_indexes[curr_price_position] - half_distance_in_element] and \
+                            peaks_volumes[curr_price_position] > peaks_volumes[curr_price_position - 1]:
+                            peaks_valleys[i] = -1
+                        elif price[i] < source[peaks_indexes[curr_price_position] - half_distance_in_element] and \
+                            peaks_volumes[curr_price_position] < peaks_volumes[curr_price_position - 1]:
+                            peaks_valleys[i] = 1
+                        else:
+                            peaks_valleys[i] = 0
+                    except Exception as ex:
+                        peaks_valleys[i] = 0
+                        print(f'Issue, i = {i}, curr_price_position = {curr_price_position}, half_distance_in_element = {half_distance_in_element}')
+                        print(f'Exception equal to {ex}')
 
     return peaks_valleys
 

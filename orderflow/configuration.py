@@ -83,10 +83,10 @@ FUTURE_VALUES          = pd.DataFrame({'Ticker':        ['ES',
                                             pd.to_datetime('08:30:00', format='%H:%M:%S').time()
                                         ],
                                        'RTH_EndTime':   [
-                                            pd.to_datetime('16:00:00', format='%H:%M:%S').time(),
-                                            pd.to_datetime('16:00:00', format='%H:%M:%S').time(),
-                                            pd.to_datetime('16:00:00', format='%H:%M:%S').time(),
-                                            pd.to_datetime('17:30:00', format='%H:%M:%S').time(),
-                                            pd.to_datetime('17:30:00', format='%H:%M:%S').time(),
-                                            pd.to_datetime('16:00:00', format='%H:%M:%S').time()
+                                            pd.to_datetime('15:59:59.999999', format='%H:%M:%S.%f').time(),
+                                            pd.to_datetime('15:59:59.999999', format='%H:%M:%S.%f').time(),
+                                            pd.to_datetime('15:59:59.999999', format='%H:%M:%S.%f').time(),
+                                            pd.to_datetime('16:29:59.999999', format='%H:%M:%S.%f').time(),
+                                            pd.to_datetime('16:29:59.999999', format='%H:%M:%S.%f').time(),
+                                            pd.to_datetime('15:59:59.999999', format='%H:%M:%S.%f').time()
                                         ]})

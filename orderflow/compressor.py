@@ -1,4 +1,5 @@
 from collections import deque
+from typing import Optional
 from tqdm import tqdm
 import polars as pl
 import pandas as pd
@@ -231,3 +232,142 @@ def compress_to_volume_bars_pl(tick_data: pl.DataFrame, volume_threshold: float)
 
     except Exception as e:
         raise e
+
+
+def compress_to_minute_bars_pl(
+    tick_data: pl.DataFrame,
+    win_compression: str         = '1m',
+    time_column: str             = "Datetime",
+    price_column: str            = "Price",
+    volume_column: Optional[str] = "Volume",
+    side_column: Optional[str]   = "TradeType",
+    ask_value: int               = 2,
+    bid_value: int               = 1,
+) -> pl.DataFrame:
+
+    """
+        Aggregates tick-by-tick data into minute bars with extended volume details.
+
+        This function takes tick-level trading data and groups it into minute intervals,
+        returning the following aggregated details for each minute:
+          - Open: the first price in the interval
+          - High: the maximum price during the interval
+          - Low: the minimum price during the interval
+          - Close: the last price in the interval
+          - Volume: the total volume during the interval (if volume_column is provided)
+          - AskVolume: total volume for trades with side equal to `ask_value` (if side_column is provided)
+          - BidVolume: total volume for trades with side equal to `bid_value` (if side_column is provided)
+          - NumberOfTrades: the total number of trades executed in the interval
+
+        The data is grouped by the specified time interval (`win_compression`) and
+        the aggregation occurs over that interval.
+
+        Parameters
+        ----------
+        tick_data : pl.DataFrame
+            DataFrame containing tick-by-tick trading data, with at least the following columns:
+            - time_column: timestamp for each trade
+            - price_column: price at which the trade occurred
+            - volume_column: the volume of the trade (optional)
+            - side_column: the type of the trade (optional, e.g., 'ask' or 'bid')
+
+        win_compression : str, default '1m'
+            The time interval for aggregating the data (e.g., '1m' for one-minute bars).
+
+        time_column : str, default 'Datetime'
+            The name of the column containing timestamps in the tick data.
+
+        price_column : str, default 'Price'
+            The name of the column containing trade prices.
+
+        volume_column : Optional[str], default 'Volume'
+            The name of the column containing trade volumes. If None, volume aggregation is skipped.
+
+        side_column : Optional[str], default 'TradeType'
+            The name of the column indicating trade side (e.g., 'ask' or 'bid').
+            If None, ask/bid volume aggregations are skipped.
+
+        ask_value : str, default '2'
+            The value in the side_column representing an ask trade.
+
+        bid_value : str, default '1'
+            The value in the side_column representing a bid trade.
+
+        Returns
+        -------
+        pl.DataFrame
+            A DataFrame containing one row per minute with the aggregated bar data:
+            - Open
+            - High
+            - Low
+            - Close
+            - Volume (if available)
+            - AskVolume (if side_column is provided)
+            - BidVolume (if side_column is provided)
+            - NumberOfTrades
+        """
+
+    if not isinstance(tick_data, pl.DataFrame):
+        raise ValueError("Attention, pass to the compress in range function a Polars DataFrame in type.")
+
+    required_columns = {"Date", "Time", "Price", "Volume", "TradeType"}
+    missing_columns = required_columns - set(tick_data.columns)
+    if missing_columns:
+        raise ValueError(f"Input DataFrame is missing required columns: {missing_columns}")
+
+    #############################################
+    tick_data = _get_datetime_fixed_pl(tick_data)
+    #############################################
+
+    # Build a list of aggregation expressions.
+    aggregations = [
+        pl.col(price_column).first().alias("Open"),
+
+        pl.col(price_column).max().alias("High"),
+
+        pl.col(price_column).min().alias("Low"),
+
+        pl.col(price_column).last().alias("Close"),
+
+        pl.col(volume_column).sum().alias("Volume"),
+
+        pl.len().alias("NumberOfTrades"),
+
+        pl.when(pl.col(side_column) == ask_value)
+        .then(pl.col(volume_column))
+        .otherwise(0)
+        .sum()
+        .alias("AskVolume"),
+
+        pl.when(pl.col(side_column) == bid_value)
+        .then(pl.col(volume_column))
+        .otherwise(0)
+        .sum()
+        .alias("BidVolume")
+    ]
+
+    # Group the data into minute-time intervals using groupby_dynamic. . .
+    minute_bars = (
+        tick_data.group_by_dynamic(
+            time_column,
+            every  = win_compression, # Group in one-minute intervals.
+            closed = "left",          # Intervals are left-closed (include start, exclude end).
+            label  = "left"           # Label each group by the left (start) boundary.
+        )
+        .agg(aggregations)
+        .sort(time_column)
+    )
+
+    return minute_bars
+
+
+
+
+tbt_data = pl.read_csv(r'C:\Users\Factotum\Desktop\ESZ24-CME_20241025_225959.txt', separator=';')
+tbt_data = tbt_data.with_columns(pl.concat_str([pl.col("Date"), pl.col("Time")], separator=" ").alias("Datetime"))
+tbt_data = tbt_data.with_columns(pl.col("Datetime").str.to_datetime(format='%Y-%m-%d %H:%M:%S%.f'))
+sc_data  = pl.read_csv(r'C:\Users\Factotum\Desktop\ESZ24-CME.scid_BarData_1000v.txt', separator=',')
+
+tbt_to_vol   = compress_to_volume_bars_pl(tick_data=tbt_data, volume_threshold=1000)
+tbt_to_ran_1 = compress_to_bar_once_range_met(tick_data=tbt_data.to_pandas(), price_range=5)
+tbt_1_min    = compress_to_minute_bars_pl(tick_data=tbt_data)

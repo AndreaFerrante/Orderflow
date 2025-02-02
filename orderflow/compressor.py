@@ -359,15 +359,3 @@ def compress_to_minute_bars_pl(
     )
 
     return minute_bars
-
-
-
-
-tbt_data = pl.read_csv(r'C:\Users\Factotum\Desktop\ESZ24-CME_20241025_225959.txt', separator=';')
-tbt_data = tbt_data.with_columns(pl.concat_str([pl.col("Date"), pl.col("Time")], separator=" ").alias("Datetime"))
-tbt_data = tbt_data.with_columns(pl.col("Datetime").str.to_datetime(format='%Y-%m-%d %H:%M:%S%.f'))
-sc_data  = pl.read_csv(r'C:\Users\Factotum\Desktop\ESZ24-CME.scid_BarData_1000v.txt', separator=',')
-
-tbt_to_vol   = compress_to_volume_bars_pl(tick_data=tbt_data, volume_threshold=1000)
-tbt_to_ran_1 = compress_to_bar_once_range_met(tick_data=tbt_data.to_pandas(), price_range=5)
-tbt_1_min    = compress_to_minute_bars_pl(tick_data=tbt_data)

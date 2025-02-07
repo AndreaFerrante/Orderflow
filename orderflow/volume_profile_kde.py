@@ -2,6 +2,7 @@ import math
 from numba import jit
 import numpy as np
 from tqdm import tqdm
+from numba import prange
 
 
 def get_vol_dict(p_:np.array, v_:np.array):
@@ -91,7 +92,7 @@ def gaussian_kde_vectorized(source: np.array, weight: np.array, h: float = 1.0):
     return kde_result
 
 
-@jit(nopython=True, fastmath=True)
+@jit(nopython=True)
 def gaussian_kde_numba(source: np.array, weight: np.array, h: float = 1.0):
     len_source = np.shape(source)[0]
 
@@ -106,7 +107,26 @@ def gaussian_kde_numba(source: np.array, weight: np.array, h: float = 1.0):
     return jelem
 
 
-@jit(nopython=True, fastmath=True)
+@jit(nopython=True, parallel=True)
+def gaussian_kde_numba_parallel(source, weight, h: float = 1.0):
+    n = source.shape[0]
+    result = np.empty(n, dtype=source.dtype)
+    g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (n * h)
+
+    for j in prange(n):
+        sum_val = 0.0
+        x_j = source[j]
+        for i in range(n):
+            expo = (x_j - source[i]) / h
+            val = g_const * np.exp(-0.5 * expo * expo)
+            if weight.size != 0:
+                val *= weight[i]
+            sum_val += val
+        result[j] = sum_val
+    return result
+
+
+@jit(nopython=True, fastmath=True, parallel=True)
 def get_kde_high_low_price_peaks(kde: np.array):
 
     kde_len = np.shape(kde)[0]

@@ -4,7 +4,7 @@ import operator
 from tqdm import tqdm
 from .exceptions import SessionTypeAbsent
 from .configuration import *
-from .volume_profile_kde import gaussian_kde_numba, get_kde_high_low_price_peaks
+from .volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks
 import math
 
 
@@ -487,7 +487,7 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
 
         source        = np.array(sorted(volume_profile.keys()))
         weight        = np.array([volume_profile[key] for key in source])
-        kde           = gaussian_kde_numba(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
+        kde           = gaussian_kde_numba_parallel(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
         peaks_indexes = get_kde_high_low_price_peaks(kde)
 
         if np.any(peaks_indexes):
@@ -527,7 +527,8 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
                         peaks_valleys[i] = 0
                         print(f'Issue, i = {i}, curr_price_position = {curr_price_position}, half_distance_in_element = {half_distance_in_element}')
                         print(f'Exception equal to {ex}')
-
+            else:
+                peaks_valleys[i] = -1
     return peaks_valleys
 
 

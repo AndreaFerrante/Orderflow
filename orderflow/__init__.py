@@ -70,6 +70,7 @@ from orderflow.volume_profile_kde import (
     gaussian_kde,
     gaussian_kde_vectorized,
     gaussian_kde_numba,
+    gaussian_kde_numba_parallel,
     get_kde_high_low_price_peaks
 )
 

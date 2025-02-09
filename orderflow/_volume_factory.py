@@ -598,12 +598,11 @@ def get_tickers_in_folder(
 
     print(f"Correcting Time and adding Datetime...")
     stacked = polars.concat(stacked, how="vertical")
-    stacked = apply_offset_given_dataframe(pl_df=stacked, market=market)
     stacked = correct_time_nanoseconds(stacked)
     stacked = stacked.with_columns(Datetime = stacked['Date'] + ' ' + stacked['Time'])
     stacked = stacked.with_columns(Datetime = stacked['Datetime'].str.to_datetime())
     
-    return stacked
+    return apply_offset_given_dataframe(pl_df=stacked, market=market)
 
 
 def get_orders_in_row(trades: pd.DataFrame,

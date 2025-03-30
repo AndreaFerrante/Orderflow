@@ -87,7 +87,6 @@ def match_trades(trades, data, trades_col='EntryDateTime', data_col='DateTime', 
     except Exception as ex:
         raise Exception(f"While matching th trades, this issue occured: {ex}")
 
-
 def clean_notes(notes: pl.Series, indexes: pl.Series):
     try:
 

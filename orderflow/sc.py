@@ -1,4 +1,5 @@
 import os
+import ast
 import time
 import polars as pl
 
@@ -86,6 +87,7 @@ def match_trades(trades, data, trades_col='EntryDateTime', data_col='DateTime', 
     except Exception as ex:
         raise Exception(f"While matching th trades, this issue occured: {ex}")
 
+
 def clean_notes(notes: pl.Series, indexes: pl.Series):
     try:
 
@@ -94,14 +96,24 @@ def clean_notes(notes: pl.Series, indexes: pl.Series):
         for note, index in zip(notes, indexes):
 
             single_notes = note.split(';')
-            header       = list()
-            values       = list()
+            header = list()
+            values = list()
 
             for single_note in single_notes:
+
                 if single_note != ' ':
+
                     single_note = str(single_note).strip()
-                    header.append(str(single_note.split(':')[0]).strip())
-                    values.append(str(single_note.split(':')[1]).strip())
+                    col_value = str(single_note.split(':')[0]).strip()
+
+                    try:
+                        param_value = ast.literal_eval(str(single_note.split(':')[1]).strip())
+                    except Exception as ex:
+                        param_value = str(single_note.split(':')[1]).strip()
+
+                    # Fill in the header and its associated value ...
+                    header.append(col_value)
+                    values.append(param_value)
 
             data.append(pl.DataFrame({x: y for x, y in zip(header, values)}))
 

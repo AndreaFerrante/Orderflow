@@ -1,75 +1,41 @@
-'''
-Inside this file we collect some statistic over the data that we are interested to.
-In this file we collect all the analysis like if they were pure Python functions.
-'''
-
-
-import numpy as np
 import polars as pl
-import matplotlib.pyplot as plt
-from datetime import datetime, time
-from Orderflow.orderflow.paths import get_current_os
-from Orderflow.orderflow._volume_factory import get_tickers_in_folder
 
+def is_skewed(series: pl.Series, threshold: float = 0.5) -> bool:
 
-ticker = get_tickers_in_folder(ticker         = "ZN",
-                               future_letters = ['M'],
-                               year           = 24,
-                               market         = "CBOT",
-                               path           = get_current_os())
+    numeric_dtypes = {
+        pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+        pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+        pl.Float32, pl.Float64
+    }
 
+    if series.dtype not in numeric_dtypes:
+        raise ValueError("The input series must be numeric.")
 
-ticker_gb = (ticker.
-             group_by(['Hour']).
-             agg([pl.col('Volume').sum().alias('VolSum'),
-                  pl.col('Volume').max().alias('VolMax')]).
-             sort(['VolSum'], descending=True))
-ticker_gb
+    clean_series = series.drop_nulls()
+    if len(clean_series) == 0:
+        raise ValueError("The input series is empty after dropping missing values.")
 
+    # Calculate skewness using the built-in Polars method Andrea !
+    skew_val = clean_series.skew()
 
-pre_market  = ticker.filter((pl.col("Datetime").dt.time() > time(7, 30, 00)) &
-                            (pl.col("Datetime").dt.time() < time(8, 30, 00)))
-post_market = ticker.filter((pl.col("Datetime").dt.time() >  time(8, 30, 00)) &
-                            (pl.col("Datetime").dt.time() < time(10, 30, 00)))
+    return abs(skew_val) > threshold
 
-pre_market_gb  = (pre_market.
-                  group_by(['Date']).
-                  agg([pl.col('Volume').sum().alias('VolSumPre'),
-                       pl.col('Price').max().alias('PriceMaxPre'),
-                       pl.col('Price').min().alias('PriceMinPre')])).sort('Date')
-pre_market_gb  = pre_market_gb.with_columns(PrePriceDelta     = pre_market_gb['PriceMaxPre'] - pre_market_gb['PriceMinPre'])
-pre_market_gb  = pre_market_gb.with_columns(VolPricePreRatio  = (pre_market_gb['PrePriceDelta'] / pre_market_gb['VolSumPre']) * 1_000_000)
+def get_kurtosis(series: pl.Series):
 
-post_market_gb = (post_market.
-                  group_by(['Date']).
-                  agg([pl.col('Volume').sum().alias('VolSumPost'),
-                       pl.col('Price').max().alias('PriceMaxPost'),
-                       pl.col('Price').min().alias('PriceMinPost')])).sort('Date')
-post_market_gb = post_market_gb.with_columns(PostPriceDelta    = post_market_gb['PriceMaxPost'] - post_market_gb['PriceMinPost'])
-post_market_gb = post_market_gb.with_columns(VolPricePostRatio = (post_market_gb['PostPriceDelta'] / post_market_gb['VolSumPost']) * 1_000_000)
+    numeric_dtypes = {
+        pl.Int8, pl.Int16, pl.Int32, pl.Int64,
+        pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+        pl.Float32, pl.Float64
+    }
 
-merged = pre_market_gb.join(
-    post_market_gb,
-    how = 'left',
-    on  = 'Date'
-).drop_nulls()
+    if series.dtype not in numeric_dtypes:
+        raise ValueError("The input series must be numeric.")
 
-##############################################################################
-np.corrcoef(merged['VolPricePreRatio'], merged['VolPricePostRatio'])
-##############################################################################
+    clean_series = series.drop_nulls()
+    if len(clean_series) == 0:
+        raise ValueError("The input series is empty after dropping missing values.")
 
+    # Calculate skewness using the built-in Polars method Andrea !
+    kurtosis_val = clean_series.kurtosis()
 
-# print_med_big     = ticker.filter( pl.col('Volume') >= 1000 )
-# print_med_big_ask = print_med_big.filter( pl.col("TradeType") == 2 )
-# print_med_big_bid = print_med_big.filter( pl.col("TradeType") == 1 )
-# print_med_big.shape
-#
-# plt.plot(ticker['Datetime'], ticker['Price'], zorder=0)
-# plt.scatter(print_med_big_ask['Datetime'], print_med_big_ask['Price'], zorder=1, s=50, edgecolor='black', color='lime')
-# plt.scatter(print_med_big_bid['Datetime'], print_med_big_bid['Price'], zorder=1, s=50, edgecolor='black', color='red')
-
-
-
-
-
-
+    return kurtosis_val

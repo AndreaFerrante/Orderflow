@@ -1,3 +1,9 @@
+from orderflow.sc import (
+    read_and_clean_trades,
+    match_trades,
+    clean_notes
+)
+
 from orderflow.ohlc import (
     get_third_friday_three_months_ago,
     trim_df_columns_polars,

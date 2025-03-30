@@ -87,13 +87,13 @@ def match_trades(trades, data, trades_col='EntryDateTime', data_col='DateTime', 
     except Exception as ex:
         raise Exception(f"While matching th trades, this issue occured: {ex}")
 
-def clean_notes(notes: pl.Series, indexes: pl.Series):
+def clean_notes(notes: pl.Series, indexes: pl.Series, target:pl.Series):
 
     try:
 
-        data, lines = list(), list()
+        data, lines, labels = list(), list(), list()
 
-        for note, index in zip(notes, indexes):
+        for note, index, label in zip(notes, indexes, target):
 
             single_notes = note.split(';')
             header       = list()
@@ -116,12 +116,15 @@ def clean_notes(notes: pl.Series, indexes: pl.Series):
                     values.append(param_value)
 
             lines.append(index)
+            labels.append(label)
             data.append(pl.DataFrame({x: y for x, y in zip(header, values)}))
 
-        all_data  = pl.concat(data)
-        all_lines = pl.DataFrame({'Index': lines})
+        all_data   = pl.concat(data)
+        all_labels = pl.DataFrame({'Labels': labels})
+        all_labels = all_labels.with_columns(pl.when(pl.col('Labels') > 0).then(1).otherwise(0).alias('Target'))
+        all_lines  = pl.DataFrame({'Index': lines})
 
-        return pl.concat([all_data, all_lines], how='horizontal')
+        return pl.concat([all_data, all_lines, all_labels], how='horizontal')
 
     except Exception as ex:
         raise Exception(f"While reading the data we saw this exception: {ex}")

@@ -1,29 +1,13 @@
-"""
-orderflow_core.py — minimal, fast core (Pure Polars)
-
-Public API:
-    load_tick_data
-    aggregate_auctions
-    identify_valid_blocks
-    compute_forward_outcomes
-
-Notes
------
-• Segmentation choices: 'quote_any' | 'quote_both' | 'mid_change'
-• Imbalance choices: 'ratio' (piecewise buy/sell) | 'bounded' ((b-s)/(b+s))
-• Block detection is O(n) using streak segmentation + prefix sums.
-"""
-from __future__ import annotations
-
 from typing import Literal, Optional
 import polars as pl
 
-# Defaults (override per call as needed)
+
 N_CONSECUTIVE_DEFAULT: int = 3
 VOLUME_THRESHOLD_DEFAULT: int = 20
-BUY_CODE_DEFAULT: int = 1
-SELL_CODE_DEFAULT: int = 2
+BUY_CODE_DEFAULT: int = 2
+SELL_CODE_DEFAULT: int = 1
 EPS_DEFAULT: float = 1e-6
+
 
 __all__ = [
     "load_tick_data",
@@ -36,20 +20,22 @@ __all__ = [
     "SELL_CODE_DEFAULT",
 ]
 
-# -----------------------------------------------------------------------------
-# I/O
-# -----------------------------------------------------------------------------
 
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# Use get_tickers_in_folder function
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 def load_tick_data(path: str, separator: str = ";", ensure_types: bool = True) -> pl.DataFrame:
-    """Load L2 ticks and build a 'timestamp' column. Returns a DataFrame sorted by time.
 
+    """
+    Load L2 ticks and build a 'timestamp' column. Returns a DataFrame sorted by time.
     Required columns: Date, Time, BidPrice, AskPrice, Volume, TradeType
     """
-    df = pl.read_csv(path, separator=separator)
-    req = ["Date", "Time", "BidPrice", "AskPrice", "Volume", "TradeType"]
-    missing = [c for c in req if c not in df.columns]
+
+    df       = pl.read_csv(path, separator=separator)
+    required = {"Date", "Time", "BidPrice", "AskPrice", "Volume", "TradeType"}
+    missing  = required - set(df.columns)
     if missing:
-        raise ValueError(f"Missing required columns: {missing}")
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
 
     if ensure_types:
         df = df.with_columns([
@@ -62,18 +48,14 @@ def load_tick_data(path: str, separator: str = ";", ensure_types: bool = True) -
     df = df.with_columns(
         (pl.col("Date") + pl.lit(" ") + pl.col("Time"))
         .str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S%.f")
-        .alias("timestamp")
+        .alias("Datetime")
     )
 
-    return df.sort("timestamp")
+    return df.sort("Datetime")
 
-# -----------------------------------------------------------------------------
-# Auction aggregation
-# -----------------------------------------------------------------------------
 
 def aggregate_auctions(
-    df: pl.DataFrame,
-    *,
+    df: pl.DataFrame = None,
     buy_code: int = BUY_CODE_DEFAULT,
     sell_code: int = SELL_CODE_DEFAULT,
     eps: float = EPS_DEFAULT,
@@ -81,44 +63,59 @@ def aggregate_auctions(
     segmentation: Literal["quote_any", "quote_both", "mid_change"] = "quote_any",
     time_cap_ms: Optional[int] = None,
 ) -> pl.DataFrame:
-    """Segment rows into auctions (stable quote regime) and aggregate per-auction stats."""
-    bid, ask = pl.col("BidPrice"), pl.col("AskPrice")
+    
+    """
+    Segment rows into auctions (stable quote regime) and aggregate per-auction stats.
+    """
+    
+    if df is None:
+        raise Exception("Pass a dataframe parameter to the function in Polars DataFrame format.")
+    
+    bid, ask = df["BidPrice"], df["AskPrice"]
 
-    if segmentation == "quote_any":
-        change = (bid != bid.shift(1)) | (ask != ask.shift(1))
-    elif segmentation == "quote_both":
-        change = (bid != bid.shift(1)) & (ask != ask.shift(1))
-    elif segmentation == "mid_change":
-        change = ((bid + ask) / 2.0) != ((bid + ask) / 2.0).shift(1)
-    else:
-        raise ValueError("Unknown segmentation")
+    match segmentation:
+        case "quote_any":
+            change = (bid != bid.shift(1)) | (ask != ask.shift(1)) # Either bid OR ask price changed from previous tick
+        case "quote_both":
+            change = (bid != bid.shift(1)) & (ask != ask.shift(1)) # Both bid AND ask prices changed from previous tick
+        case "mid_change":
+            mid_price = (bid + ask) / 2.0
+            change = mid_price != mid_price.shift(1) # Mid-point price changed from previous tick
+        case _:
+            raise ValueError(f"Unknown segmentation type: '{segmentation}'. Valid options are: 'quote_any', 'quote_both', 'mid_change'")
 
     if time_cap_ms is not None:
-        gap_ms = (
-            pl.col("timestamp").cast(pl.Int64) - pl.col("timestamp").shift(1).cast(pl.Int64)
-        ) // 1_000_000
+        gap_ms = (pl.col("Datetime").cast(pl.Int64) - pl.col("Datetime").shift(1).cast(pl.Int64)) // 1_000_000
         change = change | (gap_ms >= pl.lit(time_cap_ms))
 
-    df = df.with_columns(change.fill_null(True).cast(pl.Int64).alias("new_flag"))
-    df = df.with_columns(pl.col("new_flag").cum_sum().alias("auction_id"))
+    # Adding auction id . . .
+    df = (
+            df.
+            with_columns(change.fill_null(True).cast(pl.Int64).alias("AskBidSpread")).
+            with_columns(pl.col("AskBidSpread").cum_sum().alias("AuctionId"))
+        )
 
-    agg = df.group_by("auction_id").agg([
-        pl.col("timestamp").min().alias("start"),
-        pl.col("timestamp").max().alias("end"),
-        bid.first().alias("bid"),
-        ask.first().alias("ask"),
-        pl.len().alias("n_trades"),
-        pl.sum("Volume").alias("total_volume"),
-        pl.col("Volume").filter(pl.col("TradeType") == buy_code).sum().fill_null(0).alias("buy_volume"),
-        pl.col("Volume").filter(pl.col("TradeType") == sell_code).sum().fill_null(0).alias("sell_volume"),
-    ])
+    agg = (
+            df.
+            group_by("AuctionId").
+            agg([
+                pl.col("Datetime").min().alias("StartTime"),
+                pl.col("Datetime").max().alias("EndTime"),
+                pl.col("BidPrice").first().alias("FirstBidprice"),
+                pl.col("AskPrice").first().alias("FirstAskPrice"),
+                pl.col("BidPrice").last().alias("LastBidPrice"),
+                pl.col("AskPrice").last().alias("LastAskPrice"),
+                pl.len().alias("NumTrades"),
+                pl.sum("Volume").alias("TotalVolumeOnSpread"),
+                pl.col("Volume").filter(pl.col("TradeType") == buy_code).sum().fill_null(0).alias("BuyVolume"),
+                pl.col("Volume").filter(pl.col("TradeType") == sell_code).sum().fill_null(0).alias("SellVolume"),
+            ])
+        )
 
-    agg = agg.with_columns((pl.col("buy_volume") - pl.col("sell_volume")).alias("delta"))
+    agg = agg.with_columns((pl.col("BuyVolume") - pl.col("SellVolume")).alias("Delta"))
 
-    # ---------------------------------------------------------------------
-    # Imbalance definition
-    # ---------------------------------------------------------------------
-    # Two options controlled by `imbalance_mode`:
+
+    # Imbalance definition controlled by `imbalance_mode`:
     #
     # 1) "ratio"  (signed dominance ratio; **unbounded**)
     #    • if buy > sell:  + buy / (sell + eps)
@@ -133,32 +130,37 @@ def aggregate_auctions(
     #
     # We also provide `delta = buy - sell` as raw, unnormalized imbalance.
     # The block detector below uses only the **sign** of `imbalance`.
+    
     if imbalance_mode == "ratio":
         imbalance = (
-            pl.when(pl.col("buy_volume") > pl.col("sell_volume"))
-            .then(pl.col("buy_volume") / (pl.col("sell_volume") + pl.lit(eps)))
-            .when(pl.col("sell_volume") > pl.col("buy_volume"))
-            .then(-pl.col("sell_volume") / (pl.col("buy_volume") + pl.lit(eps)))
-            .otherwise(0.0)
+            pl.
+            when(pl.col("BuyVolume") > pl.col("SellVolume")).
+                then(pl.col("BuyVolume") / (pl.col("SellVolume") + pl.lit(eps))).
+            when(pl.col("BuyVolume") < pl.col("SellVolume")).
+                then(-pl.col("SellVolume") / (pl.col("BuyVolume") + pl.lit(eps))).
+            otherwise(0.0)
         )
-    else:  # bounded
+    else:
         imbalance = (
-            (pl.col("buy_volume") - pl.col("sell_volume"))
-            / (pl.col("buy_volume") + pl.col("sell_volume") + pl.lit(eps))
+            (pl.col("BuyVolume") - pl.col("SellVolume")) / (pl.col("BuyVolume") + pl.col("SellVolume") + pl.lit(eps))
         )
 
     label = (
-        pl.when((pl.col("buy_volume") > 0) & (pl.col("sell_volume") == 0)).then(pl.lit("buy_only"))
-        .when((pl.col("sell_volume") > 0) & (pl.col("buy_volume") == 0)).then(pl.lit("sell_only"))
-        .when((pl.col("sell_volume") > 0) & (pl.col("buy_volume") > 0)).then(pl.lit("both"))
-        .otherwise(pl.lit("none"))
+        pl.
+            when((pl.col("BuyVolume") > 0) & (pl.col("SellVolume") == 0)).
+                then(pl.lit("buy_only")).
+            when((pl.col("SellVolume") > 0) & (pl.col("BuyVolume") == 0)).
+                then(pl.lit("sell_only")).
+            when((pl.col("SellVolume") > 0) & (pl.col("BuyVolume") > 0)).
+                then(pl.lit("both")).
+        otherwise(pl.lit("none"))
     )
+    
+    agg = agg.with_columns([imbalance.alias("imbalance"), label.alias("label")])
+    agg = agg.sort(['StartTime'], descending=False)
 
-    return agg.with_columns([imbalance.alias("imbalance"), label.alias("label")])
+    return agg
 
-# -----------------------------------------------------------------------------
-# O(n) block detection (no list slicing/exploding)
-# -----------------------------------------------------------------------------
 
 def identify_valid_blocks(
     agg: pl.DataFrame,
@@ -243,9 +245,6 @@ def identify_valid_blocks(
         ]).with_row_index("block_id").select(["block_id", "auction_ids", "start", "end", "total_volume", "imbalance"]) 
     )
 
-# -----------------------------------------------------------------------------
-# Forward outcomes (entry/exit prices & returns)
-# -----------------------------------------------------------------------------
 
 def compute_forward_outcomes(
     df_ticks: pl.DataFrame,

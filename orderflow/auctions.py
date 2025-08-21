@@ -241,59 +241,71 @@ def identify_valid_blocks(
     )
 
     if not return_ids_list:
-        return spans.with_row_index("block_id")
+        return spans.with_row_index("BlockId")
 
     # Optional: materialize full auction id list per block
-    id_map = base.select(["StreakId", "RowIdx", pl.col("auction_id").alias("aid")])
+    id_map = base.select(["StreakId", "RowIdx", "AuctionId"])
     ranges = (
         ends.join(starts, left_on=["StreakId", "StartRowIdx"], right_on=["StreakId", "RowIdx"], how="inner")
-            .with_columns(pl.int_ranges(pl.col("StartRowIdx"), pl.col("RowIdx") + 1).alias("row_range"))
+            .with_columns(pl.int_ranges(pl.col("StartRowIdx"), pl.col("RowIdx") + 1).alias("RowRange"))
     )
-    exploded = ranges.explode("row_range").join(id_map, left_on=["StreakId", "row_range"], right_on=["StreakId", "RowIdx"], how="inner")
+    exploded = ranges.explode("RowRange").join(id_map, left_on=["StreakId", "RowRange"], right_on=["StreakId", "RowIdx"], how="inner")
 
     return (
-        exploded.group_by(["StreakId", "RowIdx"]).agg([
-            pl.col("aid").alias("auction_ids"),
-            pl.first("start").alias("start"),
-            pl.first("end").alias("end"),
-            pl.first("block_volume").alias("total_volume"),
-            pl.first("block_imbalance").alias("imbalance"),
-        ]).with_row_index("block_id").select(["block_id", "auction_ids", "start", "end", "total_volume", "imbalance"]) 
+        exploded.
+        group_by(["StreakId", 
+                  "RowIdx"]).
+        agg([
+            pl.col("AuctionId"),
+            pl.first("StartTime"),
+            pl.first("EndTime"),
+            pl.first("TotalBlockVolume"),
+            pl.first("TotalBlockImbalance"),
+        ]).
+        with_row_index("BlockId").
+        select(["BlockId", 
+                "AuctionId", 
+                "StartTime", 
+                "EndTime", 
+                "TotalBlockVolume", 
+                "TotalBlockImbalance"]) 
     )
 
 
 def compute_forward_outcomes(
     df_ticks: pl.DataFrame,
     blocks: pl.DataFrame,
-    *,
     minutes_ahead: int = 5,
     price_source: Literal["mid","trade","bid","ask"] = "mid",
 ) -> pl.DataFrame:
-    """Per block: get price at entry=end, exit=end+minutes, and simple return.
+    
+    """
+    Per block: get price at entry=end, exit=end+minutes, and simple return.
 
     NOTE: Uses **left=blocks .join_asof(right=price)** so that for each target
     timestamp (entry/exit) we pick the last price with `timestamp <= target`.
-    This avoids the nulls you observed when the target lies **after** the last
+    This avoids the nulls observed when the target lies **after** the last
     tick in the window.
     """
+    
     # Build price series (sorted)
     if price_source == "mid":
         price = df_ticks.select([
-            pl.col("timestamp"),
+            pl.col("Datetime"),
             ((pl.col("BidPrice") + pl.col("AskPrice")) / 2).alias("price"),
         ])
     elif price_source == "trade" and "Price" in df_ticks.columns:
-        price = df_ticks.select([pl.col("timestamp"), pl.col("Price").alias("price")])
+        price = df_ticks.select([pl.col("Datetime"), pl.col("Price").alias("price")])
     elif price_source == "bid":
-        price = df_ticks.select([pl.col("timestamp"), pl.col("BidPrice").alias("price")])
+        price = df_ticks.select([pl.col("Datetime"), pl.col("BidPrice").alias("price")])
     elif price_source == "ask":
-        price = df_ticks.select([pl.col("timestamp"), pl.col("AskPrice").alias("price")])
+        price = df_ticks.select([pl.col("Datetime"), pl.col("AskPrice").alias("price")])
     else:
         price = df_ticks.select([
-            pl.col("timestamp"),
+            pl.col("Datetime"),
             ((pl.col("BidPrice") + pl.col("AskPrice")) / 2).alias("price"),
         ])
-    price = price.sort("timestamp")
+    price = price.sort("Datetime")
 
     # Entry/exit timestamps per block
     b = (
@@ -309,7 +321,7 @@ def compute_forward_outcomes(
     # For each entry_ts, take last price with timestamp <= entry_ts
     entry = (
         b.select(["block_id", "entry_ts"]).sort("entry_ts")
-         .join_asof(price, left_on="entry_ts", right_on="timestamp", strategy="backward")
+         .join_asof(price, left_on="entry_ts", right_on="Datetime", strategy="backward")
          .rename({"price": "entry_price"})
          .select(["block_id", "entry_ts", "entry_price"])
     )
@@ -317,7 +329,7 @@ def compute_forward_outcomes(
     # For each exit_ts, take last price with timestamp <= exit_ts
     exit_ = (
         b.select(["block_id", "exit_ts"]).sort("exit_ts")
-         .join_asof(price, left_on="exit_ts", right_on="timestamp", strategy="backward")
+         .join_asof(price, left_on="exit_ts", right_on="Datetime", strategy="backward")
          .rename({"price": "exit_price"})
          .select(["block_id", "exit_ts", "exit_price"])
     )

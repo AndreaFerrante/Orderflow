@@ -70,6 +70,7 @@ def aggregate_auctions(
     
     if df is None:
         raise Exception("Pass a dataframe parameter to the function in Polars DataFrame format.")
+        return
     
     bid, ask = df["BidPrice"], df["AskPrice"]
 
@@ -156,71 +157,86 @@ def aggregate_auctions(
         otherwise(pl.lit("none"))
     )
     
-    agg = agg.with_columns([imbalance.alias("imbalance"), label.alias("label")])
+    agg = agg.with_columns([imbalance.alias("Imbalance"), label.alias("Label")])
     agg = agg.sort(['StartTime'], descending=False)
 
     return agg
 
 
 def identify_valid_blocks(
-    agg: pl.DataFrame,
-    *,
+    agg: pl.DataFrame = None,
     n_consecutive: int = N_CONSECUTIVE_DEFAULT,
     vol_thresh: int = VOLUME_THRESHOLD_DEFAULT,
     require_nonzero_imbalance: bool = True,
     return_ids_list: bool = False,
 ) -> pl.DataFrame:
-    """Find runs of exactly n_consecutive auctions with same imbalance sign and volume/label filters."""
+    
+    """
+    Find runs of exactly n_consecutive auctions with same imbalance sign and volume/label filters.
+    """
+    
+    if agg is None:
+        raise Exception(f"Pass as paramter to the function e not None Polars DataFrame.")
+        return
+
     base = (
         agg
-        .filter((pl.col("label") == "both") & (pl.col("total_volume") > vol_thresh))
-        .sort("auction_id")
-        .with_row_index("row_idx")
+        #.filter((pl.col("Label") == "both") & (pl.col("TotalVolumeOnSpread") > vol_thresh))
+        .filter(pl.col("TotalVolumeOnSpread") > vol_thresh)
+        .sort("AuctionId")
+        .with_row_index("RowIdx")
         .with_columns([
-            pl.when(pl.col("imbalance") > 0).then(1).when(pl.col("imbalance") < 0).then(-1).otherwise(0).alias("imb_sign")
+            pl.when(pl.col("Imbalance") > 0).
+                then(1).
+            when(pl.col("Imbalance") < 0).
+                then(-1).
+            otherwise(0).
+            alias("ImbalanceDirection")
         ])
     )
 
     if require_nonzero_imbalance:
-        base = base.filter(pl.col("imb_sign") != 0)
+        base = base.filter(pl.col("ImbalanceDirection") != 0)
 
-    # Use the sign of the chosen `imbalance` to classify side for runs
+    # Use the sign of the chosen 'Imbalance' to classify side for runs
     base = base.with_columns(
-        (((pl.col("auction_id") - pl.col("auction_id").shift(1)) != 1) | (pl.col("imb_sign") != pl.col("imb_sign").shift(1)))
-        .fill_null(True).cast(pl.Int32).alias("streak_break")
+        (((pl.col("AuctionId") - pl.col("AuctionId").shift(1)) != 1) | (pl.col("ImbalanceDirection") != pl.col("ImbalanceDirection").shift(1))).
+            fill_null(True).
+            cast(pl.Int32).
+            alias("StreakBreak")
     )
-    base = base.with_columns(pl.col("streak_break").cum_sum().alias("streak_id"))
-
+    
+    base = base.with_columns(pl.col("StreakBreak").cum_sum().alias("StreakId"))
     base = base.with_columns([
-        (pl.col("row_idx") - pl.col("row_idx").first().over("streak_id")).alias("pos"),
-        pl.col("total_volume").cum_sum().over("streak_id").alias("cum_vol"),
-        pl.col("imbalance").cum_sum().over("streak_id").alias("cum_imb"),
+        (pl.col("RowIdx") - pl.col("RowIdx").first().over("StreakId")).alias("Position"),
+         pl.col("TotalVolumeOnSpread").cum_sum().over("StreakId").alias("StreakCumVol"),
+         pl.col("Imbalance").cum_sum().over("StreakId").alias("StreakCumImb"),
     ])
 
-    n = n_consecutive
     ends = (
-        base.filter(pl.col("pos") >= (n - 1))
+        base
+        .filter(pl.col("Position") >= (n_consecutive - 1))
         .with_columns([
-            (pl.col("row_idx") - (n - 1)).alias("start_row_idx"),
-            pl.when(pl.col("cum_vol").shift(n).over("streak_id").is_null())
-              .then(pl.col("cum_vol"))
-              .otherwise(pl.col("cum_vol") - pl.col("cum_vol").shift(n).over("streak_id")).alias("block_volume"),
-            pl.when(pl.col("cum_imb").shift(n).over("streak_id").is_null())
-              .then(pl.col("cum_imb")/pl.lit(n))
-              .otherwise((pl.col("cum_imb") - pl.col("cum_imb").shift(n).over("streak_id"))/pl.lit(n)).alias("block_imbalance"),
+            (pl.col("RowIdx") - (n_consecutive - 1)).alias("StartRowIdx"),
+            pl.when(pl.col("StreakCumVol").shift(n_consecutive).over("StreakId").is_null())
+              .then(pl.col("StreakCumVol"))
+              .otherwise(pl.col("StreakCumVol") - pl.col("StreakCumVol").shift(n_consecutive).over("StreakId")).alias("BlockVolume"),
+            pl.when(pl.col("StreakCumImb").shift(n_consecutive).over("StreakId").is_null())
+              .then(pl.col("StreakCumImb") / pl.lit(n_consecutive))
+              .otherwise((pl.col("StreakCumImb") - pl.col("StreakCumImb").shift(n_consecutive).over("StreakId")) / pl.lit(n_consecutive)).alias("BlockImbalance"),
         ])
     )
 
-    starts = base.select(["streak_id", "row_idx", pl.col("auction_id").alias("start_id"), pl.col("start").alias("start_ts")])
+    starts = base.select(["StreakId", "RowIdx", pl.col("AuctionId").alias("StartTimeStartId"), "StartTime"])
     spans = (
-        ends.join(starts, left_on=["streak_id", "start_row_idx"], right_on=["streak_id", "row_idx"], how="inner")
+        ends.join(starts, left_on=["StreakId", "StartRowIdx"], right_on=["StreakId", "RowIdx"], how="inner")
             .select([
-                pl.col("start_id"),
-                pl.col("auction_id").alias("end_id"),
-                pl.col("start_ts").alias("start"),
-                pl.col("end").alias("end"),
-                pl.col("block_volume").alias("total_volume"),
-                pl.col("block_imbalance").alias("imbalance"),
+                pl.col("StartTimeStartId"),
+                pl.col("AuctionId").alias("AuctionIdEndId"),
+                pl.col("StartTime"),
+                pl.col("EndTime"),
+                pl.col("BlockVolume").alias("TotalBlockVolume"),
+                pl.col("BlockImbalance").alias("TotalBlockImbalance"),
             ])
     )
 
@@ -228,15 +244,15 @@ def identify_valid_blocks(
         return spans.with_row_index("block_id")
 
     # Optional: materialize full auction id list per block
-    id_map = base.select(["streak_id", "row_idx", pl.col("auction_id").alias("aid")])
+    id_map = base.select(["StreakId", "RowIdx", pl.col("auction_id").alias("aid")])
     ranges = (
-        ends.join(starts, left_on=["streak_id", "start_row_idx"], right_on=["streak_id", "row_idx"], how="inner")
-            .with_columns(pl.int_ranges(pl.col("start_row_idx"), pl.col("row_idx") + 1).alias("row_range"))
+        ends.join(starts, left_on=["StreakId", "StartRowIdx"], right_on=["StreakId", "RowIdx"], how="inner")
+            .with_columns(pl.int_ranges(pl.col("StartRowIdx"), pl.col("RowIdx") + 1).alias("row_range"))
     )
-    exploded = ranges.explode("row_range").join(id_map, left_on=["streak_id", "row_range"], right_on=["streak_id", "row_idx"], how="inner")
+    exploded = ranges.explode("row_range").join(id_map, left_on=["StreakId", "row_range"], right_on=["StreakId", "RowIdx"], how="inner")
 
     return (
-        exploded.group_by(["streak_id", "row_idx"]).agg([
+        exploded.group_by(["StreakId", "RowIdx"]).agg([
             pl.col("aid").alias("auction_ids"),
             pl.first("start").alias("start"),
             pl.first("end").alias("end"),

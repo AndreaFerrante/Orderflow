@@ -163,7 +163,7 @@ def aggregate_auctions(
     return agg
 
 
-def identify_valid_blocks(
+def get_valid_blocks(
     agg: pl.DataFrame = None,
     n_consecutive: int = N_CONSECUTIVE_DEFAULT,
     vol_thresh: int = VOLUME_THRESHOLD_DEFAULT,
@@ -273,8 +273,8 @@ def identify_valid_blocks(
 
 
 def compute_forward_outcomes(
-    df_ticks: pl.DataFrame,
-    blocks: pl.DataFrame,
+    df_ticks: pl.DataFrame = None,
+    blocks: pl.DataFrame = None,
     minutes_ahead: int = 5,
     price_source: Literal["mid","trade","bid","ask"] = "mid",
 ) -> pl.DataFrame:
@@ -288,64 +288,68 @@ def compute_forward_outcomes(
     tick in the window.
     """
     
+    if df_ticks is None or blocks is None:
+        raise Exception("Parameters 'df_ticks' and 'blocks' must not be None.")
+        return
+    
+    if "Price" not in df_ticks.columns:
+        raise Exception("Parameter called df_ticks must have a column named 'Price'.")
+        return
+    
     # Build price series (sorted)
-    if price_source == "mid":
-        price = df_ticks.select([
-            pl.col("Datetime"),
-            ((pl.col("BidPrice") + pl.col("AskPrice")) / 2).alias("price"),
-        ])
-    elif price_source == "trade" and "Price" in df_ticks.columns:
-        price = df_ticks.select([pl.col("Datetime"), pl.col("Price").alias("price")])
-    elif price_source == "bid":
-        price = df_ticks.select([pl.col("Datetime"), pl.col("BidPrice").alias("price")])
-    elif price_source == "ask":
-        price = df_ticks.select([pl.col("Datetime"), pl.col("AskPrice").alias("price")])
-    else:
-        price = df_ticks.select([
-            pl.col("Datetime"),
-            ((pl.col("BidPrice") + pl.col("AskPrice")) / 2).alias("price"),
-        ])
+    match price_source:
+        case "mid":
+            price = df_ticks.select([pl.col("Datetime"), ((pl.col("BidPrice") + pl.col("AskPrice")) / 2).alias("Price")])
+        case "trade":
+            price = df_ticks.select(["Datetime", "Price"])
+        case "bid":
+            price = df_ticks.select(["Datetime", pl.col("BidPrice").alias("Price")])
+        case "ask":
+            price = df_ticks.select(["Datetime", pl.col("AskPrice").alias("Price")])
+        case _:
+            price = df_ticks.select(["Datetime", ((pl.col("BidPrice") + pl.col("AskPrice")) / 2).alias("Price")])
+    
+    #-----------------------------
     price = price.sort("Datetime")
-
+    #-----------------------------
+    
     # Entry/exit timestamps per block
     b = (
-        blocks
-        .with_columns([
-            pl.col("end").alias("entry_ts"),
-            (pl.col("end") + pl.duration(minutes=minutes_ahead)).alias("exit_ts"),
-        ])
-        .select(["block_id", "start_id", "end_id", "entry_ts", "exit_ts"])  # lean
-        .sort("entry_ts")
-    )
+            blocks
+            .with_columns([
+                pl.col("EndTime").alias("entry_ts"),
+               (pl.col("EndTime") + pl.duration(minutes=minutes_ahead)).alias("exit_ts"),
+            ])
+            .select(["BlockId", "StartTimeStartId", "end_id", "entry_ts", "exit_ts"])
+            .sort("entry_ts")
+        )
 
     # For each entry_ts, take last price with timestamp <= entry_ts
     entry = (
-        b.select(["block_id", "entry_ts"]).sort("entry_ts")
-         .join_asof(price, left_on="entry_ts", right_on="Datetime", strategy="backward")
-         .rename({"price": "entry_price"})
-         .select(["block_id", "entry_ts", "entry_price"])
-    )
+                b
+                .select(["BlockId", "entry_ts"])
+                .join_asof(price, left_on="entry_ts", right_on="Datetime", strategy="backward")
+                .rename({"price": "entry_price"})
+                .select(["BlockId", "entry_ts", "entry_price"])
+            )
 
     # For each exit_ts, take last price with timestamp <= exit_ts
     exit_ = (
-        b.select(["block_id", "exit_ts"]).sort("exit_ts")
-         .join_asof(price, left_on="exit_ts", right_on="Datetime", strategy="backward")
-         .rename({"price": "exit_price"})
-         .select(["block_id", "exit_ts", "exit_price"])
-    )
+                b.select(["BlockId", "exit_ts"]).sort("exit_ts")
+                .join_asof(price, left_on="exit_ts", right_on="Datetime", strategy="backward")
+                .rename({"price": "exit_price"})
+                .select(["BlockId", "exit_ts", "exit_price"])
+            )
 
-    # Combine and compute simple return
+    # Combine and compute simple returns
     res = (
-        b.join(entry, on=["block_id", "entry_ts"], how="left")
-         .join(exit_, on=["block_id", "exit_ts"], how="left")
-         .with_columns(
-             ((pl.col("exit_price") - pl.col("entry_price")) / pl.col("entry_price")).alias("simple_return")
-         )
-         .select([
-             "block_id", "start_id", "end_id",
-             "entry_ts", "exit_ts",
-             "entry_price", "exit_price", "simple_return",
-         ])
-    )
+                b
+                .join(entry, on=["BlockId", "entry_ts"], how="left")
+                .join(exit_, on=["BlockId", "exit_ts"], how="left")
+                .with_columns(((pl.col("exit_price") - pl.col("entry_price")) / pl.col("entry_price")).alias("simple_return"))
+                .select([
+                    "BlockId", "start_id", "end_id", "entry_ts", "exit_ts", "entry_price", "exit_price", "simple_return",
+                ])
+            )
 
     return res

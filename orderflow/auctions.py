@@ -1,6 +1,6 @@
-from typing import Literal, Optional, Sequence
-import polars.selectors as cs
 import polars as pl
+import polars.selectors as cs
+from typing import Literal, Optional, Sequence
 
 
 N_CONSECUTIVE_DEFAULT: int = 3
@@ -8,18 +8,6 @@ VOLUME_THRESHOLD_DEFAULT: int = 1000  # This is the total volume on a single spr
 BUY_CODE_DEFAULT: int = 2
 SELL_CODE_DEFAULT: int = 1
 EPS_DEFAULT: float = 1e-6
-
-
-__all__ = [
-    "load_tick_data",
-    "aggregate_auctions",
-    "identify_valid_blocks",
-    "compute_forward_outcomes",
-    "N_CONSECUTIVE_DEFAULT",
-    "VOLUME_THRESHOLD_DEFAULT",
-    "BUY_CODE_DEFAULT",
-    "SELL_CODE_DEFAULT",
-]
 
 
 def load_tick_data(path: str, separator: str = ";", ensure_types: bool = True) -> pl.DataFrame:
@@ -391,7 +379,7 @@ def compute_forward_outcomes_from_timestamps(
 
     by = list(by) if by else []
 
-    # Build price series (Datetime, Price) depending on source ----
+    # Build price series (Datetime, Price) depending on source
     if price_source == "mid":
         
         required = {"Datetime", "BidPrice", "AskPrice"}

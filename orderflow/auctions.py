@@ -1,9 +1,10 @@
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
+import polars.selectors as cs
 import polars as pl
 
 
 N_CONSECUTIVE_DEFAULT: int = 3
-VOLUME_THRESHOLD_DEFAULT: int = 20
+VOLUME_THRESHOLD_DEFAULT: int = 1000  # This is the total volume on a single spread !
 BUY_CODE_DEFAULT: int = 2
 SELL_CODE_DEFAULT: int = 1
 EPS_DEFAULT: float = 1e-6
@@ -21,9 +22,6 @@ __all__ = [
 ]
 
 
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# Use get_tickers_in_folder function
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 def load_tick_data(path: str, separator: str = ";", ensure_types: bool = True) -> pl.DataFrame:
 
     """
@@ -227,12 +225,12 @@ def get_valid_blocks(
         ])
     )
 
-    starts = base.select(["StreakId", "RowIdx", pl.col("AuctionId").alias("StartTimeStartId"), "StartTime"])
+    starts = base.select(["StreakId", "RowIdx", pl.col("AuctionId").alias("AuctionStartId"), "StartTime"])
     spans = (
         ends.join(starts, left_on=["StreakId", "StartRowIdx"], right_on=["StreakId", "RowIdx"], how="inner")
             .select([
-                pl.col("StartTimeStartId"),
-                pl.col("AuctionId").alias("AuctionIdEndId"),
+                pl.col("AuctionStartId"),
+                pl.col("AuctionId").alias("AuctionEndId"),
                 pl.col("StartTime"),
                 pl.col("EndTime"),
                 pl.col("BlockVolume").alias("TotalBlockVolume"),
@@ -275,8 +273,8 @@ def get_valid_blocks(
 def compute_forward_outcomes(
     df_ticks: pl.DataFrame = None,
     blocks: pl.DataFrame = None,
-    minutes_ahead: int = 5,
-    price_source: Literal["mid","trade","bid","ask"] = "mid",
+    minutes_ahead: int = 15,
+    price_source: Literal["mid","trade","bid","ask"] = "trade",
 ) -> pl.DataFrame:
     
     """
@@ -317,39 +315,223 @@ def compute_forward_outcomes(
     b = (
             blocks
             .with_columns([
-                pl.col("EndTime").alias("entry_ts"),
-               (pl.col("EndTime") + pl.duration(minutes=minutes_ahead)).alias("exit_ts"),
+                pl.col("EndTime").alias("StartTime"),
+               (pl.col("EndTime") + pl.duration(minutes=minutes_ahead)).alias("EndTime"),
             ])
-            .select(["BlockId", "StartTimeStartId", "end_id", "entry_ts", "exit_ts"])
-            .sort("entry_ts")
+            .select(["BlockId", "AuctionStartId", "AuctionEndId", "StartTime", "EndTime"])
+            .sort("StartTime")
         )
 
-    # For each entry_ts, take last price with timestamp <= entry_ts
+    # For each StartTime, take last price with timestamp <= StartTime
     entry = (
                 b
-                .select(["BlockId", "entry_ts"])
-                .join_asof(price, left_on="entry_ts", right_on="Datetime", strategy="backward")
-                .rename({"price": "entry_price"})
-                .select(["BlockId", "entry_ts", "entry_price"])
+                .select(["BlockId", "StartTime"])
+                .join_asof(price, left_on="StartTime", right_on="Datetime", strategy="backward")
+                .rename({"Price": "EntryPrice"})
+                .select(["BlockId", "StartTime", "EntryPrice"])
             )
 
     # For each exit_ts, take last price with timestamp <= exit_ts
     exit_ = (
-                b.select(["BlockId", "exit_ts"]).sort("exit_ts")
-                .join_asof(price, left_on="exit_ts", right_on="Datetime", strategy="backward")
-                .rename({"price": "exit_price"})
-                .select(["BlockId", "exit_ts", "exit_price"])
+                b.select(["BlockId", "EndTime"]).sort("EndTime")
+                .join_asof(price, left_on="EndTime", right_on="Datetime", strategy="backward")
+                .rename({"Price": "ExitPrice"})
+                .select(["BlockId", "EndTime", "ExitPrice"])
             )
 
     # Combine and compute simple returns
     res = (
                 b
-                .join(entry, on=["BlockId", "entry_ts"], how="left")
-                .join(exit_, on=["BlockId", "exit_ts"], how="left")
-                .with_columns(((pl.col("exit_price") - pl.col("entry_price")) / pl.col("entry_price")).alias("simple_return"))
+                .join(entry, on=["BlockId", "StartTime"], how="left")
+                .join(exit_, on=["BlockId", "EndTime"], how="left")
+                .with_columns(((pl.col("ExitPrice") - pl.col("EntryPrice")) / pl.col("EntryPrice")).alias("SimpleReturn"))
                 .select([
-                    "BlockId", "start_id", "end_id", "entry_ts", "exit_ts", "entry_price", "exit_price", "simple_return",
+                    "BlockId", "AuctionStartId", "AuctionEndId", "StartTime", "EndTime", "EntryPrice", "ExitPrice", "SimpleReturn",
                 ])
             )
 
     return res
+
+
+def compute_forward_outcomes_from_timestamps(
+    df_ticks: pl.DataFrame = None,
+    entries: pl.DataFrame = None,
+    minutes_ahead: int = 5,
+    price_source: Literal["mid", "trade", "bid", "ask"] = "mid",
+    by: Sequence[str] | None = None,
+) -> pl.DataFrame:
+    
+    """
+    Compute forward simple returns using pure timestamps (no BlockId).
+
+    Inputs
+    ------
+    df_ticks: Polars DataFrame with at least 'Datetime' and price columns depending on `price_source`.
+              Optionally contains partition columns listed in `by` (e.g., 'Symbol').
+    entries:  Polars DataFrame providing entry timestamps:
+              - must have 'entry_ts' (Datetime) OR 'Datetime' (will be renamed to 'entry_ts').
+              - may contain the same partition columns in `by`.
+
+    Parameters
+    ----------
+    minutes_ahead: horizon in minutes for the forward exit timestamp.
+    price_source:  which price to use: 'mid', 'trade', 'bid', or 'ask'.
+    by:            optional sequence of column names to partition as-of joins
+                   (e.g., by=['Symbol']). If provided, both `df_ticks` and `entries`
+                   must contain these columns.
+
+    Returns
+    -------
+    Polars DataFrame with columns:
+      [by..., entry_id, entry_ts, exit_ts, entry_price, exit_price, simple_return]
+    """
+
+    if df_ticks is None or entries is None:
+        raise ValueError("`df_ticks` and `entries` must not be None.")
+
+    by = list(by) if by else []
+
+    # Build price series (Datetime, Price) depending on source ----
+    if price_source == "mid":
+        
+        required = {"Datetime", "BidPrice", "AskPrice"}
+        missing = required - set(df_ticks.columns)
+        
+        if missing:
+            raise ValueError(f"df_ticks missing columns for mid price: {sorted(missing)}")
+        price = df_ticks.select([
+            *by,
+            pl.col("Datetime"),
+            ((pl.col("BidPrice") + pl.col("AskPrice")) / 2).alias("Price"),
+        ])
+        
+    elif price_source == "trade":
+        required = {"Datetime", "Price"}
+        missing = required - set(df_ticks.columns)
+        if missing:
+            raise ValueError(f"df_ticks missing columns for trade price: {sorted(missing)}")
+        price = df_ticks.select([*by, "Datetime", "Price"])
+        
+    elif price_source == "bid":
+        required = {"Datetime", "BidPrice"}
+        missing = required - set(df_ticks.columns)
+        if missing:
+            raise ValueError(f"df_ticks missing columns for bid price: {sorted(missing)}")
+        price = df_ticks.select([*by, "Datetime", pl.col("BidPrice").alias("Price")])
+        
+    elif price_source == "ask":
+        required = {"Datetime", "AskPrice"}
+        missing = required - set(df_ticks.columns)
+        if missing:
+            raise ValueError(f"df_ticks missing columns for ask price: {sorted(missing)}")
+        price = df_ticks.select([*by, "Datetime", pl.col("AskPrice").alias("Price")])
+        
+    else:
+        raise ValueError(f"Unknown price_source: {price_source}")
+
+    # Sort for asof (must sort by all `by` keys then time)
+    sort_keys_price = [*by, "Datetime"]
+    price = price.sort(sort_keys_price)
+
+    # Normalize entries to have 'entry_ts' and optional partitions ----
+    if "entry_ts" not in entries.columns:
+        
+        if "Datetime" in entries.columns:
+            entries = entries.rename({"Datetime": "entry_ts"})
+        else:
+            raise ValueError("`entries` must have 'entry_ts' (Datetime) or 'Datetime'.")
+
+    # Check that partition columns exist in entries if used
+    missing_by_entries = set(by) - set(entries.columns)
+    if missing_by_entries:
+        raise ValueError(f"`entries` missing partition columns: {sorted(missing_by_entries)}")
+
+    # Add exit_ts and a unique entry_id to stabilize joins even with duplicate timestamps
+    entries_work = (
+        entries
+        .with_columns([
+            (pl.col("entry_ts") + pl.duration(minutes=minutes_ahead)).alias("exit_ts"),
+        ])
+        .with_row_index(name="entry_id")  # deterministic id in current order
+        .select([*by, "entry_id", "entry_ts", "exit_ts"])
+        .sort([*by, "entry_ts"])
+    )
+
+    # As-of join for entry (last price <= entry_ts) ----
+    entry_join = entries_work.join_asof(
+        price,
+        left_on="entry_ts",
+        right_on="Datetime",
+        by=by if by else None,
+        strategy="backward",
+    ).rename({"Price": "entry_price"}).select([*by, "entry_id", "entry_ts", "entry_price"])
+
+    # As-of join for exit (last price <= exit_ts) ----
+    exit_join = entries_work.sort([*by, "exit_ts"]).join_asof(
+        price,
+        left_on="exit_ts",
+        right_on="Datetime",
+        by=by if by else None,
+        strategy="backward",
+    ).rename({"Price": "exit_price"}).select([*by, "entry_id", "exit_ts", "exit_price"])
+
+    # Merge & compute simple return ----
+    out = (
+        entries_work
+        .join(entry_join, on=[*by, "entry_id", "entry_ts"], how="left")
+        .join(exit_join,  on=[*by, "entry_id", "exit_ts"],  how="left")
+        .with_columns(
+            pl.when(pl.col("entry_price").is_not_null() & pl.col("exit_price").is_not_null())
+              .then((pl.col("exit_price") - pl.col("entry_price")) / pl.col("entry_price"))
+              .otherwise(None)
+              .alias("simple_return")
+        )
+    )
+
+    return out.select([*by, "entry_id", "entry_ts", "exit_ts", "entry_price", "exit_price", "simple_return"])
+
+
+
+
+
+import matplotlib.pyplot as plt
+
+df            = load_tick_data(path = r'C:/tmp/ZN.txt')
+df_agg        = aggregate_auctions(df=df); # df_agg.write_excel(workbook=r'C:/tmp/ZN_agg.xlsx')
+df_agg        = df_agg.with_columns(TradeSide = pl.when(pl.col("BuyVolume") > pl.col("SellVolume")).then(pl.lit("Long")).otherwise(pl.lit("Short")))
+df_agg_blocks = get_valid_blocks(agg=df_agg); # df_agg_blocks.write_excel(workbook=r'C:/tmp/ZN_blocks.xlsx')
+df_forward    = compute_forward_outcomes(df_ticks=df, blocks=df_agg_blocks)
+df_forward    = df_forward.join(other=df_agg.select(cs.by_name('AuctionId', 'TradeSide')), how='left', left_on='AuctionEndId', right_on='AuctionId')
+df_forward    = df_forward.with_columns(SimpleReturn = pl.when(pl.col("TradeSide") == "Short").then(pl.col("SimpleReturn") * -1).otherwise(pl.col("SimpleReturn")))
+
+plt.plot(df_forward['SimpleReturn'].cum_sum())
+
+
+buy_cond   = (pl.col("BuyVolume")  >= 4000) & (pl.col("SellVolume") <= 500)
+sell_cond  = (pl.col("SellVolume") >= 4000) & (pl.col("BuyVolume")  <= 500)
+big_trades = (
+    df_agg
+    .filter(buy_cond | sell_cond)
+    .with_columns(
+        TradeSide = (
+            pl.when(buy_cond)
+              .then(pl.lit("LongTrade"))
+              .when(sell_cond)
+              .then(pl.lit("ShortTrade"))
+              .otherwise(pl.lit("Unknown"))
+        ),
+        # Optional: strength of the imbalance for ranking/significance tests
+        Imbalance = (pl.col("BuyVolume") - pl.col("SellVolume"))
+    )
+)
+
+buy  = big_trades.filter(pl.col("TradeSide") == "LongTrade")
+sell = big_trades.filter(pl.col("TradeSide") == "ShortTrade")
+# buy  = big_trades.filter(pl.col("Imbalance") >= 5000)
+# sell = big_trades.filter(pl.col("Imbalance") <= -5000)
+
+plt.plot(df['Datetime'], df['Price'], zorder=0, lw=0.5)
+plt.scatter(buy['EndTime'], buy['LastAskPrice'], zorder=1,   s=1, c='lime') #, edgecolors='black')
+plt.scatter(sell['EndTime'], sell['LastBidPrice'], zorder=1, s=1, c='red')#,  edgecolors='black')
+plt.savefig("C:/Users/IRONMAN/Desktop/entries.png", dpi=1200) 
+

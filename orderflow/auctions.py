@@ -3,8 +3,8 @@ import polars.selectors as cs
 from typing import Literal, Optional, Sequence
 
 
-N_CONSECUTIVE_DEFAULT: int = 3
-VOLUME_THRESHOLD_DEFAULT: int = 1000  # This is the total volume on a single spread !
+N_CONSECUTIVE_DEFAULT: int = 2
+VOLUME_THRESHOLD_DEFAULT: int = 100
 BUY_CODE_DEFAULT: int = 2
 SELL_CODE_DEFAULT: int = 1
 EPS_DEFAULT: float = 1e-6
@@ -333,8 +333,9 @@ def compute_forward_outcomes(
                 .join(entry, on=["BlockId", "StartTime"], how="left")
                 .join(exit_, on=["BlockId", "EndTime"], how="left")
                 .with_columns(((pl.col("ExitPrice") - pl.col("EntryPrice")) / pl.col("EntryPrice")).alias("SimpleReturn"))
+                .with_columns(((pl.col("ExitPrice") - pl.col("EntryPrice"))).alias("SimpleReturnInTicks"))
                 .select([
-                    "BlockId", "AuctionStartId", "AuctionEndId", "StartTime", "EndTime", "EntryPrice", "ExitPrice", "SimpleReturn",
+                    "BlockId", "AuctionStartId", "AuctionEndId", "StartTime", "EndTime", "EntryPrice", "ExitPrice", "SimpleReturn", "SimpleReturnInTicks"
                 ])
             )
 
@@ -342,8 +343,8 @@ def compute_forward_outcomes(
 
 
 def compute_forward_outcomes_from_timestamps(
-    df_ticks: pl.DataFrame = None,
-    entries: pl.DataFrame = None,
+    df_ticks: pl.DataFrame,
+    entries: pl.DataFrame,
     minutes_ahead: int = 5,
     price_source: Literal["mid", "trade", "bid", "ask"] = "mid",
     by: Sequence[str] | None = None,
@@ -440,7 +441,7 @@ def compute_forward_outcomes_from_timestamps(
         .with_columns([
             (pl.col("entry_ts") + pl.duration(minutes=minutes_ahead)).alias("exit_ts"),
         ])
-        .with_row_index(name="entry_id")  # deterministic id in current order
+        .with_row_index(name="entry_id")
         .select([*by, "entry_id", "entry_ts", "exit_ts"])
         .sort([*by, "entry_ts"])
     )
@@ -477,3 +478,53 @@ def compute_forward_outcomes_from_timestamps(
     )
 
     return out.select([*by, "entry_id", "entry_ts", "exit_ts", "entry_price", "exit_price", "simple_return"])
+
+
+
+
+
+
+
+
+import matplotlib.pyplot as plt
+
+df            = load_tick_data(path = r'C:/tmp/ZB.txt')
+df_agg        = aggregate_auctions(df=df); # df_agg.write_excel(workbook=r'C:/tmp/ZN_agg.xlsx')
+df_agg        = df_agg.with_columns(TradeSide = pl.when(pl.col("BuyVolume") > pl.col("SellVolume")).then(pl.lit("Long")).otherwise(pl.lit("Short")))
+df_agg_blocks = get_valid_blocks(agg=df_agg); # df_agg_blocks.write_excel(workbook=r'C:/tmp/ZN_blocks.xlsx')
+df_forward    = compute_forward_outcomes(df_ticks=df, blocks=df_agg_blocks)
+df_forward    = df_forward.join(other=df_agg.select(cs.by_name('AuctionId', 'TradeSide')), how='left', left_on='AuctionEndId', right_on='AuctionId')
+df_forward    = df_forward.with_columns(SimpleReturnInTicks = pl.when(pl.col("TradeSide") == "Short").then(pl.col("SimpleReturnInTicks") * -1).otherwise(pl.col("SimpleReturnInTicks")))
+
+plt.plot(df_forward['SimpleReturnInTicks'].cum_sum())
+
+
+buy_cond   = (pl.col("BuyVolume")  >= 4000) & (pl.col("SellVolume") <= 500)
+sell_cond  = (pl.col("SellVolume") >= 4000) & (pl.col("BuyVolume")  <= 500)
+big_trades = (
+    df_agg
+    .filter(buy_cond | sell_cond)
+    .with_columns(
+        TradeSide = (
+            pl.when(buy_cond)
+              .then(pl.lit("LongTrade"))
+              .when(sell_cond)
+              .then(pl.lit("ShortTrade"))
+              .otherwise(pl.lit("Unknown"))
+        ),
+        # Optional: strength of the imbalance for ranking/significance tests
+        Imbalance = (pl.col("BuyVolume") - pl.col("SellVolume"))
+    )
+)
+
+buy  = big_trades.filter(pl.col("TradeSide") == "LongTrade")
+sell = big_trades.filter(pl.col("TradeSide") == "ShortTrade")
+# buy  = big_trades.filter(pl.col("Imbalance") >= 5000)
+# sell = big_trades.filter(pl.col("Imbalance") <= -5000)
+
+df_forward_timestamp = compute_forward_outcomes_from_timestamps(df_ticks=df, entries=df_agg_blocks)
+plt.plot(df['Datetime'], df['Price'], zorder=0, lw=0.5)
+plt.scatter(buy['EndTime'], buy['LastAskPrice'], zorder=1,   s=1, c='lime') #, edgecolors='black')
+plt.scatter(sell['EndTime'], sell['LastBidPrice'], zorder=1, s=1, c='red')#,  edgecolors='black')
+plt.savefig("C:/Users/IRONMAN/Desktop/entries.png", dpi=1200) 
+

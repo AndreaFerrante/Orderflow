@@ -1,5 +1,5 @@
 """
-examples/runner.py  – quick demo: load → aggregate → detect → forward plot
+examples/runner.py, quick demo: load → aggregate → detect → forward plot
 Run:  python examples/runner.py
 """
 
@@ -16,7 +16,7 @@ from orderflow.auctions import (
 from orderflow.viz import plot_forward_overlaid_relative
 
 # --- parameters --------------------------------------------------------------
-DATA_PATH        = Path(r"E:/python/DATA/CLF22-NYMEX_20211203_225959/CLF22-NYMEX_20211203_225959.txt")
+DATA_PATH        = Path(r"")
 SEGMENTATION     = "quote_any"
 IMBALANCE_MODE   = "ratio"
 N_CONSECUTIVE    = 3

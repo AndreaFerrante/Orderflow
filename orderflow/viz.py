@@ -24,7 +24,7 @@ __all__ = ["plot_forward_overlaid_relative"]
 # Local helpers (kept small to avoid importing internals)
 # -----------------------------------------------------------------------------
 
-def _ensure_price_series(df: pl.DataFrame, price_source: Literal["mid","trade","bid","ask"] = "mid") -> pl.DataFrame:
+def _ensure_price_series(df: pl.DataFrame, price_source: Literal["mid","trade","bid","ask"] = "trade") -> pl.DataFrame:
     """Return [timestamp, price] according to the selected source."""
     if price_source == "mid":
         out = df.select([pl.col("timestamp"), ((pl.col("BidPrice") + pl.col("AskPrice")) / 2.0).alias("price")])
@@ -55,7 +55,7 @@ def plot_forward_overlaid_relative(
     blocks: pl.DataFrame,
     *,
     minutes_ahead: int = 5,
-    price_source: Literal["mid","trade","bid","ask"] = "mid",
+    price_source: Literal["mid","trade","bid","ask"] = "trade",
     y_mode: Literal["return", "delta_price"] = "return",
     max_events: int | None = 200,
     color_by_side: bool = True,

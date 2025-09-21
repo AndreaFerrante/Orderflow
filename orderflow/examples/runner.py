@@ -3,7 +3,6 @@ examples/runner.py, quick demo: load → aggregate → detect → forward plot
 Run:  python examples/runner.py
 """
 
-import polars as pl
 from pathlib import Path
 
 # --- local imports (submodules because __init__.py is untouched) -------------

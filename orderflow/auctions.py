@@ -591,3 +591,87 @@ def compute_forward_outcomes_from_timestamps(
             "simple_return",
         ]
     )
+
+
+
+from orderflow._volume_factory import get_tickers_in_folder
+import matplotlib.pyplot as plt
+
+
+# Read the data
+df_orderflow = get_tickers_in_folder(path=r"C:/__tmp__/", ticker="ZT", market="CBOT")
+
+
+# Reshape the data
+df_agg = (
+          aggregate_auctions(df=df_orderflow).
+          with_columns(
+            TradeSide=(
+                pl.when(pl.col("BuyVolume") > pl.col("SellVolume"))
+                .then(pl.lit("Long"))
+                .otherwise(pl.lit("Short"))
+            )
+            )
+          )
+df_agg_blocks = get_valid_blocks(agg           = df_agg,
+                                 n_consecutive = 2,
+                                 vol_thresh    = 1000)
+df_forward = compute_forward_outcomes(
+    df_ticks=df_orderflow, blocks=df_agg_blocks, minutes_ahead=1
+)
+df_forward = df_forward.join(
+    other=df_agg.select(cs.by_name("AuctionId", "TradeSide")),
+    how="left",
+    left_on="AuctionEndId",
+    right_on="AuctionId",
+)
+df_forward = df_forward.with_columns(
+    SimpleReturnInTicks=(
+        pl.when(pl.col("TradeSide") == "Short")
+        .then(pl.col("SimpleReturnInTicks") * -1)
+        .otherwise(pl.col("SimpleReturnInTicks"))
+    )
+)
+
+# Plot Results
+plt.plot(
+            df_forward["BlockId"],
+            df_forward["SimpleReturnInTicks"].cum_sum()
+         )
+plt.show()
+
+
+
+
+
+buy_cond = (pl.col("BuyVolume") >= 4000) & (pl.col("SellVolume") <= 500)
+sell_cond = (pl.col("SellVolume") >= 4000) & (pl.col("BuyVolume") <= 500)
+big_trades = df_agg.filter(buy_cond | sell_cond).with_columns(
+    TradeSide=(
+        pl.when(buy_cond)
+        .then(pl.lit("LongTrade"))
+        .when(sell_cond)
+        .then(pl.lit("ShortTrade"))
+        .otherwise(pl.lit("Unknown"))
+    ),
+    # Optional: strength of the imbalance for ranking/significance tests
+    Imbalance=(pl.col("BuyVolume") - pl.col("SellVolume")),
+)
+
+
+buy = big_trades.filter(pl.col("TradeSide") == "LongTrade")
+sell = big_trades.filter(pl.col("TradeSide") == "ShortTrade")
+# buy  = big_trades.filter(pl.col("Imbalance") >= 5000)
+# sell = big_trades.filter(pl.col("Imbalance") <= -5000)
+
+df_forward_timestamp = compute_forward_outcomes_from_timestamps(
+    df_ticks=df_orderflow, entries=df_agg_blocks
+)
+plt.plot(df_orderflow["Datetime"], df_orderflow["Price"], zorder=0, lw=0.5)
+plt.scatter(
+    buy["EndTime"], buy["LastAskPrice"], zorder=1, s=1, c="lime"
+)  # , edgecolors='black')
+plt.scatter(
+    sell["EndTime"], sell["LastBidPrice"], zorder=1, s=1, c="red"
+)  # ,  edgecolors='black')
+plt.savefig("C:/Users/IRONMAN/Desktop/entries.png", dpi=1200)

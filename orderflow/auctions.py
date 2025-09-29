@@ -11,7 +11,7 @@ EPS_DEFAULT: float = 1e-6
 
 
 def load_tick_data(
-    path: str, separator: str = ";", ensure_types: bool = True
+        path: str, separator: str = ";", ensure_types: bool = True
 ) -> pl.DataFrame:
     """
     Load L2 ticks and build a 'timestamp' column. Returns a DataFrame sorted by time.
@@ -44,15 +44,14 @@ def load_tick_data(
 
 
 def aggregate_auctions(
-    df: pl.DataFrame = None,
-    buy_code: int = BUY_CODE_DEFAULT,
-    sell_code: int = SELL_CODE_DEFAULT,
-    eps: float = EPS_DEFAULT,
-    imbalance_mode: Literal["ratio", "bounded"] = "ratio",
-    segmentation: Literal["quote_any", "quote_both", "mid_change"] = "quote_any",
-    time_cap_ms: Optional[int] = None,
+        df: pl.DataFrame = None,
+        buy_code: int = BUY_CODE_DEFAULT,
+        sell_code: int = SELL_CODE_DEFAULT,
+        eps: float = EPS_DEFAULT,
+        imbalance_mode: Literal["ratio", "bounded"] = "ratio",
+        segmentation: Literal["quote_any", "quote_both", "mid_change"] = "quote_any",
+        time_cap_ms: Optional[int] = None,
 ) -> pl.DataFrame:
-    
     """
     Segment rows into auctions (stable quote regime) and aggregate per-auction stats.
     """
@@ -74,21 +73,22 @@ def aggregate_auctions(
             mid_price = (bid + ask) / 2.0
             change = mid_price != mid_price.shift(1)  # Mid-point price changed from previous tick
         case _:
-            raise ValueError(f"Unknown segmentation type: '{segmentation}'. Valid options are: 'quote_any', 'quote_both', 'mid_change'")
+            raise ValueError(
+                f"Unknown segmentation type: '{segmentation}'. Valid options are: 'quote_any', 'quote_both', 'mid_change'")
 
     if time_cap_ms is not None:
         gap_ms = (
-            pl.col("Datetime").cast(pl.Int64) - pl.col("Datetime").shift(1).cast(pl.Int64)
-        ) // 1_000_000
+                         pl.col("Datetime").cast(pl.Int64) - pl.col("Datetime").shift(1).cast(pl.Int64)
+                 ) // 1_000_000
         change = change | (gap_ms >= pl.lit(time_cap_ms))
 
     # Adding auction id . . .
     df = (df.
-            with_columns(
-                change.fill_null(True).cast(pl.Int64).alias("AskBidSpread")
-            ).
-            with_columns(pl.col("AskBidSpread").cum_sum().alias("AuctionId"))
-        )
+          with_columns(
+        change.fill_null(True).cast(pl.Int64).alias("AskBidSpread")
+    ).
+          with_columns(pl.col("AskBidSpread").cum_sum().alias("AuctionId"))
+          )
 
     agg = df.group_by("AuctionId").agg(
         [
@@ -141,7 +141,7 @@ def aggregate_auctions(
         )
     else:
         imbalance = (pl.col("BuyVolume") - pl.col("SellVolume")) / (
-            pl.col("BuyVolume") + pl.col("SellVolume") + pl.lit(eps)
+                pl.col("BuyVolume") + pl.col("SellVolume") + pl.lit(eps)
         )
 
     label = (
@@ -161,14 +161,31 @@ def aggregate_auctions(
 
 
 def get_valid_blocks(
-    agg: pl.DataFrame = None,
-    n_consecutive: int = N_CONSECUTIVE_DEFAULT,
-    vol_thresh: int = VOLUME_THRESHOLD_DEFAULT,
-    require_nonzero_imbalance: bool = True,
-    return_ids_list: bool = False,
+        agg: pl.DataFrame = None,
+        n_consecutive: int = N_CONSECUTIVE_DEFAULT,
+        vol_thresh: int = VOLUME_THRESHOLD_DEFAULT,
+        require_nonzero_imbalance: bool = True,
+        return_ids_list: bool = False,
+        min_abs_imbalance: float | None = None,  # <<< NEW: minimum |Imbalance| to qualify auctions for blocks
 ) -> pl.DataFrame:
     """
     Find runs of exactly n_consecutive auctions with same imbalance sign and volume/label filters.
+
+    Parameters
+    ----------
+    agg : Polars DataFrame from aggregate_auctions(...)
+    n_consecutive : int
+        How many consecutive auctions with the same **sign** of Imbalance to make a block.
+    vol_thresh : int
+        Minimum TotalVolumeOnSpread for an auction to be considered.
+    require_nonzero_imbalance : bool
+        If True, drop auctions with Imbalance == 0.
+    return_ids_list : bool
+        If True, return exploded per-auction IDs per block; otherwise one row per block.
+    min_abs_imbalance : float | None
+        If set (e.g., 2.0), keep only auctions with |Imbalance| >= this value
+        **before** computing streaks. Recommended with imbalance_mode="ratio" if you mean
+        “at least 2× dominance”.
     """
 
     if agg is None:
@@ -196,11 +213,15 @@ def get_valid_blocks(
     if require_nonzero_imbalance:
         base = base.filter(pl.col("ImbalanceDirection") != 0)
 
+    # --- NEW: minimum magnitude on Imbalance for auctions that can form blocks
+    if min_abs_imbalance is not None:
+        base = base.filter(pl.col("Imbalance").abs() >= pl.lit(min_abs_imbalance))
+
     # Use the sign of the chosen 'Imbalance' to classify side for runs
     base = base.with_columns(
         (
-            ((pl.col("AuctionId") - pl.col("AuctionId").shift(1)) != 1)
-            | (pl.col("ImbalanceDirection") != pl.col("ImbalanceDirection").shift(1))
+                ((pl.col("AuctionId") - pl.col("AuctionId").shift(1)) != 1)
+                | (pl.col("ImbalanceDirection") != pl.col("ImbalanceDirection").shift(1))
         )
         .fill_null(True)
         .cast(pl.Int32)
@@ -239,8 +260,8 @@ def get_valid_blocks(
             .then(pl.col("StreakCumImb") / pl.lit(n_consecutive))
             .otherwise(
                 (
-                    pl.col("StreakCumImb")
-                    - pl.col("StreakCumImb").shift(n_consecutive).over("StreakId")
+                        pl.col("StreakCumImb")
+                        - pl.col("StreakCumImb").shift(n_consecutive).over("StreakId")
                 )
                 / pl.lit(n_consecutive)
             )
@@ -313,10 +334,10 @@ def get_valid_blocks(
 
 
 def compute_forward_outcomes(
-    df_ticks: pl.DataFrame = None,
-    blocks: pl.DataFrame = None,
-    minutes_ahead: int = 15,
-    price_source: Literal["mid", "trade", "bid", "ask"] = "trade",
+        df_ticks: pl.DataFrame = None,
+        blocks: pl.DataFrame = None,
+        minutes_ahead: int = 15,
+        price_source: Literal["mid", "trade", "bid", "ask"] = "trade",
 ) -> pl.DataFrame:
     """
     Per block: get price at entry=end, exit=end+minutes, and simple return.
@@ -364,15 +385,15 @@ def compute_forward_outcomes(
 
     # Entry/exit timestamps per block
     b = (
-            blocks.with_columns(
-                [
-                    pl.col("EndTime").alias("StartTime"),
-                    (pl.col("EndTime") + pl.duration(minutes=minutes_ahead)).alias("EndTime"),
-                ]
-            )
-            .select(["BlockId", "AuctionStartId", "AuctionEndId", "StartTime", "EndTime"])
-            .sort("StartTime")
+        blocks.with_columns(
+            [
+                pl.col("EndTime").alias("StartTime"),
+                (pl.col("EndTime") + pl.duration(minutes=minutes_ahead)).alias("EndTime"),
+            ]
         )
+        .select(["BlockId", "AuctionStartId", "AuctionEndId", "StartTime", "EndTime"])
+        .sort("StartTime")
+    )
 
     # For each StartTime, take last price with timestamp <= StartTime
     entry = (
@@ -452,9 +473,6 @@ def compute_forward_outcomes_from_timestamps(
     Polars DataFrame with columns:
       [by..., entry_id, entry_ts, exit_ts, entry_price, exit_price, simple_return]
     """
-
-    df_ticks = df_orderflow
-    entries  = df_agg_blocks
 
     if df_ticks is None or entries is None:
         raise ValueError("`df_ticks` and `entries` must not be None.")

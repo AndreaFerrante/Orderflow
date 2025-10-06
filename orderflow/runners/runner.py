@@ -21,7 +21,7 @@ EXTENSION      = ".txt"
 # Strategy params
 N_CONSECUTIVE  = 3
 VOL_THRESH     = 1000
-MINUTES_AHEAD  = 2
+MINUTES_AHEAD  = 15
 MIN_ABS_IMB    = 3.0 # <-- NEW: require |Imbalance| >= 2.0 (ratio mode => ≥2x dominance)
 
 
@@ -41,8 +41,8 @@ df_agg = aggregate_auctions(
     imbalance_mode = "ratio",  # <-- important for MIN_ABS_IMB=2.0
 ).with_columns(
     pl.when(pl.col("BuyVolume") > pl.col("SellVolume"))
-      .then(pl.lit("Long"))
-      .otherwise(pl.lit("Short"))
+      .then(pl.lit("Short"))
+      .otherwise(pl.lit("Long"))
     .alias("TradeSide")
 )
 print("[Monthly] Auctions:", df_agg.shape)
@@ -87,7 +87,8 @@ else:
         # max drawdown
         peak, max_dd = -1e18, 0.0
         for v in cum:
-            peak = max(peak, v); max_dd = max(max_dd, peak - v)
+            peak   = max(peak, v)
+            max_dd = max(max_dd, peak - v)
 
         print(f"Trades: {pnl.size} | Hit: {hits:.1%} | Avg: {avg:.3f} ticks | "f"T: {tstat:.3f} | MaxDD: {max_dd:.1f}")
 

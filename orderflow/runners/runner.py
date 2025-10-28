@@ -13,26 +13,27 @@ from orderflow.auctions import (
 
 # ----------------- CONFIG -----------------------------------------------------
 FOLDER         = r"C:\__tmp__"
-TICKER         = "ZN"
-MARKET         = "CBOT"
+TICKER         = "ES"
+MARKET         = "CME"
 SEPARATOR      = ";"
 EXTENSION      = ".txt"
 
 # Strategy params
-N_CONSECUTIVE  = 3
+N_CONSECUTIVE  = 1
 VOL_THRESH     = 1000
-MINUTES_AHEAD  = 15
-MIN_ABS_IMB    = 3.0 # <-- NEW: require |Imbalance| >= 2.0 (ratio mode => ≥2x dominance)
+MINUTES_AHEAD  = 1
+MIN_ABS_IMB    = 7.0 # <-- NEW: require |Imbalance| >= 2.0 (ratio mode => ≥2x dominance)
 
 
-# ----------------- LOAD TICKS FOR THE MONTH (CONCAT WEEKS) -------------------
-df_ticks = get_tickers_in_folder(
-    path      = FOLDER,
-    ticker    = TICKER,
-    extension = EXTENSION,
-    separator = SEPARATOR,
-    market    = MARKET,
-)
+# # ----------------- LOAD TICKS FOR THE MONTH (CONCAT WEEKS) -------------------
+# df_ticks = get_tickers_in_folder(
+#     path      = FOLDER,
+#     ticker    = TICKER,
+#     extension = EXTENSION,
+#     separator = SEPARATOR,
+#     market    = MARKET,
+# )
+# df_ticks = df_ticks.with_columns(Hour = pl.col("Datetime").dt.hour())
 
 
 # ----------------- AUCTIONS (ratio mode so 2.0 means ≥2x dominance) ----------
@@ -97,6 +98,7 @@ else:
         plt.title("Cumulative PnL (ticks)")
         plt.xlabel("Event index")
         plt.ylabel("Cum PnL (ticks)")
+        plt.title(f"Ticker {TICKER}, Consecutive {N_CONSECUTIVE}, VolThres {VOL_THRESH}, MinImb {MIN_ABS_IMB}, Ahead {MINUTES_AHEAD}min")
         plt.tight_layout()
         plt.show()
 

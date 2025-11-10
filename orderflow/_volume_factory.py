@@ -910,7 +910,7 @@ def get_new_start_date(data: pd.DataFrame, sort_values: bool = False) -> pd.Data
     return data.drop(['Date_Shift'], axis=1)
 
 
-def get_market_evening_session(data: pd.DataFrame | polars.DataFrame, ticker: str) -> polars.Series | np.ndarray:
+def get_market_evening_session(data: pd.DataFrame | polars.DataFrame, ticker: str, return_df:bool=False) -> polars.Series | np.ndarray:
     """
     Assign session labels ('RTH' or 'ETH') based on Datetime and FUTURE_VALUES for the given ticker.
     Accepts either a pandas.DataFrame or a polars.DataFrame and acts accordingly.
@@ -935,10 +935,13 @@ def get_market_evening_session(data: pd.DataFrame | polars.DataFrame, ticker: st
             )
             .then(polars.lit("RTH"))
             .otherwise(polars.lit("ETH"))
-            .alias("Session")
+            .alias("SessionType")
         )
 
-        return data["Session"]
+        if return_df:
+            return data
+
+        return data["SessionType"]
 
     elif isinstance(data, pd.DataFrame):
 
@@ -947,6 +950,11 @@ def get_market_evening_session(data: pd.DataFrame | polars.DataFrame, ticker: st
             (data.Datetime.dt.time <= start_time) | (data.Datetime.dt.time >= end_time)
         ]
         choicelist = ["RTH", "ETH"]
+
+        if return_df:
+            data['SessionType'] = np.select(condlist, choicelist, default="ETH")
+            return data
+
         return np.select(condlist, choicelist, default="ETH")
 
     else:

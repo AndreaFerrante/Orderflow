@@ -910,7 +910,6 @@ def get_new_start_date(data: pd.DataFrame, sort_values: bool = False) -> pd.Data
     return data.drop(['Date_Shift'], axis=1)
 
 
-# language: python
 def get_market_evening_session(data: pd.DataFrame | polars.DataFrame, ticker: str) -> polars.Series | np.ndarray:
     """
     Assign session labels ('RTH' or 'ETH') based on Datetime and FUTURE_VALUES for the given ticker.

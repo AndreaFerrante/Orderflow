@@ -910,24 +910,48 @@ def get_new_start_date(data: pd.DataFrame, sort_values: bool = False) -> pd.Data
     return data.drop(['Date_Shift'], axis=1)
 
 
-def get_market_evening_session(data: pd.DataFrame, ticker: str):
-    '''
-    This function defines session start and end given Chicago Time.
-    Pass to this function a DataFrame with Datetime offset !
-    '''
+# language: python
+def get_market_evening_session(data: pd.DataFrame | polars.DataFrame, ticker: str) -> polars.Series | np.ndarray:
+    """
+    Assign session labels ('RTH' or 'ETH') based on Datetime and FUTURE_VALUES for the given ticker.
+    Accepts either a pandas.DataFrame or a polars.DataFrame and acts accordingly.
 
-    print(f"Assign sessions labels...")
+    Returns:
+      - For pandas input: numpy ndarray (same shape as original np.select result).
+      - For polars input: Python list of session labels (one per row).
+    """
 
-    condlist = [
-          (data.Datetime.dt.time >= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_StartTime'].values[0]) & (
-           data.Datetime.dt.time <= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_EndTime'].values[0]),
-          (data.Datetime.dt.time <= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_StartTime'].values[0]) | (
-           data.Datetime.dt.time >= FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_EndTime'].values[0])
-         ]
-    choicelist = ['RTH', 
-                  'ETH']
+    if "Datetime" not in data.columns:
+        raise Exception("The input DataFrame must contain a 'Datetime' column with Datetime datatype (both Pandas or Polars.")
 
-    return np.select(condlist, choicelist)
+    start_time = FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_StartTime'].values[0]
+    end_time   = FUTURE_VALUES.loc[FUTURE_VALUES['Ticker'] == ticker, 'RTH_EndTime'].values[0]
+
+    if isinstance(data, polars.DataFrame):
+
+        data = data.with_columns(
+            polars.when(
+                (data["Datetime"].dt.time() >= start_time) & \
+                (data["Datetime"].dt.time() <= end_time)
+            )
+            .then(polars.lit("RTH"))
+            .otherwise(polars.lit("ETH"))
+            .alias("Session")
+        )
+
+        return data["Session"]
+
+    elif isinstance(data, pd.DataFrame):
+
+        condlist = [
+            (data.Datetime.dt.time >= start_time) & (data.Datetime.dt.time <= end_time),
+            (data.Datetime.dt.time <= start_time) | (data.Datetime.dt.time >= end_time)
+        ]
+        choicelist = ["RTH", "ETH"]
+        return np.select(condlist, choicelist, default="ETH")
+
+    else:
+        raise Exception("Unsupported dataframe type. Pass a pandas.DataFrame or a polars.DataFrame.")
 
 
 def get_rolling_mean_by_datetime(pl_df, rolling_column_name, window_size='1m', return_pandas_series=False):
@@ -1040,7 +1064,7 @@ def get_next_tick(signal_df, ticker_df) -> list:
 
     for index in tqdm(signal_indexes):
 
-        ticker_df_single         = ticker_df_single.filter(pl.col('Index') >= index)
+        ticker_df_single         = ticker_df_single.filter(polars.col('Index') >= index)
         ticker_df_single_side    = ticker_df_single['TradeType'][0]
         ticker_df_single_price   = ticker_df_single['Price'][0]
 

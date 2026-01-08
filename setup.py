@@ -22,6 +22,6 @@ setup(
     keywords="datetime, setuptools",
     packages=find_packages(where="src"),
     python_requires=">=3.6, <4",
-    install_requires=["pandas", "numpy", "polars", "matplotlib"],
+    install_requires=["pandas", "numpy", "polars", "matplotlib", "hmmlearn"],
     py_modules=["orderflow"],
 )

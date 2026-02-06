@@ -1,5 +1,6 @@
 orderflow/paths.py
 orderflow/runners/
+orderflow/configuration.py
 
 .DS_store
 .Rhistory

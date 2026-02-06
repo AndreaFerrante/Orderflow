@@ -587,4 +587,41 @@ def get_daily_high_and_low_by_session(data: pd.DataFrame):
 
     return lows, highs
 
+def get_volume_profile_node_volume(data: pd.DataFrame):
+    """
+    Given the canonical dataframe recorded, this function returns an array with info about the volume profile
+    at the price: volume at price and total volume profile volume
+    :param df: canonical dataframe recorded
+    :return: numpy arrays with values
+    """
 
+    if 'SessionType' not in data.columns:
+        raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
+
+    volume = np.array(data.Volume)
+    price = np.array(data.Price)
+    session = np.array(data.SessionType)
+    price_vol = np.zeros(data.shape[0])
+    total_vol = np.zeros(data.shape[0])
+    len_ = len(price)
+    volume_profile = {}
+    total_volume = 0
+    
+    for i in tqdm(range(1, len_)):
+
+        if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
+
+            volume_profile.clear()
+            total_volume = 0
+        
+        total_volume += volume[i]
+        
+        if price[i] in volume_profile.keys():            
+            volume_profile[price[i]] += volume[i]
+        else:
+            volume_profile[price[i]] = volume[i]
+        
+        price_vol[i] = volume_profile[price[i]]
+        total_vol[i] = total_volume
+    
+    return price_vol, total_vol

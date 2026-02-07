@@ -409,7 +409,3 @@ def backtester(
         backtest.to_csv(save_path, sep=';')
 
     return backtest, trades, backtest_results
-
-
-
-

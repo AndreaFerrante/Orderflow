@@ -38,8 +38,32 @@ from orderflow.markov_utilities import (
     plot_distribution_of_float_series
 )
 
-from orderflow.backtester import (
+from orderflow.backtester_v1 import (
     backtester
+)
+
+from orderflow.backtester_v2 import (
+    BacktestEngine,
+    BacktestResult,
+    BacktestConfig,
+    Side,
+    ExitReason,
+    ExitSignal,
+    Tick,
+    PositionState,
+    TradeRecord,
+    SlippageModel,
+    FillSimulator,
+    RiskManager,
+    BaseExitStrategy,
+    FixedTPSLExit,
+    TrailingStopExit,
+    BreakEvenExit,
+    TimeBasedExit,
+    VolatilityExit,
+    CompositeExit,
+    PerformanceMetrics,
+    compute_metrics,
 )
 
 from orderflow.compressor import (

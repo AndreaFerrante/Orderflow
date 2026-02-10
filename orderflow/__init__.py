@@ -38,11 +38,8 @@ from orderflow.markov_utilities import (
     plot_distribution_of_float_series
 )
 
-from orderflow.backtester_v1 import (
-    backtester
-)
-
-from orderflow.backtester_v2 import (
+from orderflow.backtester import (
+    backtester,
     BacktestEngine,
     BacktestResult,
     BacktestConfig,

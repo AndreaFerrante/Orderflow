@@ -19,7 +19,8 @@ Quick start
 >>> results.summary()
 """
 
-from orderflow.backtester_v2.models import (
+from orderflow.backtester.models import (backtester)
+from orderflow.backtester.models import (
     Side,
     ExitReason,
     ExitSignal,
@@ -28,9 +29,9 @@ from orderflow.backtester_v2.models import (
     TradeRecord,
     BacktestConfig,
 )
-from orderflow.backtester_v2.execution import SlippageModel, FillSimulator
-from orderflow.backtester_v2.risk import RiskManager
-from orderflow.backtester_v2.exits import (
+from orderflow.backtester.execution import SlippageModel, FillSimulator
+from orderflow.backtester.risk import RiskManager
+from orderflow.backtester.exits import (
     BaseExitStrategy,
     FixedTPSLExit,
     TrailingStopExit,
@@ -39,8 +40,8 @@ from orderflow.backtester_v2.exits import (
     VolatilityExit,
     CompositeExit,
 )
-from orderflow.backtester_v2.metrics import PerformanceMetrics, compute_metrics
-from orderflow.backtester_v2.engine import BacktestEngine, BacktestResult
+from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
+from orderflow.backtester.engine import BacktestEngine, BacktestResult
 
 __all__ = [
     # Models

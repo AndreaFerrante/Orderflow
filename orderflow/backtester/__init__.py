@@ -1,5 +1,5 @@
 """
-backtester_v2 — Professional-grade tick-by-tick backtesting engine.
+backtester — Professional-grade tick-by-tick backtesting engine.
 
 Architecture
 ~~~~~~~~~~~~
@@ -13,7 +13,7 @@ Architecture
 
 Quick start
 ~~~~~~~~~~~
->>> from orderflow.backtester_v2 import BacktestEngine, FixedTPSLExit, SlippageModel
+>>> from orderflow.backtester import BacktestEngine, FixedTPSLExit, SlippageModel
 >>> engine = BacktestEngine(tick_size=0.25, tick_value=12.5)
 >>> results = engine.run(data, signals, exit_strategy=FixedTPSLExit(tp=10, sl=8))
 >>> results.summary()

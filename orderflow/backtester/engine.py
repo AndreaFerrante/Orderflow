@@ -22,7 +22,7 @@ Hot-path optimisation
 
 Usage
 -----
->>> from orderflow.backtester_v2 import BacktestEngine, FixedTPSLExit
+>>> from orderflow.backtester import BacktestEngine, FixedTPSLExit
 >>> engine = BacktestEngine(tick_size=0.25, tick_value=12.5)
 >>> result = engine.run(data, signals, exit_strategy=FixedTPSLExit(tp=10, sl=8))
 >>> print(result.metrics.summary())
@@ -38,13 +38,13 @@ import pandas as pd
 import polars as pl
 from tqdm import tqdm
 
-from orderflow.backtester_v2.execution import (
+from orderflow.backtester.execution import (
     FillSimulator,
     SlippageModel,
 )
-from orderflow.backtester_v2.exits import BaseExitStrategy
-from orderflow.backtester_v2.metrics import PerformanceMetrics, compute_metrics
-from orderflow.backtester_v2.models import (
+from orderflow.backtester.exits import BaseExitStrategy
+from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
+from orderflow.backtester.models import (
     BacktestConfig,
     ExitReason,
     ExitSignal,
@@ -53,7 +53,7 @@ from orderflow.backtester_v2.models import (
     Tick,
     TradeRecord,
 )
-from orderflow.backtester_v2.risk import RiskManager
+from orderflow.backtester.risk import RiskManager
 
 # Optional Numba import — graceful degradation
 try:

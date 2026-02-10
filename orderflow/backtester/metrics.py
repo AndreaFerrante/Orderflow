@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from orderflow.backtester_v2.models import ExitReason, Side, TradeRecord
+from orderflow.backtester.models import ExitReason, Side, TradeRecord
 
 
 # ---------------------------------------------------------------------------

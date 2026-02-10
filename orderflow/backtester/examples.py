@@ -1,24 +1,24 @@
 """
-Usage examples for ``backtester_v2``.
+Usage examples for ``backtester``.
 
 Run this file directly to execute all examples on synthetic data::
 
-    python -m orderflow.backtester_v2.examples
+    python -m orderflow.backtester.examples
 
 Each function is self-contained and demonstrates a different capability.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
 
-from orderflow.backtester_v2.engine import BacktestEngine
-from orderflow.backtester_v2.execution import SlippageMode, SlippageModel
-from orderflow.backtester_v2.exits import (
+from orderflow.backtester.engine import BacktestEngine
+from orderflow.backtester.execution import SlippageMode, SlippageModel
+from orderflow.backtester.exits import (
     BaseExitStrategy,
     BreakEvenExit,
     CompositeExit,
@@ -27,14 +27,14 @@ from orderflow.backtester_v2.exits import (
     TrailingStopExit,
     VolatilityExit,
 )
-from orderflow.backtester_v2.models import (
+from orderflow.backtester.models import (
     ExitReason,
     ExitSignal,
     PositionState,
     Side,
     Tick,
 )
-from orderflow.backtester_v2.risk import RiskManager
+from orderflow.backtester.risk import RiskManager
 
 
 # ======================================================================== #

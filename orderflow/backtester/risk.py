@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from orderflow.backtester_v2.models import (
+from orderflow.backtester.models import (
     ExitReason,
     ExitSignal,
     PositionState,

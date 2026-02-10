@@ -25,7 +25,7 @@ from typing import Optional
 
 import numpy as np
 
-from orderflow.backtester_v2.models import Side, Tick
+from orderflow.backtester.models import Side, Tick
 
 
 # ---------------------------------------------------------------------------

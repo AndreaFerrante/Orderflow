@@ -1,3 +1,80 @@
+"""
+backtester.py — Tick-by-tick backtesting utilities
+
+Summary
+-------
+This module implements a high-performance, tick-by-tick backtester that simulates mechanical
+entries and exits using fixed take-profit (TP) and stop-loss (SL) in ticks. It supports random
+entry slippage, commission, contract sizing, optional adjustment of TP/SL for slippage, and
+an RTH (regular trading hours) filtering/closure option. Designed for canonical tick datasets
+and a separate signal table listing entry timestamps and trade direction.
+
+Primary contents
+----------------
+- backtester(...) : main function that runs the tick loop and returns:
+    - backtest : pd.DataFrame with one row per closed trade (entry/exit times, prices, trade gain)
+    - trades   : list[pd.DataFrame] each containing the tick snapshot for a single trade
+    - backtest_results : pd.DataFrame with aggregated P/L, trades count and basic metrics
+
+- update_datetime_signal_index(...) : helper to advance the signal index when an entry/exit
+  occurs during sweeping of the tick array.
+
+Required input shapes & columns
+------------------------------
+data (pd.DataFrame) must include:
+- 'Index'   : monotonic timestamp-like index used to match signals to ticks
+- 'Datetime': displayable datetime for entry/exit time columns
+- 'Date' and 'Time' : date/time columns (used for reporting and RTH grouping)
+- 'Price'   : tick price
+- optional 'SessionType' : required when trade_in_RTH=True
+
+signal (pd.DataFrame) must include:
+- 'Index'     : timestamps aligning with data.Index indicating intended entry ticks
+- 'TradeType' : numeric tag (1 == SHORT, 2 == LONG)
+
+Key parameters (backtester)
+---------------------------
+- tp, sl : integers (ticks) for take profit and stop loss
+- tick_value, tick_size : contract scaling and tick size for P/L computation
+- commission : per-entry commission (applied on each entry)
+- n_contacts : number of contracts per trade
+- slippage_max : max random integer ticks of entry slippage (0 => no slippage)
+- adapt_sl_tp_to_slippage : if True, SL/TP are adjusted relative to slippage on entry
+- trade_in_RTH : if True, only allow entries during RTH and force close when outside RTH
+
+Behavior & edge-cases
+---------------------
+- Entry slippage is sampled uniformly in [0, slippage_max] ticks at the time of entry.
+- If a trade is still open at the end of the data, it is force-closed at the last tick.
+- The function raises custom exceptions when required columns are missing:
+  SessionTypeAbsent, IndexAbsent, DatetimeTypeAbsent.
+- Uses a numpy boolean mask and a single Python loop over ticks (tqdm progress shown).
+  Suitable for moderate-to-large tick datasets; extremely large multi-million tick datasets
+  may be slow due to Python-level iteration.
+
+Returns
+-------
+(backtest, trades, backtest_results)
+- backtest: DataFrame columns include TRADE_INDEX, ENTRY_TIMES, EXIT_TIMES, ENTRY_PRICES_SLIPPAGE,
+  ENTRY_PRICES_PURE, EXIT_PRICES, ENTRY_INDEX, EXIT_INDEX, ORDER_TYPE, TRADE_GAIN
+- trades: list of DataFrames — per-trade tick-level snapshots with MAE/MFE and TRADE_DIRECTION
+- backtest_results: one-row DataFrame summarizing Profit, Loss, Commissions, Net Profit, Total Trades, etc.
+
+Dependencies
+------------
+numpy, pandas, polars, tqdm
+
+Example
+-------
+from orderflow.backtester.backtester import backtester
+backtest, trades, summary = backtester(data, signal, tp=9, sl=9, tick_value=12.5, tick_size=0.25)
+
+Notes
+-----
+Keep input data sorted by 'Index' ascending. The module is intentionally simple and mechanical:
+it does not model partial fills, limit order queuing, or orderbook dynamics — only slippage at entry.
+"""
+
 import random
 import numpy as np
 import pandas as pd

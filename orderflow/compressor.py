@@ -29,7 +29,7 @@ def _get_datetime_fixed_pl(df: pl.DataFrame) -> pl.DataFrame:
                 pl.col("Datetime").str.to_datetime(format='%Y-%m-%d %H:%M:%S%.f')
              )
          )
-
+    
     return df.sort("Datetime")
 
 
@@ -53,7 +53,8 @@ def _get_datetime_fixed_pd(df: pd.DataFrame) -> pl.DataFrame:
     return df.sort_values("Datetime", ascending=True)
 
 
-def compress_to_bar_once_range_met(tick_data:pd.DataFrame, price_range:int, tick_size:float=0.25) -> pd.DataFrame:
+def compress_to_bar_once_range_met(tick_data:pd.DataFrame, price_range:int, tick_size:float=0.25,
+    overwrite_time_with_sierras = False) -> pd.DataFrame:
 
     """
     Transforms tick-by-tick data into range bars using NumPy.
@@ -61,7 +62,9 @@ def compress_to_bar_once_range_met(tick_data:pd.DataFrame, price_range:int, tick
     Parameters:
     - tick_data: DataFrame containing tick-by-tick data. Must have a 'Price' column.
     - price_range: The price range that each bar should represent.
-
+    - tick_size: The minimum price movement (tick size) for the instrument. Default is 0.25.
+    - overwrite_time_with_sierras: bool
+            If True, the function will overwrite the time_column with Sierra Chart's timestamp format.
     Returns:
     - range_bars_df: DataFrame containing range bars.
     """
@@ -75,7 +78,8 @@ def compress_to_bar_once_range_met(tick_data:pd.DataFrame, price_range:int, tick
         raise ValueError(f"Input DataFrame is missing required columns: {missing_columns}")
 
     #############################################
-    tick_data = _get_datetime_fixed_pd(tick_data)
+    if overwrite_time_with_sierras:
+        tick_data = _get_datetime_fixed_pd(tick_data)
     #############################################
 
     price_array = tick_data['Price'].to_numpy()
@@ -155,7 +159,8 @@ def compress_to_bar_once_range_met(tick_data:pd.DataFrame, price_range:int, tick
     return range_bars_df
 
 
-def compress_to_volume_bars_pl(tick_data: pl.DataFrame, volume_threshold: float) -> pl.DataFrame:
+def compress_to_volume_bars_pl(tick_data: pl.DataFrame, volume_threshold: float,
+    overwrite_time_with_sierras = False) -> pl.DataFrame:
 
     """
     Reshapes tick-by-tick trading data into volume bars.
@@ -166,6 +171,9 @@ def compress_to_volume_bars_pl(tick_data: pl.DataFrame, volume_threshold: float)
                            - 'Price': Trade price.
                            - 'Volume': Volume traded at each tick.
         volume_threshold (float): The cumulative volume threshold for each volume bar.
+        overwrite_time_with_sierras: bool
+                If True, the function will overwrite the time_column with Sierra Chart's timestamp format.
+                This is useful when the input data has timestamps in a different format and needs to be standardized.
 
     Returns:
         pl.DataFrame: A DataFrame with one row per volume bar containing:
@@ -189,7 +197,8 @@ def compress_to_volume_bars_pl(tick_data: pl.DataFrame, volume_threshold: float)
         raise ValueError(f"Input DataFrame is missing required columns: {missing_columns}")
 
     #############################################
-    tick_data = _get_datetime_fixed_pl(tick_data)
+    if overwrite_time_with_sierras:
+        tick_data = _get_datetime_fixed_pl(tick_data)
     #############################################
 
     try:
@@ -243,6 +252,7 @@ def compress_to_minute_bars_pl(
     side_column: Optional[str]   = "TradeType",
     ask_value: int               = 2,
     bid_value: int               = 1,
+    overwrite_time_with_sierras = False
 ) -> pl.DataFrame:
 
     """
@@ -291,8 +301,13 @@ def compress_to_minute_bars_pl(
             The value in the side_column representing an ask trade.
 
         bid_value : str, default '1'
-            The value in the side_column representing a bid trade.
+            The value in the side_column representing a bid trade
 
+        overwrite_time_with_sierras: bool
+            If True, the function will overwrite the time_column with Sierra Chart's timestamp format.
+            This is useful when the input data has timestamps in a different format and needs to be standardized.
+
+            
         Returns
         -------
         pl.DataFrame
@@ -316,8 +331,12 @@ def compress_to_minute_bars_pl(
         raise ValueError(f"Input DataFrame is missing required columns: {missing_columns}")
 
     #############################################
-    tick_data = _get_datetime_fixed_pl(tick_data)
+    if overwrite_time_with_sierras:
+        tick_data = _get_datetime_fixed_pl(tick_data)
     #############################################
+    
+    if not tick_data[time_column].is_sorted():
+        tick_data = tick_data.sort(time_column)
 
     # Build a list of aggregation expressions.
     aggregations = [

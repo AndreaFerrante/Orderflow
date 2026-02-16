@@ -2,9 +2,15 @@ import pandas as pd
 import numpy as np
 import operator
 from tqdm import tqdm
-from .exceptions import SessionTypeAbsent
-from .configuration import *
-from .volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks
+try:
+    from .exceptions import SessionTypeAbsent
+    from .configuration import *
+    from .volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks
+except ImportError:
+    # Fallback for notebook/interactive usage
+    from orderflow.exceptions import SessionTypeAbsent
+    from orderflow.configuration import *
+    from orderflow.volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks
 import math
 
 
@@ -16,6 +22,8 @@ def get_dynamic_cumulative_delta(data: pd.DataFrame) -> pd.DataFrame:
     :return: canonical dataframe with the addition of the column with Ask / Bid volume
     """
 
+    print(f'Get dynamic cumulative delta...')
+    
     data.sort_values(["Date", "Time"], ascending=[True, True], inplace=True)
     dates = data.Date.unique()
     datas = list()
@@ -131,7 +139,8 @@ C
         The first trade with volume 50 is ignored, while the subsequent trades are included or excluded based on the `volume_filter`.
         The cumulative deltas reset when the session changes from 'RTH' to 'ETH' between the second and third rows.
         """
-
+    print(f'Get dynamic cumulative delta...')
+    
     if not skip_session_control:
         if 'SessionType' not in data.columns:
             raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
@@ -255,7 +264,9 @@ def get_dynamic_cumulative_delta_per_session(data: pd.DataFrame) -> pd.DataFrame
     In this example, the cumulative deltas reset when the session changes from 'RTH' to 'ETH'
     between the second and third rows.
     """
-
+    
+    print(f'Get dynamic cumulative delta per session...')
+    
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
@@ -315,6 +326,8 @@ def get_daily_session_moving_POC(data: pd.DataFrame) -> np.array:
     :param df: canonical dataframe recorded
     :return: numpy array for the daily moving poc
     """
+
+    print(f'Get daily moving poc...')
 
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
@@ -377,6 +390,10 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
     value_area     = np.array( ['na' for x in range(len_)] )
     volume_profile = {}
 
+    volume_profile[price[0]] = volume[0]
+    total_volume = volume[0]
+    value_area[0] = 'POC'
+    poc_volume = volume[0]
 
     for i in tqdm(range(1, len_)):
 
@@ -451,8 +468,6 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
                 break
 
 
-    value_area[0] = 'POC'
-
     return value_area
 
 
@@ -464,6 +479,8 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
     :param df: canonical dataframe recorded
     :return: numpy array with values: High Peak = 2, High Peak Area = 1, Valley Peak = -2, Valley Peak Area = -1
     """
+    
+    print(f'Get volume profile peaks and valleys...')
 
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
@@ -474,6 +491,9 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
     len_           = len(price)
     peaks_valleys  = np.zeros(len_)
     volume_profile = {}
+    
+    volume_profile[price[0]] = volume[0]
+    peaks_valleys[0] = 0
 
     for i in tqdm(range(1, len_ - 1)):
 
@@ -538,6 +558,8 @@ def get_daily_high_and_low_by_date(data: pd.DataFrame):
     This function returns highs / lows for a given date in an incremental manner for every
     progression of Prices in a single date (not in a single session !)
     '''
+    
+    print(f'Get daily high and low prices by date...')
 
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
@@ -559,7 +581,38 @@ def get_daily_high_and_low_by_date(data: pd.DataFrame):
 
 
 def get_daily_high_and_low_by_session(data: pd.DataFrame):
+    """
+    Calculate daily high and low prices grouped by trading session type.
+    This function iterates through price data and tracks the highest and lowest prices
+    for each trading session. When a session transition occurs from RTH (Regular Trading Hours)
+    to ETH (Extended Trading Hours), the high and low values are reset to the current price.
+    For all other cases, the function maintains a running high and low across the session.
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame containing at least two columns:
+        - 'Price': numerical values representing prices
+        - 'SessionType': string values indicating the session type (e.g., 'RTH', 'ETH')
+    Returns
+    -------
+    tuple of (np.ndarray, np.ndarray)
+        - lows : np.ndarray
+            Array of low prices for each row, representing the session low up to that point
+        - highs : np.ndarray
+            Array of high prices for each row, representing the session high up to that point
+    Raises
+    ------
+    SessionTypeAbsent
+        If the 'SessionType' column is not present in the input DataFrame
+    Notes
+    -----
+    - Session resets occur when transitioning from RTH to ETH sessions
+    - The function uses tqdm for progress tracking during iteration
+    """
+    
 
+    print(f'Get daily high and low prices by session...')
+    
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
@@ -569,7 +622,10 @@ def get_daily_high_and_low_by_session(data: pd.DataFrame):
     lows        = np.zeros(len_)
     highs       = np.zeros(len_)
     current_low = current_high = price[0]
-
+    
+    highs[0] = price[0]
+    lows[0]  = price[0]
+    
     for i in tqdm(range(1, len_)):
 
         ########################################################################################################
@@ -587,6 +643,7 @@ def get_daily_high_and_low_by_session(data: pd.DataFrame):
 
     return lows, highs
 
+
 def get_volume_profile_node_volume(data: pd.DataFrame):
     """
     Given the canonical dataframe recorded, this function returns an array with info about the volume profile
@@ -594,6 +651,8 @@ def get_volume_profile_node_volume(data: pd.DataFrame):
     :param df: canonical dataframe recorded
     :return: numpy arrays with values
     """
+    
+    print(f'Get volume profile volume by price...')
 
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
@@ -605,12 +664,15 @@ def get_volume_profile_node_volume(data: pd.DataFrame):
     total_vol = np.zeros(data.shape[0])
     len_ = len(price)
     volume_profile = {}
-    total_volume = 0
+    
+    total_volume = volume[0]    
+    volume_profile[price[0]] = volume[0]
+    total_vol[0] = volume[0]
+    price_vol[0] = volume[0]    
     
     for i in tqdm(range(1, len_)):
 
         if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
-
             volume_profile.clear()
             total_volume = 0
         

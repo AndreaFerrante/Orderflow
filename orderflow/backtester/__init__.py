@@ -19,7 +19,7 @@ Quick start
 >>> results.summary()
 """
 
-from orderflow.backtester.models import (backtester)
+from orderflow.backtester import backtester
 from orderflow.backtester.models import (
     Side,
     ExitReason,

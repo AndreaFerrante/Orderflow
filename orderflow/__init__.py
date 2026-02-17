@@ -103,18 +103,17 @@ from orderflow.vwap import (
     get_vwap
 )
 
-from orderflow.configuration import (
-    SESSION_START_TIME,
-    SESSION_END_TIME,
-    EVENING_START_TIME,
-    EVENING_END_TIME,
-    KDE_VARIANCE_VALUE,
-    VALUE_AREA,
-    VWAP_BAND_OFFSET_1,
-    VWAP_BAND_OFFSET_2,
-    VWAP_BAND_OFFSET_3,
-    VWAP_BAND_OFFSET_4,
-    FUTURE_LETTERS,
-    FUTURE_VALUES
-
-)
+# from orderflow.configuration import (
+#     SESSION_START_TIME,
+#     SESSION_END_TIME,
+#     EVENING_START_TIME,
+#     EVENING_END_TIME,
+#     KDE_VARIANCE_VALUE,
+#     VALUE_AREA,
+#     VWAP_BAND_OFFSET_1,
+#     VWAP_BAND_OFFSET_2,
+#     VWAP_BAND_OFFSET_3,
+#     VWAP_BAND_OFFSET_4,
+#     FUTURE_LETTERS,
+#     FUTURE_VALUES
+# )

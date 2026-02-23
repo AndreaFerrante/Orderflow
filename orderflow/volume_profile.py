@@ -324,7 +324,7 @@ def get_daily_session_moving_POC(data: pd.DataFrame) -> np.array:
     Given the canonical dataframe recorded, this function returns the Point of Control (i.e. POC) that is moving during
     the day giving the volume sentiment of uptrending market or choppy market of downtrending market.
     :param df: canonical dataframe recorded
-    :return: numpy array for the daily moving poc
+    :return: numpy array for the daily moving poc and the last poc of the previous session (to be used as a reference for the next day)
     """
 
     print(f'Get daily moving poc...')
@@ -334,20 +334,25 @@ def get_daily_session_moving_POC(data: pd.DataFrame) -> np.array:
 
     volume    = np.array(data.Volume)
     price     = np.array(data.Price)
+    dates     = np.array(data.Date)
     session   = np.array(data.SessionType)
     poc_final = dict()
     len_      = len(price)
     poc_      = np.zeros(len_)
+    prev_poc_ = np.zeros(len_)
+    prev_poc  = 0.00
 
     poc_final[price[0]] = volume[0]
     poc_[0]             = price[0]
-
 
     for i in tqdm(range(1, len_)):
 
         cp = price[i]
 
         if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
+            if (dates[i] - dates[i - 1]).total_seconds() <= 86400: 
+                prev_poc = poc_[i - 1]
+                prev_poc_[i] = prev_poc
             poc_final.clear()
             poc_final[cp] = volume[i]
             poc_[i]       = cp
@@ -359,10 +364,9 @@ def get_daily_session_moving_POC(data: pd.DataFrame) -> np.array:
         else:
             poc_final[cp] = volume[i]
         poc_[i] = max(poc_final.items(), key=operator.itemgetter(1))[0]
+        prev_poc_[i] = prev_poc
 
-    #poc_[len_ - 1] = price[len_ - 1]
-
-    return poc_
+    return poc_, prev_poc_
 
 
 def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
@@ -649,7 +653,7 @@ def get_volume_profile_node_volume(data: pd.DataFrame):
     Given the canonical dataframe recorded, this function returns an array with info about the volume profile
     at the price: volume at price and total volume profile volume
     :param df: canonical dataframe recorded
-    :return: numpy arrays with values
+    :return: numpy arrays with values of total volume at price, ask volume and bid volume at price and total volume profile volume
     """
     
     print(f'Get volume profile volume by price...')
@@ -659,16 +663,27 @@ def get_volume_profile_node_volume(data: pd.DataFrame):
 
     volume = np.array(data.Volume)
     price = np.array(data.Price)
+    trade_type = np.array(data.TradeType)
     session = np.array(data.SessionType)
+    
     price_vol = np.zeros(data.shape[0])
+    price_ask_vol = np.zeros(data.shape[0])
+    price_bid_vol = np.zeros(data.shape[0])    
     total_vol = np.zeros(data.shape[0])
-    len_ = len(price)
     volume_profile = {}
     
+    len_ = len(price)    
+    
     total_volume = volume[0]    
-    volume_profile[price[0]] = volume[0]
+    volume_profile[price[0]] = [volume[0], volume[0] if trade_type[0] == 2 else 0, volume[0] if trade_type[0] == 1 else 0]
     total_vol[0] = volume[0]
-    price_vol[0] = volume[0]    
+    price_vol[0] = volume[0]
+    if trade_type[0] == 1:
+        price_bid_vol[0] = volume[0]
+        price_ask_vol[0] = 0
+    else:
+        price_ask_vol[0] = volume[0]
+        price_bid_vol[0] = 0
     
     for i in tqdm(range(1, len_)):
 
@@ -679,11 +694,23 @@ def get_volume_profile_node_volume(data: pd.DataFrame):
         total_volume += volume[i]
         
         if price[i] in volume_profile.keys():            
-            volume_profile[price[i]] += volume[i]
+            volume_profile[price[i]][0] += volume[i]
+            if trade_type[i] == 1:
+                volume_profile[price[i]][1] += volume[i]
+            elif trade_type[i] == 2:
+                volume_profile[price[i]][2] += volume[i]
         else:
-            volume_profile[price[i]] = volume[i]
+            volume_profile[price[i]] = [volume[i], 0, 0]
+            if trade_type[i] == 1:
+                volume_profile[price[i]][1] = volume[i]
+                volume_profile[price[i]][2] = 0
+            elif trade_type[i] == 2:
+                volume_profile[price[i]][1] = 0
+                volume_profile[price[i]][2] = volume[i]
         
-        price_vol[i] = volume_profile[price[i]]
+        price_vol[i] = volume_profile[price[i]][0]
+        price_ask_vol[i] = volume_profile[price[i]][1]
+        price_bid_vol[i] = volume_profile[price[i]][2]
         total_vol[i] = total_volume
     
-    return price_vol, total_vol
+    return price_vol, price_ask_vol, price_bid_vol, total_vol

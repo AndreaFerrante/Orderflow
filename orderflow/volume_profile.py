@@ -334,7 +334,7 @@ def get_daily_session_moving_POC(data: pd.DataFrame) -> np.array:
 
     volume    = np.array(data.Volume)
     price     = np.array(data.Price)
-    dates     = np.array(data.Date)
+    dates     = np.array(data.Datetime)
     session   = np.array(data.SessionType)
     poc_final = dict()
     len_      = len(price)

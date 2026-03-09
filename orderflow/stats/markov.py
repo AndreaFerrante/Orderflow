@@ -1,22 +1,40 @@
 """
-Markov Chain models for market prediction on tick-by-tick and compressed bar data.
+Markov Chain and Hidden Markov Model predictors for market state analysis.
 
-This module provides:
-- MarkovChainPredictor: Fixed-order Markov chains for UP/DOWN/FLAT state prediction
-- AdaptiveMarkovChainPredictor: Variable-order chains with automatic order selection
-- MultiFeatureHMM: Hidden Markov Models for multi-dimensional regime analysis
+Design principles
+-----------------
+* **No lookahead bias**: fit/predict split is always chronological.
+* **Numerical stability**: Laplace smoothing prevents log(0); all log operations
+  are guarded by a numerical floor.
+* **Reproducibility**: no global random state mutations.
+* **Correctness over cleverness**: standard formulas, no undocumented shortcuts.
 
-All classes support tick-by-tick and compressed bar (Volume/Range/Time) data.
+Public API
+----------
+MarkovChainPredictor          Fixed-order Markov chain.
+AdaptiveMarkovChainPredictor  Variable-order chain with BIC/log-likelihood order selection.
+MultiFeatureHMM               Wrapper around hmmlearn.GaussianHMM for regime detection.
+get_states_from_ohlc          Convert OHLC bar DataFrame to state sequence.
+predict_bar_state             One-call next-bar prediction on OHLC data.
 """
 
+from __future__ import annotations
+
+import logging
 from collections import defaultdict
-from typing import Optional, Tuple, Dict, List, Union
-from .markov_utilities import *
+from typing import Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
-import logging
+from hmmlearn import hmm as _hmm
+
+from .markov_utilities import adaptive_threshold_prices_states
 
 logger = logging.getLogger(__name__)
+
+_EPS: float = 1e-10
+_KNOWN_STATES: Tuple[str, ...] = ("UP", "DOWN", "FLAT")
+_UNIFORM_3: Dict[str, float] = {s: 1 / 3 for s in _KNOWN_STATES}
 
 
 class MarkovChainPredictor(object):
@@ -40,12 +58,17 @@ class MarkovChainPredictor(object):
     >>> next_prob = predictor.predict_distribution(['UP', 'DOWN'])
     """
 
-    def __init__(self, order: int = 1):
+    def __init__(self, order: int = 1, smoothing_alpha: float = 0.1):
         if order < 1:
             raise ValueError("Order must be >= 1.")
+        if smoothing_alpha <= 0:
+            raise ValueError("smoothing_alpha must be > 0.")
         self.order = order
+        self.smoothing_alpha = smoothing_alpha
         self.transition_counts: Dict[Tuple[str, ...], Dict[str, int]] = defaultdict(lambda: defaultdict(int))
         self.transition_probs: Dict[Tuple[str, ...], Dict[str, float]] = {}
+        self._known_states: List[str] = []
+        self.fitted: bool = False
 
     def fit(self, states: List[str]) -> None:
         """
@@ -64,21 +87,29 @@ class MarkovChainPredictor(object):
         if len(states) <= self.order:
             raise ValueError(f"Need >order ({self.order}) states, got {len(states)}.")
 
-        # Calculate transition frequencies
+        self._known_states = sorted(set(states))
+        n_states = len(self._known_states)
+
+        # Accumulate transition counts
         for i in range(self.order, len(states)):
             prev_states = tuple(states[i - self.order : i])
             current_state = states[i]
             self.transition_counts[prev_states][current_state] += 1
 
-        # Calculate probabilities
+        # Compute Laplace-smoothed probabilities over all known states
+        alpha = self.smoothing_alpha
         for prev_states, next_counts in self.transition_counts.items():
-            total = sum(next_counts.values())
+            total = sum(next_counts.values()) + alpha * n_states
             self.transition_probs[prev_states] = {
-                s: c / total for s, c in next_counts.items()
+                s: (next_counts.get(s, 0) + alpha) / total
+                for s in self._known_states
             }
 
-        logger.info(f"Markov(order={self.order}) fitted on {len(states)} states. "
-                   f"Found {len(self.transition_probs)} unique patterns.")
+        self.fitted = True
+        logger.info(
+            "Markov(order=%d) fitted on %d states. %d unique patterns.",
+            self.order, len(states), len(self.transition_probs),
+        )
 
     def predict_distribution(self, recent_states: List[str]) -> Dict[str, float]:
         """
@@ -94,34 +125,32 @@ class MarkovChainPredictor(object):
         Dict[str, float]
             Probability distribution over next states.
         """
+        if not self.fitted:
+            raise RuntimeError("Model not fitted. Call fit() first.")
         if len(recent_states) < self.order:
             raise ValueError(f"Need >= {self.order} recent states, got {len(recent_states)}.")
 
         prev_states = tuple(recent_states[-self.order :])
-
         if prev_states in self.transition_probs:
-            return self.transition_probs[prev_states]
+            return dict(self.transition_probs[prev_states])
 
-        # Fallback: try shorter patterns
+        # Fallback: aggregate over all patterns that share the same suffix
         for reduced_order in range(self.order - 1, 0, -1):
-            reduced_prev_states = tuple(recent_states[-reduced_order:])
-            candidates = {
-                k: v for k, v in self.transition_probs.items()
-                if k[-reduced_order:] == reduced_prev_states
-            }
-
+            suffix = tuple(recent_states[-reduced_order:])
+            candidates = [
+                v for k, v in self.transition_probs.items() if k[-reduced_order:] == suffix
+            ]
             if candidates:
-                aggregated_counts = defaultdict(float)
-                for dist in candidates.values():
+                aggregated: Dict[str, float] = defaultdict(float)
+                for dist in candidates:
                     for st, p in dist.items():
-                        aggregated_counts[st] += p
+                        aggregated[st] += p
+                total = sum(aggregated.values())
+                return {st: p / total for st, p in aggregated.items()}
 
-                # Normalize
-                total = sum(aggregated_counts.values())
-                return {st: p / total for st, p in aggregated_counts.items()}
-
-        # Uniform prior
-        return {"UP": 1 / 3, "DOWN": 1 / 3, "FLAT": 1 / 3}
+        # Unknown pattern — return uniform over known states
+        n = len(self._known_states) or 3
+        return {s: 1.0 / n for s in (self._known_states or list(_KNOWN_STATES))}
 
     def predict_next_state(self, recent_states: List[str]) -> str:
         """
@@ -130,7 +159,7 @@ class MarkovChainPredictor(object):
         Parameters
         ----------
         recent_states : List[str]
-            Last states.
+            Recent states.
 
         Returns
         -------
@@ -175,11 +204,19 @@ class AdaptiveMarkovChainPredictor(object):
 
     def _fit_single_order(self, states: List[str], order: int) -> Dict[Tuple[str, ...], Dict[str, float]]:
         """
-        Fit di una catena di Markov di ordine fissato con Laplace smoothing.
+        Fit a single fixed-order Markov chain with Laplace smoothing.
 
-        :param states: lista di stati
-        :param order: ordine della catena
-        :return: dizionario delle probabilità di transizione
+        Parameters
+        ----------
+        states : List[str]
+            State sequence.
+        order : int
+            Chain order.
+
+        Returns
+        -------
+        Dict[Tuple[str, ...], Dict[str, float]]
+            Transition probability tables.
         """
         transition_counts = defaultdict(lambda: defaultdict(float))
         # Possibili stati

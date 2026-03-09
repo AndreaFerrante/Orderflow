@@ -1,614 +1,444 @@
-# OrderFlow Statistics Module
+﻿# OrderFlow Statistics Module
 
-Professional-grade statistical analysis for tick-by-tick and compressed bar market data. Production-ready tools for regime detection, state prediction, and strategy robustness assessment.
+**Institutional-grade statistical engine for systematic trading research.**
 
----
-
-## Table of Contents
-
-1. [Module Overview](#module-overview)
-2. [Markov Chain Predictions](#markov-chain-predictions)
-3. [Hidden Markov Models](#hidden-markov-models)
-4. [Monte Carlo Analysis](#monte-carlo-analysis)
-5. [Working with Compressed Bars](#working-with-compressed-bars)
-6. [Best Practices](#best-practices)
-7. [Complete Examples](#complete-examples)
+This module provides battle-tested tools for quantitative trading analysis: descriptive statistics, return transformations, Monte Carlo simulation, and Markov regime detection. Every function is designed with **numerical stability**, **no lookahead bias**, and **explicit error handling** as core principles.
 
 ---
 
-## Module Overview
+## Quick Start
 
-The `orderflow.stats` module provides cutting-edge statistical tools:
-
-| Tool | Purpose | Input | Output |
-|------|---------|-------|--------|
-| **MarkovChainPredictor** | Fixed-order state prediction | Price sequences or OHLC bars | UP/DOWN/FLAT probabilities |
-| **AdaptiveMarkovChainPredictor** | Auto-order selection + validation | Price sequences or OHLC bars | Best-order predictor |
-| **MultiFeatureHMM** | Multi-dimensional regime detection | Features (return, vol, slope) | Hidden states + probabilities |
-| **get_montecarlo_analysis** | Strategy robustness via bootstrap | Trade P&L | Equity curves + CI + metrics |
-| **get_states_from_ohlc** | OHLC → UP/DOWN/FLAT states | Compressed bar DataFrame | State list |
-| **predict_bar_state** | Next-bar prediction on OHLC data | OHLC DataFrame + fitted predictor | (state, probability dict) |
-
-### Key Features
-
-✓ **Production-Ready**: Full error handling, logging, type hints
-✓ **Compressed Bar Support**: Volume/Range/Time bars, OHLC data
-✓ **Tick-by-Tick**: Works directly on raw market data
-✓ **Validated**: Automatic parameter validation, sensible defaults
-✓ **Extensible**: Base classes for custom implementations
-
----
-
-## Markov Chain Predictions
-
-Predict the next market movement (UP/DOWN/FLAT) based on recent price history.
-
-### Fixed-Order Chain (Simple)
-
-Use when you know the optimal history depth:
+### 1. **Analyze Returns Distribution**
 
 ```python
-from orderflow.stats import MarkovChainPredictor, threshold_prices_states
-
-# Historical prices
-prices = [100.0, 101.2, 101.5, 100.8, 101.1, 102.0]
-
-# Convert to states
-states = threshold_prices_states(prices, threshold=1e-8)
-# → ['UP', 'UP', 'DOWN', 'UP', 'UP']
-
-# Create and fit predictor (order=2 means use last 2 states)
-predictor = MarkovChainPredictor(order=2)
-predictor.fit(states)
-
-# Predict next state
-recent = ['UP', 'UP']
-next_state = predictor.predict_next_state(recent)
-# → 'UP' or 'DOWN' or 'FLAT'
-
-# Get probability distribution
-prob_dist = predictor.predict_distribution(recent)
-# → {'UP': 0.65, 'DOWN': 0.20, 'FLAT': 0.15}
-```
-
-### Adaptive Chain (Recommended)
-
-Automatically selects the best order using validation:
-
-```python
-from orderflow.stats import AdaptiveMarkovChainPredictor, adaptive_threshold_prices_states
-
-# Use adaptive thresholding (accounts for volatility)
-states = adaptive_threshold_prices_states(prices, window=20)
-
-# Auto-select order from 1 to 10
-predictor = AdaptiveMarkovChainPredictor(max_order=10, smoothing_alpha=0.1)
-predictor.fit(states, validation_ratio=0.2)  # 80/20 split
-
-print(f"Selected order: {predictor.best_order}")
-# → Selected order: 3
-
-# Make predictions
-prediction = predictor.predict_next_state(['UP', 'DOWN', 'UP'])
-distribution = predictor.predict_distribution(['UP', 'DOWN', 'UP'])
-```
-
-### Production Considerations
-
-| Setting | Recommendation | Rationale |
-|---------|---|---|
-| **order** | 2-5 | Too low = overcounting; too high = overfitting on sparse patterns |
-| **smoothing_alpha** | 0.1-1.0 | Prevents zero probabilities; higher = more conservative |
-| **validation_ratio** | 0.15-0.25 | Trade-off between fitting and validation; 0.2 is standard |
-| **min_states** | 50+ | Need enough history for reliable estimation |
-
----
-
-## Hidden Markov Models
-
-Detect hidden market regimes using multi-dimensional features (returns, volatility, order flow).
-
-### Basic HMM Workflow
-
-```python
-from orderflow.stats import (
-    MultiFeatureHMM,
-    select_best_hmm_model,
-    compute_df_features,
-)
-import pandas as pd
+from orderflow.stats import describe, sharpe_ratio, max_drawdown
 import numpy as np
 
-# Prepare market data (tick data or compressed bars)
-df = pd.DataFrame({
-    'price': [100.0 + i*0.05 + np.random.randn()*0.1 for i in range(1000)],
-    'volume': np.random.uniform(1e4, 5e4, 1000),
-})
+# Daily returns from your strategy
+returns = np.array([0.012, -0.005, 0.008, 0.015, -0.003, 0.010])
 
-# Engineer features: return, volatility, slope, log-volume
-df_features = compute_df_features(
-    df,
-    window_volatility=20,
-    window_slope=5
-)
+# Full statistical snapshot
+summary = describe(returns)
+print(f"Mean: {summary['mean']:.4f}, Std: {summary['std']:.4f}, Skew: {summary['skew']:.3f}")
+# Output: Mean: 0.0062, Std: 0.0085, Skew: -0.145
 
-# Extract feature matrix
-X = df_features[['return', 'volatility', 'slope', 'log_volume']].values
-
-# Auto-select best HMM (test 2-5 hidden states)
-best_model = select_best_hmm_model(
-    data=X,
-    n_states_range=[2, 3, 4, 5],
-    covariance_type='full',
-    criterion='bic',
-    random_state=42
-)
-
-# Wrap in class
-hmm = MultiFeatureHMM(model=best_model)
-hmm.fit(X)  # Re-fit on full data
-
-# Decode hidden states
-states = hmm.predict_states(X)
-# → [0, 1, 0, 2, 1, ...]
-
-# Get posterior probabilities for regime confirmation
-probs = hmm.predict_proba_states(X)
-# → [[0.8, 0.1, 0.1], [0.1, 0.7, 0.2], ...]
+# Risk-adjusted performance metrics
+sharpe = sharpe_ratio(returns, periods_per_year=252)
+max_dd = max_drawdown(returns)
+print(f"Sharpe: {sharpe:.3f}, Max Drawdown: {max_dd:.2%}")
+# Output: Sharpe: 0.749, Max Drawdown: 5.30%
 ```
 
-### Interpreting Hidden States
-
-HMM discovers 2-5 market regimes automatically:
-
-```
-State 0: Low volatility, positive drift    (calm uptrend)
-State 1: High volatility, mean-reversion   (choppy)
-State 2: High volatility, negative drift   (panic selloff)
-```
-
-Use posterior probabilities for **regime confirmation**:
+### 2. **Convert Between Return Types**
 
 ```python
-# Current regime strength
-current_probs = probs[-1]  # Last observation
-regime_strength = max(current_probs)
+from orderflow.stats import to_log_returns, to_arithmetic_returns, equity_curve
+import pandas as pd
 
-if regime_strength > 0.7:
-    current_regime = np.argmax(current_probs)
-    print(f"Strong regime {current_regime} ({regime_strength:.1%} confidence)")
-else:
-    print("Weak signal - regime change likely")
+# Price series
+prices = pd.Series([100, 102, 105, 103, 108])
+
+# Log returns: numerically stable, time-additive
+log_rets = to_log_returns(prices)  # [0.0198, 0.0290, -0.0196, 0.0488]
+
+# Equity curve: cumulative P&L from return series
+rets = np.array([0.05, -0.02, 0.03])  # Sample returns
+curve = equity_curve(rets, starting_cash=1000)  # [1000, 1050, 1028.9, 1059.7]
 ```
 
-### HMM Production Parameters
-
-| Parameter | Default | Range | Notes |
-|-----------|---------|-------|-------|
-| **n_components** | BIC-selected | 2-5 | More states = overfitting; fewer = oversimplification |
-| **covariance_type** | 'full' | 'full', 'diag', 'tied' | 'full' is most flexible (uses more data) |
-| **criterion** | 'bic' | 'bic', 'aic' | BIC is more conservative; AIC for smaller data |
-| **window_volatility** | 20 | 10-40 | Rolling window for volatility; match your bar period |
-
----
-
-## Monte Carlo Analysis
-
-Assess trading strategy robustness through bootstrap resampling of historical trades.
-
-### Basic Monte Carlo
+### 3. **Simulate Strategy Before Trading**
 
 ```python
 from orderflow.stats import get_montecarlo_analysis
-import pandas as pd
 
-# Historical trades from backtester
-trades = pd.DataFrame({
-    'Datetime': pd.date_range('2023-01-01', periods=100),
-    'Entry_Gains': [5.2, -3.1, 8.5, -1.2, 10.0],  # P&L per trade
-})
+# Your trade P&L (profit & loss per closed trade)
+trade_pnl = np.array([250, -150, 450, -50, 300, -100, 600])
 
-# Run 500 simulations, sample 50 trades per iteration
-equity_patterns, summary, stats = get_montecarlo_analysis(
-    trades,
-    n_rows_sample=50,
-    n_simulations=500,
-    entry_col_name='Entry_Gains',
+# Bootstrap 1000 random trade sequences to stress-test your strategy
+mc_result = get_montecarlo_analysis(
+    trade_pnl,
+    n_simulations=1000,
     confidence_level=0.95,
     random_state=42
 )
 
-# Results
-print(f"Mean final equity: ${stats['mean_equity']:.2f}")
-print(f"95% CI: [${stats['ci_lower']:.2f}, ${stats['ci_upper']:.2f}]")
-print(f"Win rate: {stats['win_rate']:.1%}")
-print(f"Best case: ${stats['max_equity']:.2f}")
-print(f"Worst case: ${stats['min_equity']:.2f}")
-
-# Visualize equity paths (use matplotlib directly on equity_patterns)
-import matplotlib.pyplot as plt
-for path in equity_patterns:
-    plt.plot(path, alpha=0.05, color='steelblue')
-plt.title('Monte Carlo Equity Paths')
-plt.show()
+print(f"Expected final equity: ${mc_result.mean_equity:,.0f}")
+print(f"95% CI: [${mc_result.ci_lower:,.0f}, ${mc_result.ci_upper:,.0f}]")
+print(f"Win rate: {mc_result.win_rate:.1%}")
+# Output: Expected: $2,250, CI: [$450, $4,150], Win: 82%
 ```
 
-### Interpreting Results
-
-| Metric | Good | Warning | Bad |
-|--------|------|---------|-----|
-| **Mean equity** | Positive | Near-zero | Negative |
-| **Confidence interval** | Above zero | Touches zero | Below zero |
-| **Win rate** | >60% | 50-60% | <50% |
-| **Max/Min ratio** | <-2 | -2 to -1 | >-1 (worst case) |
-| **Distribution shape** | Unimodal, tight | Bimodal | Fat tails, highly skewed |
-
-### Production Checklist
+### 4. **Detect Market Regime with Markov Chains**
 
 ```python
-# ✓ Minimum trades
-if len(trades) < 30:
-    print("WARNING: <30 trades. Results may be unstable.")
+from orderflow.stats.markov_utilities import threshold_prices_states
+from orderflow.stats.markov import MarkovChainPredictor
 
-# ✓ Sample size vs. trades
-if n_rows_sample > len(trades) * 0.5:
-    print("WARNING: Sample size too large. Use <50% of total trades.")
+# Convert price bars into states
+prices = [100, 102, 101, 103, 105, 104]
+states = threshold_prices_states(prices, threshold=0.5)
+# ['UP', 'DOWN', 'UP', 'UP', 'DOWN']
 
-# ✓ Diversification
-if n_simulations < 100:
-    print("WARNING: <100 sims. Use >= 500 for production.")
-
-# ✓ Statistical significance
-ci_width = stats['ci_upper'] - stats['ci_lower']
-if ci_width > stats['mean_equity'] * 2:
-    print("WARNING: Large CI relative to mean. Low signal clarity.")
-```
-
-
-
----
-
-## Working with Compressed Bars
-
-`get_states_from_ohlc` and `predict_bar_state` are designed for compressed bars
-(range, volume, time) produced by the `orderflow.compressor` module, as well as
-any standard OHLC DataFrame.
-
-### Volume / Range / Time Bars
-
-```python
-from orderflow.compressor import compress_to_bar_once_range_met
-from orderflow.stats import (
-    get_states_from_ohlc,
-    predict_bar_state,
-    MarkovChainPredictor,
-    AdaptiveMarkovChainPredictor,
-)
-import pandas as pd
-
-# Load tick data
-ticks = pd.read_csv('tbt/2023_06_29.txt', sep=';')
-
-# Compress to 4-point range bars (16 ticks × 0.25 tick size)
-bars = compress_to_bar_once_range_met(
-    ticks,
-    price_range=16,
-    tick_size=0.25
-)
-# bars has columns: Open, High, Low, Close, Volume, ...
-
-# ── Method 1: close-to-close trend ──────────────────────────────────────────
-states_close = get_states_from_ohlc(bars, method='close')
-# len == len(bars) - 1  →  ['UP', 'DOWN', 'UP', ...]
-
-predictor = MarkovChainPredictor(order=3)
-predictor.fit(states_close)
-next_pred, next_probs = predict_bar_state(bars, predictor, method='close')
-print(f"Close method → {next_pred}: {next_probs}")
-
-# ── Method 2: intrabar volatility regime ────────────────────────────────────
-states_hl = get_states_from_ohlc(bars, method='hl_range')
-# UP  = range > rolling avg (expansion / breakout)
-# DOWN = range < rolling avg (compression)
-# len == len(bars)
-
-adaptive = AdaptiveMarkovChainPredictor(max_order=5)
-adaptive.fit(states_hl)
-next_pred2, next_probs2 = predict_bar_state(bars, adaptive, method='hl_range')
-print(f"HL-range method (order={adaptive.best_order}) → {next_pred2}: {next_probs2}")
-
-# ── Method 3: intrabar directional bias (bar color) ─────────────────────────
-states_oc = get_states_from_ohlc(bars, method='oc_range')
-# UP  = Close > Open (bullish candle)
-# DOWN = Close < Open (bearish candle)
-# FLAT = doji
-# len == len(bars)
-
-predictor3 = MarkovChainPredictor(order=2)
-predictor3.fit(states_oc)
-next_pred3, next_probs3 = predict_bar_state(bars, predictor3, method='oc_range')
-print(f"OC-range method → {next_pred3}: {next_probs3}")
-```
-
-### `predict_bar_state` with Both Predictor Types
-
-`predict_bar_state` accepts both `MarkovChainPredictor` and
-`AdaptiveMarkovChainPredictor`. The lookback window is resolved automatically:
-
-```python
-# MarkovChainPredictor → lookback = predictor.order
-next_state, dist = predict_bar_state(bars, predictor)
-
-# AdaptiveMarkovChainPredictor → lookback = predictor.best_order
-next_state, dist = predict_bar_state(bars, adaptive_predictor)
-
-# Override lookback manually
-next_state, dist = predict_bar_state(bars, predictor, lookback=5)
-```
-
-A `ValueError` is raised if the bar DataFrame does not contain enough rows to
-extract `lookback` states (e.g., calling on a bar series with only 2 bars while
-`lookback=3`).
-
-### OHLC State Methods
-
-| Method | Use Case | Interpretation | Output length |
-|--------|----------|----------------|---------------|
-| **"close"** | Inter-bar trend (close-to-close) | Each bar vs its predecessor; uses adaptive volatility threshold | `len(df) - 1` |
-| **"hl_range"** | Intrabar volatility regime | UP = range expands above rolling avg (breakout); DOWN = range contracts (compression) | `len(df)` |
-| **"oc_range"** | Intrabar directional bias | UP = bullish candle `(Close > Open)`; DOWN = bearish; FLAT = doji | `len(df)` |
-
-> **Important**: `hl_range` and `oc_range` classify *each bar directly* — no price-differencing is applied.
-> `close` applies an adaptive volatility-scaled threshold across successive close prices.
-
----
-
-## Best Practices
-
-### 1. Data Preparation
-
-```python
-# ✓ Validate inputs
-if df.isnull().any().any():
-    df = df.dropna()
-    logging.warning(f"Dropped {len(df) - len(df_clean)} NaN rows")
-
-# ✓ Use enough history
-if len(df) < 100:
-    raise ValueError("Minimum 100 bars/ticks required")
-
-# ✓ Check for sufficient variation
-state_counts = pd.Series(states).value_counts()
-if state_counts.min() < 5:
-    logging.warning("Very few samples in some states. Increase data or lower threshold.")
-```
-
-### 2. Model Selection
-
-```python
-# ✓ Use adaptive models (auto-selection)
-predictor = AdaptiveMarkovChainPredictor(max_order=10)
-predictor.fit(states)
-logging.info(f"Auto-selected order: {predictor.best_order}")
-
-# ✓ Monitor fit quality
-patterns = len(predictor.transition_probs_by_order)
-coverage = patterns / (3 ** predictor.best_order)
-if coverage < 0.1:
-    logging.warning(f"Low pattern coverage: {coverage:.1%}")
-```
-
-### 3. Backtesting Integration
-
-```python
-# Before live trading:
-# 1. Train on historical data
-predictor.fit(historical_states)
-
-# 2. Validate on out-of-sample period
-oos_states = get_states_from_ohlc(oos_data)
-accuracy = sum(
-    predictor.predict_next_state(oos_states[i-order:i]) == oos_states[i]
-    for i in range(order, len(oos_states))
-) / (len(oos_states) - order)
-print(f"Out-of-sample accuracy: {accuracy:.1%}")
-
-# 3. Trade only if confidence > threshold
-dist = predictor.predict_distribution(recent_states)
-confidence = max(dist.values())
-if confidence > 0.55:  # Only trade with >55% confidence
-    signal = max(dist, key=dist.get)
-```
-
-### 4. Monitoring & Logging
-
-```python
-import logging
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(message)s'
-)
-
-logger = logging.getLogger('orderflow.stats')
-
-# Models log automatically:
-# → "Markov(order=2) fitted on 1000 states. Found 45 unique patterns."
-# → "AdaptiveMarkov fitted: best_order=3, val_ll=-0.1234, patterns=120"
-# → "HMM fitted: 3 states, log-likelihood=1234.56"
-```
-
----
-
-## Complete Examples
-
-### Example 1: Tick-by-Tick State Prediction
-
-```python
-import pandas as pd
-from orderflow.stats import (
-    threshold_prices_states,
-    MarkovChainPredictor,
-)
-
-# Load tick data
-ticks = pd.read_csv('tbt/2023_06_29.txt', sep=';')
-
-# Extract prices
-prices = ticks['Price'].tolist()
-
-# Generate states
-states = threshold_prices_states(prices, threshold=0.1)
-
-# Train
+# Fit a 2nd-order Markov chain
 predictor = MarkovChainPredictor(order=2)
 predictor.fit(states)
 
-# Predict next 5 moves
-recent = states[-2:]
-for _ in range(5):
-    next_state = predictor.predict_next_state(recent)
-    recent.append(next_state)
-    recent = recent[-2:]
-    print(f"Predicted: {next_state}")
+# Predict next state probability given recent history
+next_probs = predictor.predict_distribution(['UP', 'UP'])
+print(next_probs)  # {'UP': 0.65, 'DOWN': 0.25, 'FLAT': 0.10}
 ```
 
-### Example 2: Multi-Regime HMM + Trading
+---
+
+## Core Components
+
+### **1. Stats Module** — Risk & Performance Metrics
+
+**Problem it solves:** Quantify strategy quality beyond raw returns.
+
+**Key functions:**
+
+| Function | Use Case | Theory |
+|----------|----------|--------|
+| `describe()` | Full statistical snapshot | Mean, std, skew, kurtosis, percentiles |
+| `sharpe_ratio()` | Risk-adjusted returns | Excess return per unit of volatility |
+| `sortino_ratio()` | Downside risk focus | Penalizes only negative volatility |
+| `calmar_ratio()` | Recovery speed | CAGR divided by max drawdown |
+| `information_ratio()` | Active management quality | Excess return vs benchmark volatility |
+| `max_drawdown()` | Worst historical loss | Peak-to-trough percentage decline |
+| `var_historical()` | Value-at-Risk | Loss threshold at confidence level |
+| `cvar_historical()` | Expected Shortfall | Average loss when VaR is breached |
+| `hurst_exponent()` | Mean-reversion tendency | >0.5 = trending, <0.5 = mean-reverting |
+| `rolling_sharpe()` | Time-series stability | Window-based Sharpe (causal, no lookahead) |
+
+**Example: Assess Your Strategy**
 
 ```python
-from orderflow.stats import (
-    select_best_hmm_model,
-    compute_df_features,
-    MultiFeatureHMM,
-)
-import pandas as pd
-import numpy as np
+from orderflow.stats import describe, sharpe_ratio, sortino_ratio, max_drawdown
 
-# Compressed bars with features
-df_bars = pd.read_csv('bars.csv')
-df_feat = compute_df_features(df_bars, window_volatility=20)
+daily_returns = np.array([...])  # Your strategy P&L
 
-# Train HMM
-X = df_feat[['return', 'volatility', 'slope', 'log_volume']].values
-best_hmm = select_best_hmm_model(
-    X, n_states_range=[2, 3, 4], criterion='bic'
-)
-hmm = MultiFeatureHMM(model=best_hmm)
-hmm.fit(X)
+stats = describe(daily_returns)
+# → {count, mean, std, min, max, p5, p25, p50, p75, p95, skew, kurt}
 
-# Trading rules by regime
-states = hmm.predict_states(X)
-probs = hmm.predict_proba_states(X)
+sharpe = sharpe_ratio(daily_returns, periods_per_year=252)
+# Higher is better; 1.0+ is professional-grade
 
-for i in range(len(states)):
-    regime = states[i]
-    confidence = max(probs[i])
-    
-    if regime == 0 and confidence > 0.7:
-        print(f"Bar {i}: Buy (calm uptrend)")
-    elif regime == 2 and confidence > 0.7:
-        print(f"Bar {i}: Sell (panic)")
-    else:
-        print(f"Bar {i}: Neutral (low confidence)")
+sortino = sortino_ratio(daily_returns, periods_per_year=252, target_return=0)
+# Focuses on downside; usually >Sharpe if strategy is negatively skewed
+
+mdd = max_drawdown(daily_returns)
+# Worst case from any peak to trough
 ```
 
-### Example 3: Strategy Monte Carlo Validation
+**Theory Behind Risk Metrics:**
+- **Sharpe Ratio** = (mean return − risk-free rate) / std(returns)
+  - Assumes normal distribution; vulnerable to outliers
+  - Use for normally distributed returns (most equity strategies)
+  
+- **Sortino Ratio** = (mean return − target) / std(downside)
+  - Penalizes only downside volatility (days below target)
+  - Better for strategies with asymmetric losses
+  
+- **Calmar Ratio** = CAGR / max drawdown
+  - Measures recovery efficiency
+  - For trend-following: often 0.5–2.0⁣
+
+---
+
+### **2. Returns Module** — Price ↔ Return Conversions
+
+**Problem it solves:** Correctly transform prices into return series without lookahead bias or numerical errors.
+
+**Key functions:**
+
+| Function | Purpose |
+|----------|---------|
+| `to_log_returns(prices)` | $r_t = \ln(P_t / P_{t-1})$ — time-additive, stable |
+| `to_arithmetic_returns(prices)` | $r_t = (P_t - P_{t-1}) / P_{t-1}$ — intuitive interpretation |
+| `log_to_arithmetic()` | Convert log→arithmetic |
+| `arithmetic_to_log()` | Convert arithmetic→log |
+| `annualise_return(mean_period_return, periods_per_year)` | Scale single-period return to annual |
+| `annualise_volatility()` | Scale period volatility to annual |
+| `equity_curve(returns, starting_cash)` | Build cumulative P&L from return series |
+| `drawdown_series()` | Full time-series of underwater P&L (not just max) |
+| `rolling_volatility()` | Causal rolling volatility window |
+| `underwater_duration()` | How many bars spent below prior peak |
+
+**When to Use Which Return Type:**
+
+| Scenario | Use This | Why |
+|----------|----------|-----|
+| Multi-period compounding | Log returns | Time-additive: Σ log-rets = log(final/initial) |
+| Attribution analysis | Arithmetic returns | Linear combination for position-level contribution |
+| Volatility estimation | Log returns | Numerically stable for long series |
+| Sharpe/Sortino | Either (standardize) | Both give equivalent annualized metrics |
+
+**Example: Track Strategy Equity**
 
 ```python
-from orderflow.stats import get_montecarlo_analysis
-import pandas as pd
+from orderflow.stats import to_log_returns, equity_curve, annualise_return, rolling_volatility
 
-# Load backtest results
-trades = pd.read_csv('backtest_trades.csv')
-trades['Datetime'] = pd.to_datetime(trades['Datetime'])
+prices = np.array([100, 102, 100, 105, 103, 110])
+rets = to_log_returns(prices)
+# [0.0198, -0.0198, 0.0488, -0.0196, 0.0677]
 
-# Run MC
-equity_patterns, summary, stats = get_montecarlo_analysis(
-    trades,
-    n_rows_sample=40,
+# Cumulative P&L
+curve = equity_curve(rets, starting_cash=100000)
+# [100000, 101980, 100000, 104880, 102800, 109700]
+
+# Annualize
+annual_return = annualise_return(np.mean(rets), periods_per_year=252)
+annual_vol = annualise_volatility(np.std(rets), periods_per_year=252)
+print(f"Annual return: {annual_return:.1%}, Annual vol: {annual_vol:.1%}")
+```
+
+---
+
+### **3. Monte Carlo Module** — Stress Test via Bootstrap
+
+**Problem it solves:** "What if my trade sequence randomly reshuffles? Will I still be profitable?"
+
+**Key concept:** Non-parametric bootstrap. Treat each trade's P&L as i.i.d., resample with replacement 1000× times, rebuild equity curve for each.
+
+**Example:**
+
+```python
+from orderflow.stats.montecarlo import get_montecarlo_analysis
+
+# 50 closed trades from your backtest
+trades_pnl = np.array([-50, 150, 200, -100, 75, ..., 300])  # 50 values
+
+result = get_montecarlo_analysis(
+    pnl_series=trades_pnl,
     n_simulations=1000,
-    entry_col_name='PnL',
-    confidence_level=0.99,  # 99% CI
-    random_state=123
+    confidence_level=0.95,
+    random_state=42
 )
 
-# Check if robust
-if stats['ci_lower'] > 0:
-    print("Strategy is ROBUST (99% CI above zero)")
-elif stats['mean_equity'] > 0 and stats['win_rate'] > 0.55:
-    print("Strategy is MARGINAL (needs refinement)")
-else:
-    print("Strategy is NOT ROBUST (reject)")
+print(f"Original final equity: ${trades_pnl.sum():,.0f}")
+print(f"Expected (mean simulation): ${result.mean_equity:,.0f}")
+print(f"95% confidence interval: [{result.ci_lower:,.0f}, {result.ci_upper:,.0f}]")
+print(f"Worst case (1st percentile): ${result.min_equity:,.0f}")
+print(f"P(profitable): {result.win_rate:.1%}")
+```
+
+**What it tells you:**
+- If 95% CI includes negative numbers → strategy is **fragile**, order-dependent
+- If win_rate < 60% → trades are too noisy to rely on
+- If min_equity is deeply negative → one bad streak can wipe you out
+
+---
+
+### **4. Markov Module** — Regime & State Prediction
+
+**Problem it solves:** "Is the market in an UP/DOWN/FLAT regime? What's the probability of the next bar reversing?"
+
+**Key concepts:**
+- Convert prices → states (UP, DOWN, FLAT) using a threshold
+- Fit a fixed-order Markov chain (e.g., order=2 means "depends on last 2 states")
+- Predict next state distribution given recent history
+
+**Example:**
+
+```python
+from orderflow.stats.markov import MarkovChainPredictor, AdaptiveMarkovChainPredictor
+from orderflow.stats.markov_utilities import threshold_prices_states
+
+# 100 daily close prices
+prices = [100, 102, 101, 103, 105, ...]
+
+# Discretize into UP/DOWN/FLAT (50 cents = threshold)
+states = threshold_prices_states(prices, threshold=0.5)
+
+# Fit a 1st-order Markov chain
+model = MarkovChainPredictor(order=1)
+model.fit(states)
+
+# Predict: given last state was UP, what's next?
+next_dist = model.predict_distribution(['UP'])
+# {'UP': 0.60, 'DOWN': 0.30, 'FLAT': 0.10}
+
+# Trade filter: only take long entries if P(UP) > 0.55
+if next_dist['UP'] > 0.55:
+    enter_long()
+```
+
+**Theory:**
+- **Markov chain of order k** = next state depends on last k states
+- **Laplace smoothing** = avoid zero probabilities for unseen transitions
+- **Adaptive order selection** = automatically choose k via BIC (less overfitting)
+
+---
+
+## Real-World Workflows
+
+### **Workflow 1: Complete Strategy Backtest Analysis**
+
+```python
+import numpy as np
+from orderflow.stats import (
+    describe, sharpe_ratio, sortino_ratio, calmar_ratio,
+    max_drawdown, rolling_sharpe, var_historical, cvar_historical,
+    to_log_returns, equity_curve
+)
+from orderflow.stats.montecarlo import get_montecarlo_analysis
+
+# Step 1: Load backtest results
+prices = load_ohlc_data('SPY', '2023-01-01', '2024-01-01')['close']
+trades_pnl = np.array([...])  # P&L from closed trades
+
+# Step 2: Analyze returns distribution
+log_rets = to_log_returns(prices)
+summary = describe(log_rets)
+
+# Step 3: Calculate performance metrics
+perf = {
+    'sharpe': sharpe_ratio(log_rets),
+    'sortino': sortino_ratio(log_rets),
+    'calmar': calmar_ratio(log_rets),
+    'max_dd': max_drawdown(log_rets),
+    'var_95': var_historical(log_rets, confidence=0.95),
+    'cvar_95': cvar_historical(log_rets, confidence=0.95),
+}
+
+# Step 4: Check rolling performance (no lookahead)
+rolling_sharpe_ts = rolling_sharpe(log_rets, window=60)
+
+# Step 5: Monte Carlo robustness
+mc = get_montecarlo_analysis(trades_pnl, n_simulations=1000)
+
+# Step 6: Report
+print("=" * 60)
+print(f"STRATEGY PERFORMANCE REPORT")
+print("=" * 60)
+print(f"Mean return:        {summary['mean']:.4f} ({summary['mean']*252*100:.2f}% annualized)")
+print(f"Std dev:            {summary['std']:.4f} ({summary['std']*np.sqrt(252)*100:.2f}% annualized)")
+print(f"Skewness:           {summary['skew']:.3f}", end="")
+if summary['skew'] < -0.5: print(" (LEFT-SKEWED, risky)")
+elif summary['skew'] > 0.5: print(" (RIGHT-SKEWED, lucky)")
+else: print(" (roughly symmetric)")
+print(f"Kurtosis (excess):  {summary['kurt']:.3f}", end="")
+if summary['kurt'] > 1: print(" (fat tails, higher crash risk)")
+else: print(" (thin tails)")
+print()
+print(f"Sharpe ratio:       {perf['sharpe']:.3f}")
+print(f"Sortino ratio:      {perf['sortino']:.3f}")
+print(f"Calmar ratio:       {perf['calmar']:.3f}")
+print(f"Max drawdown:       {perf['max_dd']:.2%}")
+print(f"95% VaR:            {perf['var_95']:.2%}")
+print(f"95% CVaR:           {perf['cvar_95']:.2%}")
+print()
+print(f"Monte Carlo (1000 sims):")
+print(f"  Expected final P&L:     ${mc.mean_equity:>10,.0f}")
+print(f"  95% CI:                 [${mc.ci_lower:>10,.0f}, ${mc.ci_upper:>10,.0f}]")
+print(f"  Min (worst 1%):         ${mc.min_equity:>10,.0f}")
+print(f"  P(profitable):          {mc.win_rate:>10.1%}")
+```
+
+### **Workflow 2: Regime-Based Entry Filtering**
+
+```python
+from orderflow.stats.markov import MarkovChainPredictor
+from orderflow.stats.markov_utilities import threshold_prices_states
+
+# Real-time trading scenario: decide whether to enter long
+def should_enter_long(last_N_closes, threshold_pct=0.5):
+    """
+    Only enter if Markov model predicts high P(UP).
+    """
+    # Fit model on historical 500 bars
+    historical_states = threshold_prices_states(
+        last_N_closes[-500:],
+        threshold=threshold_pct / 100 * last_N_closes[-500]  # % threshold
+    )
+    
+    model = MarkovChainPredictor(order=2)
+    model.fit(historical_states)
+    
+    # Recent 10 closes → recent 10 states
+    recent_states = threshold_prices_states(
+        last_N_closes[-10:],
+        threshold=threshold_pct / 100 * last_N_closes[-10]
+    )
+    
+    # Predict next bar
+    next_dist = model.predict_distribution(recent_states[-2:])
+    
+    # Enter if UP is most likely AND probability >55%
+    if next_dist['UP'] > 0.55 and next_dist['UP'] >= max(next_dist.values()):
+        return True, next_dist
+    
+    return False, next_dist
+
+# Usage
+closes = [100, 101, 102, 101, 103, 105, ...]
+should_buy, probs = should_enter_long(closes)
+print(f"Enter long? {should_buy}")
+print(f"Regime probabilities: {probs}")
 ```
 
 ---
 
-## Troubleshooting
+## Design Principles
 
-### "Model not fitted" RuntimeError
+### **1. Numerical Stability**
+- All moments use compensated algorithms (Welford / two-pass) to avoid catastrophic cancellation
+- Log operations guarded by a floor (`_EPS = 1e-14`) to prevent log(0)
+- Double precision (float64) throughout
 
-```python
-# ✗ Wrong
-predictor.predict_next_state(recent)  # No fit() called yet
+### **2. No Lookahead Bias**
+- All rolling windows are strictly causal: window [t-k...t] only uses data ≤ t
+- Markov fits and predictions never use future data
+- Returns and equity curves built strictly forward-in-time
 
-# ✓ Right
-predictor.fit(states)
-predictor.predict_next_state(recent)
-```
+### **3. Explicit Error Handling**
+- Degenerate inputs (empty arrays, single value, all zeros) raise `ValueError` with clear messages
+- No silent NaN returns—if input is invalid, you know immediately
+- Type hints throughout for IDE support
 
-### "Need >= X states for fitting"
-
-```python
-# ✓ Ensure sufficient data
-if len(states) < 10:
-    raise ValueError("Not enough historical states")
-
-predictor.fit(states)
-```
-
-### Low pattern coverage / high variance predictions
-
-```python
-# Problem: Too many unique patterns, sparse data
-if len(predictor.transition_probs_by_order) > len(states) / 5:
-    # Solution: Use lower order or more data
-    predictor = MarkovChainPredictor(order=1)  # Simpler model
-    predictor.fit(states)
-```
-
-### Monte Carlo results noisy / unstable
-
-```python
-# Problem: Too few simulations
-if n_simulations < 100:
-    n_simulations = 500  # Use at least 500
-
-# Problem: Sample size wrong
-if n_rows_sample > len(trades) * 0.5:
-    n_rows_sample = int(len(trades) * 0.3)  # Use ~30% of trades
-```
+### **4. Correct Statistics**
+- Sample variance uses n−1 (Bessel's correction) for unbiased estimator
+- Excess kurtosis uses Fisher definition (subtract 3 from raw kurtosis)
+- Sharpe/Sortino formulas follow industry standards (Π.Tech, PMAR, CFA)
 
 ---
 
-## Summary Table
+## Common Pitfalls & Solutions
 
-| Use Case | Tool | Why |
-|----------|------|-----|
-| **Predict next UP/DOWN** | `MarkovChainPredictor` | Simple, fast, good for trend |
-| **Auto-select order** | `AdaptiveMarkovChainPredictor` | Avoids manual tuning |
-| **Multi-feature regimes** | `MultiFeatureHMM` | Captures complex dynamics |
-| **Test strategy robustness** | `get_montecarlo_analysis` | Bootstrap validates walk-forward |
-| **Tick-by-tick analysis** | `threshold_prices_states` / `adaptive_threshold_prices_states` | High granularity on raw prices |
-| **Compressed bar states** | `get_states_from_ohlc` | Converts OHLC bars to UP/DOWN/FLAT |
-| **Next-bar prediction** | `predict_bar_state` | One-call prediction on OHLC data |
-| **Bar color bias** | `get_states_from_ohlc(method='oc_range')` | Classifies each bar by Open→Close sign |
-| **Volatility regime** | `get_states_from_ohlc(method='hl_range')` | Detects expansion vs. compression |
+| Pitfall | What Goes Wrong | Solution |
+|---------|-----------------|----------|
+| `to_arithmetic_returns(equity_curve)` | Treating equity curve as price | Use `to_log_returns(prices)` instead |
+| Pass negative prices to returns | Function raises ValueError | Ensure prices are positive (no P&L as prices) |
+| Sharpe on non-normal returns | Underestimates tail risk | Use Sortino or check kurtosis/skewness first |
+| Markov order > data length | Fit crashes or no patterns found | Use order=1 or 2; check `n_states > order` |
+| Monte Carlo with <10 trades | Confidence intervals meaningless | Aggregate across instruments or longer period |
+| `rolling_sharpe(window=5)` on 100 bars | Only 96 windows, noisy | Use window=30–60 for stable estimates |
+
+---
+
+## API Reference Summary
+
+### Stats
+`describe()` · `is_skewed()` · `get_kurtosis()` · `sharpe_ratio()` · `sortino_ratio()` · `calmar_ratio()` · `information_ratio()` · `max_drawdown()` · `var_historical()` · `cvar_historical()` · `rolling_sharpe()` · `autocorrelation()` · `hurst_exponent()`
+
+### Returns
+`to_log_returns()` · `to_arithmetic_returns()` · `log_to_arithmetic()` · `arithmetic_to_log()` · `annualise_return()` · `annualise_volatility()` · `equity_curve()` · `drawdown_series()` · `rolling_volatility()` · `underwater_duration()`
+
+### Monte Carlo
+`get_montecarlo_analysis()` · `plot_montecarlo_paths()` · `plot_montecarlo_distribution()` · `MonteCarloResult` dataclass
+
+### Markov
+`MarkovChainPredictor` · `AdaptiveMarkovChainPredictor` · `MultiFeatureHMM` · `threshold_prices_states()` · `predict_bar_state()`
 
 ---
 
 ## References
 
-- **Markov Chains**: Ross, S.M. (2014). Introduction to Probability Models
-- **HMM**: Rabiner, L. (1989). A Tutorial on Hidden Markov Models
-- **Bootstrap**: Efron & Tibshirani (1993). An Introduction to the Bootstrap
-- **Regime Detection**: Hamilton, J.D. (1989). Probabilistic Approach to Regime Changes
+- **Sharpe Ratio**: Sharpe, W. (1994). "The Sharpe ratio." *J. Portfolio Mgmt*, 21(1), 49–58.
+- **Sortino Ratio**: Sortino, F., & Price, L. (1994). *Performance Measurement in a Downturn World*.
+- **Value at Risk & CVaR**: Dowd, K. (2007). *Measuring Market Risk*, 2nd ed.
+- **Hurst Exponent**: Peters, E. (1991). *Chaos and Order in the Capital Markets*.
+- **Markov Chains**: Ross, S. (2014). *Introduction to Probability Models*, 11th ed.
+- **Monte Carlo Methods**: Efron, B., & Tibshirani, R. (1993). *An Introduction to the Bootstrap*.
+

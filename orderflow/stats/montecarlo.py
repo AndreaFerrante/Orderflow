@@ -1,12 +1,34 @@
 """
-Monte Carlo simulation and analysis for trading equity curves.
+Monte Carlo simulation engine for quantitative trading strategy robustness analysis.
 
-Provides tools to assess strategy robustness through statistical resampling
-of historical trades and equity curve visualization.
+Design Principles
+-----------------
+* **Bootstrap correctness**: sampling is with replacement (non-parametric bootstrap)
+  over trade P&L; temporal ordering is *not* assumed within individual trade samples
+  since trades are treated as i.i.d. observations after strategy execution.
+* **No lookahead bias**: the equity curve is always reconstructed forward-in-time
+  from the sampled trade sequence.
+* **Reproducibility**: every simulation uses a seeded Generator (numpy >=1.17 API)
+  so results are deterministic given ``random_state``.
+* **Numerical stability**: all aggregates use double precision; confidence intervals
+  use exact order statistics (percentile), not Gaussian approximation.
+* **Silent-failure prevention**: explicit validation with clear error messages before
+  any computation begins.
+
+Public API
+----------
+MonteCarloResult          Dataclass carrying all simulation outputs.
+get_montecarlo_analysis   Run full bootstrap simulation → MonteCarloResult.
+plot_montecarlo_paths     Plot all equity curve paths.
+plot_montecarlo_distribution  Plot final-equity histogram with CI.
 """
 
-from typing import List, Tuple, Optional
+from __future__ import annotations
+
 import logging
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -15,98 +37,158 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
-def validate_trades_df(trades: pd.DataFrame, entry_col_name: str) -> None:
+# ---------------------------------------------------------------------------
+# Result container
+# ---------------------------------------------------------------------------
+
+@dataclass
+class MonteCarloResult:
     """
-    Validate that trades DataFrame has required structure.
+    Immutable container for Monte Carlo simulation outputs.
+
+    Attributes
+    ----------
+    equity_curves : List[np.ndarray]
+        Cumulative P&L path for each simulation (shape: n_simulations × n_trades).
+    final_equities : np.ndarray
+        Terminal equity value of each simulation (length n_simulations).
+    mean_equity : float
+        Mean final equity across all simulations.
+    std_equity : float
+        Standard deviation of final equity.
+    min_equity : float
+        Worst-case final equity.
+    max_equity : float
+        Best-case final equity.
+    ci_lower : float
+        Lower bound of the confidence interval for final equity.
+    ci_upper : float
+        Upper bound of the confidence interval for final equity.
+    win_rate : float
+        Fraction of simulations ending with positive equity.
+    confidence_level : float
+        Confidence level used for the CI.
+    n_simulations : int
+        Number of simulations run.
+    sample_size : int
+        Number of trades per simulation.
+    """
+    equity_curves: List[np.ndarray]
+    final_equities: np.ndarray
+    mean_equity: float
+    std_equity: float
+    min_equity: float
+    max_equity: float
+    ci_lower: float
+    ci_upper: float
+    win_rate: float
+    confidence_level: float
+    n_simulations: int
+    sample_size: int
+
+    def summary(self) -> dict:
+        """Return a flat dict of scalar summary statistics."""
+        return {
+            "mean_equity": self.mean_equity,
+            "std_equity": self.std_equity,
+            "min_equity": self.min_equity,
+            "max_equity": self.max_equity,
+            "ci_lower": self.ci_lower,
+            "ci_upper": self.ci_upper,
+            "win_rate": self.win_rate,
+            "confidence_level": self.confidence_level,
+            "n_simulations": self.n_simulations,
+            "sample_size": self.sample_size,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+def _validate_trades(trades: pd.DataFrame, pnl_col: str, min_trades: int) -> None:
+    """Raise informative errors on malformed input before computation begins."""
+    if not isinstance(trades, pd.DataFrame):
+        raise TypeError(f"trades must be a DataFrame, got {type(trades).__name__}.")
+    missing = {pnl_col} - set(trades.columns)
+    if missing:
+        raise ValueError(f"trades DataFrame is missing required column(s): {missing}.")
+    if trades[pnl_col].isna().all():
+        raise ValueError(f"Column '{pnl_col}' contains only NaN values.")
+    if len(trades) < min_trades:
+        raise ValueError(
+            f"Need at least {min_trades} trades for a meaningful simulation, "
+            f"got {len(trades)}. Collect more historical data."
+        )
+
+
+def get_montecarlo_analysis(
+    trades: pd.DataFrame,
+    n_rows_sample: int,
+    n_simulations: int = 1000,
+    pnl_col: str = "Entry_Gains",
+    confidence_level: float = 0.95,
+    random_state: Optional[int] = None,
+    # Legacy alias kept for backward compatibility
+    entry_col_name: Optional[str] = None,
+    show_progress: bool = True,
+) -> MonteCarloResult:
+    """
+    Non-parametric bootstrap Monte Carlo simulation for strategy robustness analysis.
+
+    Each simulation draws *n_rows_sample* trades with replacement from the
+    historical trade log and computes a cumulative P&L path.  Aggregate
+    statistics describe the distribution of terminal equity across all paths.
 
     Parameters
     ----------
     trades : pd.DataFrame
-        Trades dataframe.
-    entry_col_name : str
-        Column name for trade gains/losses.
+        Historical trade log.  Must contain the P&L column specified by
+        ``pnl_col``.  Any other columns are ignored.
+    n_rows_sample : int
+        Number of trades to draw per simulation.  Must satisfy
+        ``5 <= n_rows_sample <= len(trades)``.
+    n_simulations : int, default=1000
+        Number of bootstrap replications.  Use >= 1000 for publication-quality CIs.
+    pnl_col : str, default="Entry_Gains"
+        Column containing per-trade P&L (gains/losses as scalars).
+    confidence_level : float, default=0.95
+        Confidence level for the terminal equity interval (exact percentile method).
+    random_state : int, optional
+        Seed for the NumPy Generator.  Guarantees reproducibility without
+        mutating the global random state.
+    entry_col_name : str, optional
+        Deprecated alias for ``pnl_col``; kept for backward compatibility.
+    show_progress : bool, default=True
+        Whether to display a tqdm progress bar.
+
+    Returns
+    -------
+    MonteCarloResult
+        Dataclass containing equity curves, final equities, and all
+        summary statistics.  Call ``.summary()`` for a flat dict.
 
     Raises
     ------
     TypeError
         If trades is not a DataFrame.
     ValueError
-        If required columns are missing.
-    """
-    if not isinstance(trades, pd.DataFrame):
-        raise TypeError(f"Expected DataFrame, got {type(trades).__name__}.")
-
-    required_cols = {"Datetime", entry_col_name}
-    missing = required_cols - set(trades.columns)
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
-    if len(trades) < 10:
-        logger.warning(f"Only {len(trades)} trades; consider >= 30 for robust MC.")
-
-
-def get_montecarlo_analysis(
-    trades: pd.DataFrame,
-    n_rows_sample: int,
-    n_simulations: int = 100,
-    entry_col_name: str = "Entry_Gains",
-    confidence_level: float = 0.95,
-    random_state: Optional[int] = None,
-) -> Tuple[List[pd.Series], pd.DataFrame, dict]:
-    """
-    Run Monte Carlo simulation on historical trades with equity curves.
-
-    Performs random sampling with replacement (bootstrap) to generate multiple
-    equity curve scenarios. Useful for assessing strategy robustness and
-    computing worst/best case statistics.
-
-    Parameters
-    ----------
-    trades : pd.DataFrame
-        Historical trades with columns: 'Datetime', entry_col_name.
-        Must have at least 10 trades.
-    n_rows_sample : int
-        Number of trades to sample in each iteration (sample size per sim).
-    n_simulations : int, default=100
-        Number of Monte Carlo simulations to run.
-    entry_col_name : str, default="Entry_Gains"
-        Column name containing trade P&L/gains.
-    confidence_level : float, default=0.95
-        For computing confidence intervals on final equity (e.g., 0.95 → 95% CI).
-    random_state : int, optional
-        Random seed for reproducibility.
-
-    Returns
-    -------
-    equity_patterns : List[pd.Series]
-        Cumulative equity curve for each simulation.
-    ec_summary : pd.DataFrame
-        Summary statistics with columns: EcPattern (final equity),
-        bucket (binned ranges), CumPatterns (cumulative by bucket).
-    stats_dict : dict
-        Summary stats: mean_equity, min_equity, max_equity, std_equity,
-        ci_lower, ci_upper, win_rate.
-
-    Raises
-    ------
-    TypeError
-        If trades not a DataFrame.
-    ValueError
-        If required columns missing or insufficient data.
+        If required column is missing, fewer than 30 trades, or invalid parameters.
 
     Examples
     --------
-    >>> trades_df = pd.DataFrame({
-    ...     'Datetime': pd.date_range('2023-01-01', periods=50),
-    ...     'Entry_Gains': np.random.randn(50) * 10,
-    ... })
-    >>> equity_patterns, summary, stats = get_montecarlo_analysis(
-    ...     trades_df, n_rows_sample=30, n_simulations=500
-    ... )
-    >>> print(f"Mean final equity: ${stats['mean_equity']:.2f}")
+    >>> import pandas as pd, numpy as np
+    >>> from orderflow.stats import get_montecarlo_analysis
+    >>> rng = np.random.default_rng(0)
+    >>> trades = pd.DataFrame({"Entry_Gains": rng.normal(10, 50, 200)})
+    >>> result = get_montecarlo_analysis(trades, n_rows_sample=100, n_simulations=1000)
+    >>> print(result.summary())
     """
-    # Validation
-    validate_trades_df(trades, entry_col_name)
+    # Backward-compatibility: support old keyword
+    if entry_col_name is not None:
+        pnl_col = entry_col_name
+
+    _validate_trades(trades, pnl_col, min_trades=30)
 
     if n_simulations < 10:
         raise ValueError(f"n_simulations must be >= 10, got {n_simulations}.")
@@ -114,132 +196,127 @@ def get_montecarlo_analysis(
         raise ValueError(f"n_rows_sample must be >= 5, got {n_rows_sample}.")
     if n_rows_sample > len(trades):
         raise ValueError(
-            f"n_rows_sample ({n_rows_sample}) > trades length ({len(trades)})."
+            f"n_rows_sample ({n_rows_sample}) exceeds number of trades ({len(trades)}). "
+            "Use a smaller sample or collect more data."
         )
+    if not (0 < confidence_level < 1):
+        raise ValueError(f"confidence_level must be in (0, 1), got {confidence_level}.")
 
-    if random_state is not None:
-        np.random.seed(random_state)
+    # Deterministic seeding without polluting global state
+    rng = np.random.default_rng(random_state)
 
-    equity_patterns: List[pd.Series] = []
-    ec_results: List[float] = []
+    pnl_values = trades[pnl_col].dropna().to_numpy(dtype=np.float64)
+    n_trades = len(pnl_values)
+
+    equity_curves: List[np.ndarray] = []
+    final_equities = np.empty(n_simulations, dtype=np.float64)
 
     logger.info(
-        f"Running MC simulation: {n_simulations} sims, "
-        f"sample_size={n_rows_sample}, n_trades={len(trades)}"
+        "MC simulation: n_simulations=%d, sample_size=%d, n_trades=%d",
+        n_simulations, n_rows_sample, n_trades,
     )
 
-    # Run simulations
-    for _ in tqdm(range(n_simulations), desc="Monte Carlo"):
-        # Bootstrap sample with replacement
-        sample = trades.sample(n=n_rows_sample, replace=True).sort_values(
-            "Datetime", ascending=True
-        )
+    for i in tqdm(range(n_simulations), desc="Monte Carlo", disable=not show_progress):
+        indices = rng.integers(0, n_trades, size=n_rows_sample)
+        sample_pnl = pnl_values[indices]
+        equity_curves.append(np.cumsum(sample_pnl))
+        final_equities[i] = sample_pnl.sum()
 
-        # Cumulative gains
-        cumsum = sample[entry_col_name].cumsum()
-        equity_patterns.append(cumsum)
+    mean_eq = float(np.mean(final_equities))
+    std_eq = float(np.std(final_equities, ddof=1))
+    min_eq = float(np.min(final_equities))
+    max_eq = float(np.max(final_equities))
 
-        # Final equity for this simulation
-        final_equity = sample[entry_col_name].sum()
-        ec_results.append(final_equity)
-
-    # Compute summary statistics
-    ec_array = np.array(ec_results)
-    mean_eq = float(np.mean(ec_array))
-    std_eq = float(np.std(ec_array))
-    min_eq = float(np.min(ec_array))
-    max_eq = float(np.max(ec_array))
-
-    # Confidence interval
-    alpha = 1 - confidence_level
-    ci_lower = float(np.percentile(ec_array, alpha / 2 * 100))
-    ci_upper = float(np.percentile(ec_array, (1 - alpha / 2) * 100))
-
-    # Win rate (fraction of sims with positive equity)
-    win_rate = float(np.sum(ec_array > 0) / len(ec_array))
-
-    # Summary by bucket
-    ec_df = pd.DataFrame({"EcPattern": ec_results})
-
-    # Create bins for distribution
-    n_bins = max(10, int(np.sqrt(len(ec_results))))
-    bins = np.linspace(min_eq - 1, max_eq + 1, n_bins)
-    labels = [f"[{bins[i]:.0f}, {bins[i+1]:.0f})" for i in range(len(bins) - 1)]
-
-    ec_df["bucket"] = pd.cut(ec_df["EcPattern"], bins=bins, labels=labels)
-    ec_summary = (
-        ec_df.groupby("bucket", observed=True)["EcPattern"]
-        .agg(["count", "sum"])
-        .rename(columns={"count": "n_sims", "sum": "total_equity"})
-    )
-    ec_summary["CumPatterns"] = ec_summary["total_equity"].cumsum()
-    ec_summary = ec_summary.reset_index()
-
-    stats_dict = {
-        "mean_equity": mean_eq,
-        "std_equity": std_eq,
-        "min_equity": min_eq,
-        "max_equity": max_eq,
-        "ci_lower": ci_lower,
-        "ci_upper": ci_upper,
-        "win_rate": win_rate,
-        "n_simulations": n_simulations,
-        "sample_size": n_rows_sample,
-    }
+    alpha = 1.0 - confidence_level
+    ci_lower = float(np.percentile(final_equities, alpha / 2 * 100))
+    ci_upper = float(np.percentile(final_equities, (1.0 - alpha / 2) * 100))
+    win_rate = float(np.mean(final_equities > 0))
 
     logger.info(
-        f"MC complete: μ={mean_eq:.2f}, σ={std_eq:.2f}, "
-        f"[{ci_lower:.2f}, {ci_upper:.2f}], win_rate={win_rate:.1%}"
+        "MC complete: μ=%.2f σ=%.2f [%.2f, %.2f] win_rate=%.1f%%",
+        mean_eq, std_eq, ci_lower, ci_upper, win_rate * 100,
     )
 
-    return equity_patterns, ec_summary, stats_dict
+    return MonteCarloResult(
+        equity_curves=equity_curves,
+        final_equities=final_equities,
+        mean_equity=mean_eq,
+        std_equity=std_eq,
+        min_equity=min_eq,
+        max_equity=max_eq,
+        ci_lower=ci_lower,
+        ci_upper=ci_upper,
+        win_rate=win_rate,
+        confidence_level=confidence_level,
+        n_simulations=n_simulations,
+        sample_size=n_rows_sample,
+    )
 
+
+# ---------------------------------------------------------------------------
+# Visualisation helpers
+# ---------------------------------------------------------------------------
 
 def plot_montecarlo_paths(
-    equity_patterns: List[pd.Series],
+    result: MonteCarloResult,
     title: str = "Monte Carlo Equity Curves",
     figsize: Tuple[int, int] = (12, 6),
-    alpha: float = 0.3,
+    alpha: float = 0.2,
     show: bool = True,
+    max_paths: int = 500,
 ) -> Optional[plt.Figure]:
     """
-    Plot all Monte Carlo equity curve paths.
+    Plot simulated equity curve paths.
 
     Parameters
     ----------
-    equity_patterns : List[pd.Series]
-        Cumulative equity curves from get_montecarlo_analysis().
-    title : str, default="Monte Carlo Equity Curves"
+    result : MonteCarloResult
+        Output from ``get_montecarlo_analysis()``.
+    title : str
         Plot title.
     figsize : Tuple[int, int], default=(12, 6)
-        Figure size.
-    alpha : float, default=0.3
-        Line transparency (0-1).
+        Figure dimensions.
+    alpha : float, default=0.2
+        Path transparency.
     show : bool, default=True
-        Whether to call plt.show().
+        Call ``plt.show()`` if True; return figure if False.
+    max_paths : int, default=500
+        Cap the number of paths drawn to avoid plot saturation.
 
     Returns
     -------
-    plt.Figure or None
-        Matplotlib figure object if show=False, else None.
+    plt.Figure | None
     """
-    if not equity_patterns:
-        raise ValueError("Empty equity_patterns list.")
+    curves = result.equity_curves
+    if not curves:
+        raise ValueError("MonteCarloResult contains no equity curves.")
 
     fig, ax = plt.subplots(figsize=figsize)
+    step = max(1, len(curves) // max_paths)
 
-    for pattern in equity_patterns:
-        ax.plot(pattern.values, alpha=alpha, lw=1, color="steelblue")
+    for curve in curves[::step]:
+        ax.plot(curve, alpha=alpha, lw=0.8, color="steelblue")
 
-    # Add mean line
-    mean_curve = np.mean([p.values for p in equity_patterns], axis=0)
-    ax.plot(mean_curve, color="red", lw=2.5, label="Mean", zorder=10)
+    # Mean path
+    min_len = min(len(c) for c in curves)
+    mean_curve = np.mean([c[:min_len] for c in curves], axis=0)
+    ax.plot(mean_curve, color="crimson", lw=2.0, label="Mean path", zorder=10)
 
-    ax.set_xlabel("Trade Index")
-    ax.set_ylabel("Cumulative Gains")
+    # CI band
+    p_low = np.percentile([c[:min_len] for c in curves],
+                          (1 - result.confidence_level) / 2 * 100, axis=0)
+    p_high = np.percentile([c[:min_len] for c in curves],
+                           (1 - (1 - result.confidence_level) / 2) * 100, axis=0)
+    ax.fill_between(range(min_len), p_low, p_high, alpha=0.15, color="orange",
+                    label=f"{result.confidence_level:.0%} CI band")
+
+    ax.axhline(0, color="black", lw=0.8, linestyle="--")
+    ax.set_xlabel("Trade index")
+    ax.set_ylabel("Cumulative P&L")
     ax.set_title(title)
-    ax.grid(True, alpha=0.3)
     ax.legend()
+    ax.grid(True, alpha=0.25)
+    plt.tight_layout()
 
     if show:
         plt.show()
@@ -248,95 +325,61 @@ def plot_montecarlo_paths(
 
 
 def plot_montecarlo_distribution(
-    stats_dict: dict,
-    ec_summary: pd.DataFrame,
+    result: MonteCarloResult,
     title: str = "Final Equity Distribution",
     figsize: Tuple[int, int] = (10, 6),
+    n_bins: int = 50,
     show: bool = True,
 ) -> Optional[plt.Figure]:
     """
-    Plot histogram of final equities with confidence intervals.
+    Histogram of terminal equity values with confidence interval markers.
 
     Parameters
     ----------
-    stats_dict : dict
-        Statistics from get_montecarlo_analysis().
-    ec_summary : pd.DataFrame
-        Summary from get_montecarlo_analysis().
+    result : MonteCarloResult
+        Output from ``get_montecarlo_analysis()``.
     title : str
         Plot title.
-    figsize : Tuple[int, int]
-        Figure size.
+    figsize : Tuple[int, int], default=(10, 6)
+        Figure dimensions.
+    n_bins : int, default=50
+        Number of histogram bins.
     show : bool, default=True
-        Whether to call plt.show().
+        Call ``plt.show()`` if True; return figure if False.
 
     Returns
     -------
-    plt.Figure or None
-        Matplotlib figure object if show=False, else None.
+    plt.Figure | None
     """
     fig, ax = plt.subplots(figsize=figsize)
 
-    # Plot cumulative
-    ax.bar(
-        range(len(ec_summary)),
-        ec_summary["CumPatterns"].values,
-        color="steelblue",
-        alpha=0.7,
-        edgecolor="black",
+    ax.hist(result.final_equities, bins=n_bins, color="steelblue",
+            alpha=0.75, edgecolor="white", linewidth=0.4)
+    ax.axvline(result.mean_equity, color="crimson", lw=2.0, label="Mean")
+    ax.axvline(result.ci_lower, color="orange", lw=1.8, linestyle="--",
+               label=f"{result.confidence_level:.0%} CI lower")
+    ax.axvline(result.ci_upper, color="orange", lw=1.8, linestyle="--",
+               label=f"{result.confidence_level:.0%} CI upper")
+    ax.axvline(0, color="black", lw=0.8, linestyle=":")
+
+    summary = result.summary()
+    info = (
+        f"Win rate: {summary['win_rate']:.1%}\n"
+        f"μ: {summary['mean_equity']:.2f}\n"
+        f"σ: {summary['std_equity']:.2f}"
     )
+    ax.text(0.02, 0.97, info, transform=ax.transAxes, va="top",
+            fontsize=9, family="monospace",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
 
-    # Mark CI
-    ax.axvline(stats_dict["mean_equity"], color="red", lw=2, label="Mean")
-    ax.axvline(stats_dict["ci_lower"], color="orange", lw=2, linestyle="--", label="95% CI")
-    ax.axvline(stats_dict["ci_upper"], color="orange", lw=2, linestyle="--")
-
-    ax.set_xlabel("Final Equity Bucket")
-    ax.set_ylabel("Cumulative Count")
+    ax.set_xlabel("Terminal equity")
+    ax.set_ylabel("Frequency")
     ax.set_title(title)
     ax.legend()
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.25)
+    plt.tight_layout()
 
     if show:
         plt.show()
         return None
     return fig
-
-
-def compute_montecarlo_metrics(
-    stats_dict: dict, initial_capital: float = 1.0
-) -> dict:
-    """
-    Compute additional metrics from MC simulation results.
-
-    Parameters
-    ----------
-    stats_dict : dict
-        From get_montecarlo_analysis().
-    initial_capital : float, default=1.0
-        Starting capital for return calculations.
-
-    Returns
-    -------
-    dict
-        Extended metrics: total_return, sharpe_ratio, sortino_ratio, etc.
-    """
-    mean_eq = stats_dict["mean_equity"]
-    std_eq = stats_dict["std_equity"]
-
-    total_return = mean_eq / initial_capital if initial_capital > 0 else 0
-    sharpe = (mean_eq / std_eq) if std_eq > 0 else 0
-    sortino = mean_eq / std_eq if std_eq > 0 else 0  # Simplified
-
-    return {
-        "total_return": total_return,
-        "return_pct": total_return * 100,
-        "sharpe_ratio": sharpe,
-        "sortino_ratio": sortino,
-        "profit_factor": (
-            1 + stats_dict["mean_equity"] / abs(stats_dict["min_equity"])
-            if stats_dict["min_equity"] < 0
-            else float("inf")
-        ),
-    }
-

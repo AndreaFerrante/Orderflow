@@ -1,62 +1,140 @@
+"""
+Utilities for Markov state generation and HMM feature engineering.
+
+Design principles:
+- No lookahead bias: all rolling computations use strictly past observations.
+- Numerical stability: guards against zero-variance windows and degenerate inputs.
+- Performance: vectorised NumPy operations throughout; pure-Python loops only where
+  unavoidable (e.g. online slope estimation for very large arrays).
+- Reproducibility: no global random state mutations; seeds are caller-controlled.
+"""
+
 import os
+import logging
+from pathlib import Path
+from typing import List, Literal, Optional
+
 import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from typing import List
 from hmmlearn import hmm
-import matplotlib.pyplot as plt
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_VALID_STATES: tuple = ("UP", "DOWN", "FLAT")
+_EPS: float = 1e-10  # numerical floor — avoids log(0)
 
 
-matplotlib.use('TkAgg')
+# ---------------------------------------------------------------------------
+# State generation from price sequences
+# ---------------------------------------------------------------------------
 
+def threshold_prices_states(
+    prices: List[float],
+    threshold: float = 1e-8,
+) -> List[str]:
+    """
+    Convert a price series into UP / DOWN / FLAT states using a fixed threshold.
 
-def threshold_prices_states(prices: List[float], threshold: float = 1e-8) -> List[str]:
+    Returns ``len(prices) - 1`` states.  The threshold is an *absolute* price
+    difference; for instruments with different tick sizes pass the tick size or
+    a sensible multiple.
+
+    Parameters
+    ----------
+    prices : List[float]
+        Chronologically ordered price observations.
+    threshold : float, default=1e-8
+        Minimum absolute price change to classify as UP or DOWN.
+
+    Returns
+    -------
+    List[str]
+        Sequence of "UP" / "DOWN" / "FLAT" labels.
+
+    Raises
+    ------
+    ValueError
+        If ``len(prices) < 2`` or ``threshold < 0``.
+    """
     if len(prices) < 2:
-        raise ValueError("Two prices min are needed to obtain the states.")
+        raise ValueError("Need at least 2 prices to produce states.")
+    if threshold < 0:
+        raise ValueError("threshold must be >= 0.")
 
-    states = list()
-
-    for i in range(1, len(prices)):
-        diff = prices[i] - prices[i - 1]
-        if diff > threshold:
+    arr = np.asarray(prices, dtype=np.float64)
+    diffs = np.diff(arr)
+    states: List[str] = []
+    for d in diffs:
+        if d > threshold:
             states.append("UP")
-        elif diff < -threshold:
+        elif d < -threshold:
             states.append("DOWN")
         else:
             states.append("FLAT")
     return states
 
 
-def adaptive_threshold_prices_states(prices: List[float], window: int = 20) -> List[str]:
+def adaptive_threshold_prices_states(
+    prices: List[float],
+    window: int = 20,
+    z_score_threshold: float = 0.5,
+) -> List[str]:
     """
-    Converts a sequence of prices into UP/DOWN/FLAT states with an adaptive threshold.
-    The threshold is scaled by the volatility (standard deviation) of the returns
-    over a moving window.
+    Convert a price series into states using an adaptive, volatility-scaled threshold.
 
-    :param prices: List of prices
-    :param window: Window for volatility calculation
-    :param base_threshold: Base threshold that will be multiplied by the volatility
-    :return: List of states ('UP', 'DOWN', 'FLAT')
+    The threshold at bar *i* equals ``z_score_threshold * σ(returns[i-window:i])``.
+    Only *past* returns are used — strictly no lookahead bias.
+
+    Returns ``len(prices) - 1`` states.
+
+    Parameters
+    ----------
+    prices : List[float]
+        Chronologically ordered price observations.
+    window : int, default=20
+        Rolling window length for volatility estimation.
+    z_score_threshold : float, default=0.5
+        Number of standard deviations that defines UP / DOWN.
+
+    Returns
+    -------
+    List[str]
+        Sequence of "UP" / "DOWN" / "FLAT" labels.
+
+    Raises
+    ------
+    ValueError
+        If fewer than 2 prices, window < 2, or z_score_threshold <= 0.
     """
-
     if len(prices) < 2:
-        raise ValueError("At least two prices are needed to get the states done.")
+        raise ValueError("Need at least 2 prices.")
+    if window < 2:
+        raise ValueError("window must be >= 2.")
+    if z_score_threshold <= 0:
+        raise ValueError("z_score_threshold must be > 0.")
 
-    returns = np.diff(prices)
-    states = list()
+    arr = np.asarray(prices, dtype=np.float64)
+    diffs = np.diff(arr)           # length = n - 1
+    n = len(diffs)
+    states: List[str] = []
 
-    for i in range(1, len(prices)):
-
-        start_idx = max(0, i - window)
-        local_returns = returns[start_idx:i] if i > 0 else returns[:1]
-        vol = np.std(local_returns) if len(local_returns) > 1 else 1e-8
-        mean = np.mean(local_returns) if len(local_returns) > 1 else 1e-8
-
-        diff = prices[i] - prices[i - 1]
-
-        if diff > (mean + 0.5 * vol):
+    for i in range(n):
+        diff = diffs[i]
+        # Strictly past window: diffs[max(0,i-window) : i]
+        start = max(0, i - window)
+        local = diffs[start:i]
+        vol = float(np.std(local)) if len(local) >= 2 else _EPS
+        vol = max(vol, _EPS)
+        band = z_score_threshold * vol
+        if diff > band:
             states.append("UP")
-        elif diff < -(mean - 0.5 * vol):
+        elif diff < -band:
             states.append("DOWN")
         else:
             states.append("FLAT")
@@ -64,207 +142,356 @@ def adaptive_threshold_prices_states(prices: List[float], window: int = 20) -> L
     return states
 
 
-def simulate_market_data(num_steps: int = 10000, seed: int = 123) -> pd.DataFrame:
+# ---------------------------------------------------------------------------
+# Feature engineering for HMM inputs
+# ---------------------------------------------------------------------------
 
+def compute_df_features(
+    df: pd.DataFrame,
+    window_volatility: int = 20,
+    window_slope: int = 5,
+) -> pd.DataFrame:
     """
-    It is going to simulate prices regime over a num_steps of candles by including prices and fake volume.
-    It returns a DataFrame with the following columns: ['price', 'volume'].
+    Engineer standardised features from a bar DataFrame for HMM input.
+
+    Computes four causal (no lookahead) features:
+
+    * ``log_return``   — log price return: ``ln(price_t / price_{t-1})``
+    * ``volatility``   — rolling std of log returns over *window_volatility* bars
+    * ``slope``        — OLS slope of price over last *window_slope* bars
+    * ``log_volume``   — ``log1p(volume)`` for variance stabilisation
+
+    All rolling operations use only past data (``min_periods=2``).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain ``'price'`` (float) and ``'volume'`` (float >= 0).
+    window_volatility : int, default=20
+        Rolling window for volatility.
+    window_slope : int, default=5
+        Rolling window for price slope.
+
+    Returns
+    -------
+    pd.DataFrame
+        Original columns plus ``log_return``, ``volatility``, ``slope``,
+        ``log_volume``.  NaNs in early rows are forward-filled then
+        back-filled so the matrix is complete.
+
+    Raises
+    ------
+    ValueError
+        If required columns are missing or windows are out of range.
     """
+    required = {"price", "volume"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"DataFrame missing required columns: {missing}")
+    if window_volatility < 2:
+        raise ValueError("window_volatility must be >= 2.")
+    if window_slope < 2:
+        raise ValueError("window_slope must be >= 2.")
 
-    np.random.seed(seed)
+    out = df.copy()
 
-    # Prices simulated with some noise and a small trend...
-    prices = [100.0]
-    for _ in range(num_steps):
-        prices.append(prices[-1] + np.random.normal(0.05, 0.1))
+    # Log returns (causal: shift(1) refers to previous bar)
+    price = out["price"].astype(np.float64)
+    log_ret = np.log(price / price.shift(1))   # NaN at index 0 — expected
+    out["log_return"] = log_ret
 
-    # Simulated volume with average 1e5 and standard dev 1e4
-    volume = np.random.normal(1e5, 1e4, size=len(prices))
-    volume = np.maximum(volume, 0.0)  # no negative volumes
+    # Rolling volatility — strictly past window
+    out["volatility"] = (
+        log_ret
+        .rolling(window=window_volatility, min_periods=2)
+        .std()
+    )
 
-    return pd.DataFrame({
-                        'price':  prices,
-                        'volume': volume
-                        })
+    # Rolling OLS slope — uses pandas rolling apply with a causal window.
+    # The x-coordinates are 0..w-1 regardless of window position; the formula
+    # (n*Σxy - Σx*Σy) / (n*Σx² - (Σx)²) is applied inside a vectorised helper.
+    _w = window_slope
+    _x = np.arange(_w, dtype=np.float64)
+    _sx = _x.sum()
+    _sx2 = (_x * _x).sum()
+    _denom = _w * _sx2 - _sx * _sx
+
+    def _ols_slope(seg: np.ndarray) -> float:
+        m = len(seg)
+        if m < 2:
+            return 0.0
+        if m < _w:
+            # Partial window at start — recompute for actual length
+            xp = np.arange(m, dtype=np.float64)
+            sx_p = xp.sum(); sx2_p = (xp * xp).sum()
+            d = m * sx2_p - sx_p * sx_p
+            return (m * (xp * seg).sum() - sx_p * seg.sum()) / d if d != 0.0 else 0.0
+        sy = seg.sum()
+        sxy = (_x * seg).sum()
+        return ((_w * sxy - _sx * sy) / _denom) if _denom != 0.0 else 0.0
+
+    out["slope"] = (
+        price
+        .rolling(window=_w, min_periods=2)
+        .apply(_ols_slope, raw=True)
+        .fillna(0.0)
+    )
+
+    # Log-volume
+    volume = out["volume"].astype(np.float64).clip(lower=0.0)
+    out["log_volume"] = np.log1p(volume)
+
+    # Fill NaN only for derived features where warm-up NaNs are expected.
+    # log_return at index 0 is structurally undefined (no prior price); fill with 0.
+    out["log_return"] = out["log_return"].fillna(0.0)
+    # Volatility requires min_periods=2 so early rows are NaN; back-fill with
+    # the first valid estimate so downstream models receive a complete matrix.
+    out["volatility"] = out["volatility"].bfill().fillna(0.0)
+
+    return out
 
 
-def compute_df_features(df: pd.DataFrame, window_volatility: int = 20, window_slope: int = 5) -> pd.DataFrame:
+# ---------------------------------------------------------------------------
+# HMM model selection
+# ---------------------------------------------------------------------------
 
+def select_best_hmm_model(
+    data: np.ndarray,
+    n_states_range: List[int],
+    covariance_type: Literal["full", "diag", "tied", "spherical"] = "full",
+    criterion: Literal["bic", "aic"] = "bic",
+    random_state: int = 42,
+    n_iter: int = 200,
+) -> hmm.GaussianHMM:
     """
-    Given a df with 'price' and 'volume' columns, we get:
-    - Return (prices diff)
-    - Moving window volatility (dev standard over returns given a window_volatility)
-    - Slope of the moving averages
-    - Log-volume (volume trasformation to avoid zeros)
+    Select the Gaussian HMM with the best information criterion.
+
+    Evaluates each candidate number of hidden states by fitting on the full
+    dataset and computing BIC or AIC.  BIC is recommended for trading
+    applications (more conservative — penalises complexity harder).
+
+    Parameters
+    ----------
+    data : np.ndarray
+        2-D array of shape ``(n_samples, n_features)``, standardised.
+    n_states_range : List[int]
+        Candidate numbers of hidden states, e.g. ``[2, 3, 4, 5]``.
+    covariance_type : {"full", "diag", "tied", "spherical"}, default="full"
+        HMM covariance structure.
+    criterion : {"bic", "aic"}, default="bic"
+        Model selection criterion.
+    random_state : int, default=42
+        Seed for reproducibility.
+    n_iter : int, default=200
+        Maximum EM iterations.
+
+    Returns
+    -------
+    hmm.GaussianHMM
+        Best fitted model.
+
+    Raises
+    ------
+    ValueError
+        If ``data`` is not 2-D, or ``n_states_range`` is empty,
+        or no model converges.
     """
+    if data.ndim != 2:
+        raise ValueError(f"data must be 2-D, got shape {data.shape}.")
+    if not n_states_range:
+        raise ValueError("n_states_range must not be empty.")
+    if data.shape[0] < max(n_states_range) * 10:
+        logger.warning(
+            "Fewer than 10 samples per state candidate. "
+            "HMM estimates may be unreliable."
+        )
 
-    df = df.copy()
-
-    # 1. Return (diff) - We could use log return, here we adopt simple differences
-    df['return'] = df['price'].diff().fillna(0.0)
-
-    # 2. Volatility window
-    rolling_std = df['return'].rolling(window=window_volatility).std().fillna(method='bfill')
-    df['volatility'] = rolling_std
-
-    # 3. Moving average slopes (fit a regression line):
-    slopes = []
-    prices_array = df['price'].values
-    for i in range(len(df)):
-
-        start_idx = max(0, i - window_slope + 1)
-        segment = prices_array[start_idx: i + 1]
-
-        if len(segment) < 2:
-            slopes.append(0.0)
-            continue
-        # Linear fit over a range 0..len(segment)-1
-        x = np.arange(len(segment))
-        # a, b => y = a*x + b, e a è la pendenza
-        a, b = np.polyfit(x, segment, 1)
-        slopes.append(a)
-
-    df['slope'] = slopes
-
-    # 4. Log of the volume
-    df['log_volume'] = np.log1p(df['volume'])  # log(1 + volume)
-
-    # Fill in optional NaN
-    df.fillna(method='bfill', inplace=True)
-    df.fillna(method='ffill', inplace=True)
-
-    return df
-
-
-def select_best_hmm_model(data: np.ndarray, n_states_range: List[int], covariance_type: str = 'full', criterion: str = 'bic', random_state: int = 42) -> hmm.GaussianHMM:
-
-    """
-    Given a feature matrix with shape (n_samples, n_features),
-    this method tries different values to find the hidden states and select the model that
-    minimizes BIC (or AIC).
-
-    :param data: array 2D with shape (n_samples, n_features)
-    :param n_states_range: list of all possible hidden states (example [2,3,4,5])
-    :param covariance_type: 'full', 'diag', 'tied', 'spherical'
-    :param criterion: 'bic' or 'aic'
-    :param random_state: to be easy to reproduce
-    :return: best fitted model
-
-    """
-
-    best_model = None
+    n_samples, n_features = data.shape
+    best_model: Optional[hmm.GaussianHMM] = None
     best_score = np.inf
 
-    for n_states in n_states_range:
+    for n_states in sorted(n_states_range):
+        try:
+            model = hmm.GaussianHMM(
+                n_components=n_states,
+                covariance_type=covariance_type,
+                n_iter=n_iter,
+                random_state=random_state,
+            )
+            model.fit(data)
+            log_likelihood = model.score(data)
+        except Exception as exc:
+            logger.warning(f"HMM(n_states={n_states}) failed: {exc}")
+            continue
 
-        # Gaussian HMM gaussiano with n_states and n_components
-        model = hmm.GaussianHMM(
-            n_components=n_states,
-            covariance_type=covariance_type,
-            random_state=random_state
+        # Parameter count (correct formula per covariance type)
+        n_trans = n_states * (n_states - 1)          # transition matrix (rows sum to 1)
+        n_means = n_states * n_features              # Gaussian means
+        if covariance_type == "full":
+            n_cov = n_states * n_features * (n_features + 1) // 2
+        elif covariance_type == "diag":
+            n_cov = n_states * n_features
+        elif covariance_type == "tied":
+            n_cov = n_features * (n_features + 1) // 2
+        else:  # spherical
+            n_cov = n_states
+        n_params = n_trans + n_means + n_cov
+
+        ic = (
+            n_params * np.log(n_samples) - 2.0 * log_likelihood
+            if criterion.lower() == "bic"
+            else 2.0 * n_params - 2.0 * log_likelihood
         )
 
-        model.fit(data)  # fit on all the data !
-
-        # Get the log-likelihood and the number of parameters
-        log_likelihood = model.score(data)
-        n_params = (
-                n_states * (n_states - 1)   # transactions
-                + n_states * data.shape[1]  # avergae for each state
+        logger.debug(
+            f"HMM n_states={n_states}: {criterion.upper()}={ic:.2f}, "
+            f"logL={log_likelihood:.2f}"
         )
 
-        # Covariance parameters
-        if covariance_type == 'full':
-            # Ogni stato ha n_features * (n_features+1)/2 param
-            n_params += n_states * (data.shape[1] * (data.shape[1] + 1) // 2)
-        elif covariance_type == 'diag':
-            n_params += n_states * data.shape[1]
-        elif covariance_type == 'tied':
-            n_params += (data.shape[1] * (data.shape[1] + 1) // 2)
-        elif covariance_type == 'spherical':
-            n_params += n_states
-
-        # AIC = 2*n_params - 2*log_likelihood
-        # BIC = n_params*log(n_samples) - 2*log_likelihood
-        n_samples = data.shape[0]
-        if criterion.lower() == 'aic':
-            current_criterion = 2 * n_params - 2 * log_likelihood
-        else:
-            # BIC by default
-            current_criterion = n_params * np.log(n_samples) - 2 * log_likelihood
-
-        # Let's get the best one !
-        if current_criterion < best_score:
-            best_score = current_criterion
+        if ic < best_score:
+            best_score = ic
             best_model = model
 
     if best_model is None:
-        raise ValueError("No model selected, check the data.")
+        raise ValueError(
+            "No HMM model converged. Check data quality and n_states_range."
+        )
 
+    logger.info(
+        f"Selected HMM: n_states={best_model.n_components}, "
+        f"{criterion.upper()}={best_score:.2f}"
+    )
     return best_model
 
 
-def concat_sc_bar_data(data_path:str, file_extension:str='txt'):
+# ---------------------------------------------------------------------------
+# SierraChart data loading
+# ---------------------------------------------------------------------------
 
-    '''
-    This function reads files extracted from SierraChart.
-    The name of the instrument is deducted from the file name, for instance, given this file name
-    ESH24-CME.scid_BarData.txt, the added colum will be "ESH24-CME.scid_BarData.txt".
-
-    :param data_path: path where the files are saved in
-    :return: dataframe of stacked data
-    '''
-
-    if data_path == '':
-        raise ValueError('data_path must not be null, it has to be a value.')
-
-    files = os.listdir(data_path)
-    data  = list()
-
-    for file in files:
-
-        if file.endswith(file_extension):
-
-            single_file         = pd.read_csv(os.path.join(data_path, file), sep=',')
-            single_file.columns = [str(x).strip() for x in single_file.columns]
-            single_file.insert(0, 'Instrument', file.split('.')[0])
-            data.append( single_file )
-
-    ###############################################################################
-    r_data = pd.concat(data)
-    r_data = r_data.map(lambda x: x.strip() if isinstance(x, str) else x)
-    r_data = r_data.assign(Date = pd.to_datetime(r_data['Date']))
-    r_data.sort_values(['Date', 'Time'], ascending=[True, True], inplace=True)
-    r_data.reset_index(drop=True, inplace=True)
-    ###############################################################################
-
-    return r_data
-
-
-def plot_distribution_of_float_series(series: pd.Series, bins: int = 75, title: str = "Series Distribution") -> None:
-
+def concat_sc_bar_data(
+    data_path: str,
+    file_extension: str = "txt",
+) -> pd.DataFrame:
     """
-    Create a histogram plot with matplotlib to show
-    the distribution of a pandas Series of float values.
+    Load and concatenate SierraChart bar export files from a directory.
+
+    The instrument name is extracted from the file stem
+    (e.g. ``ESH24-CME.scid_BarData.txt`` → ``ESH24-CME``).
+
+    Parameters
+    ----------
+    data_path : str
+        Directory containing the export files.
+    file_extension : str, default="txt"
+        File extension to match (without leading dot).
+
+    Returns
+    -------
+    pd.DataFrame
+        Concatenated and time-sorted bar data with an ``Instrument`` column.
+
+    Raises
+    ------
+    ValueError
+        If ``data_path`` is empty or no matching files are found.
+    FileNotFoundError
+        If ``data_path`` does not exist.
+    """
+    if not data_path:
+        raise ValueError("data_path must not be empty.")
+
+    root = Path(data_path)
+    if not root.exists():
+        raise FileNotFoundError(f"data_path does not exist: {data_path}")
+
+    ext = file_extension.lstrip(".")
+    files = sorted(root.glob(f"*.{ext}"))
+    if not files:
+        raise ValueError(
+            f"No *.{ext} files found in {data_path}."
+        )
+
+    frames: List[pd.DataFrame] = []
+    for fp in files:
+        single = pd.read_csv(fp, sep=",")
+        single.columns = [str(c).strip() for c in single.columns]
+        single = single.map(lambda x: x.strip() if isinstance(x, str) else x)
+        single.insert(0, "Instrument", fp.stem.split(".")[0])
+        frames.append(single)
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined["Date"] = pd.to_datetime(combined["Date"])
+    combined.sort_values(["Date", "Time"], ascending=True, inplace=True)
+    combined.reset_index(drop=True, inplace=True)
+    return combined
+
+
+# ---------------------------------------------------------------------------
+# Visualisation helpers
+# ---------------------------------------------------------------------------
+
+def simulate_market_data(
+    num_steps: int = 10_000,
+    seed: int = 123,
+) -> pd.DataFrame:
+    """
+    Generate synthetic OHLCV-style market data for testing and examples.
+
+    Uses a geometric Brownian motion with mild drift.
+
+    Parameters
+    ----------
+    num_steps : int, default=10_000
+        Number of bars to simulate.
+    seed : int, default=123
+        Random seed.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: ``price``, ``volume``.
+    """
+    rng = np.random.default_rng(seed)       # local Generator — no global state mutation
+    log_returns = rng.normal(0.0002, 0.001, size=num_steps)
+    prices = 100.0 * np.exp(np.cumsum(log_returns))
+    prices = np.concatenate([[100.0], prices])
+    volume = np.maximum(rng.normal(1e5, 1e4, size=len(prices)), 0.0)
+    return pd.DataFrame({"price": prices, "volume": volume})
+
+
+def plot_distribution_of_float_series(
+    series: pd.Series,
+    bins: int = 75,
+    title: str = "Series Distribution",
+) -> None:
+    """
+    Plot a histogram of a float Series using matplotlib.
 
     Parameters
     ----------
     series : pd.Series
-        The Series whose distribution we want to view
-    bins : int, optional
-        Number of 'bins' for the histogram (default: 30)
-    title : str, optional
-        Chart title (default: "Series distribution")
+        Must be float dtype.
+    bins : int, default=75
+        Number of histogram bins.
+    title : str, default="Series Distribution"
+        Chart title.
+
+    Raises
+    ------
+    ValueError
+        If series is not float or is empty.
     """
-
     if not pd.api.types.is_float_dtype(series):
-        raise ValueError("The given series is not a float one. Pass a float series !")
+        raise ValueError("series must be float dtype.")
+    clean = series.dropna()
+    if len(clean) == 0:
+        raise ValueError("series is empty after dropping NaNs.")
 
-    fig, ax = plt.subplots(figsize=(10, 8))
-    ax.hist(series, bins=bins, edgecolor='black', alpha=0.6)
-
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.hist(clean.values, bins=bins, edgecolor="black", alpha=0.65, color="steelblue")
     ax.set_title(title)
     ax.set_xlabel("Value")
     ax.set_ylabel("Frequency")
-
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
     plt.show()

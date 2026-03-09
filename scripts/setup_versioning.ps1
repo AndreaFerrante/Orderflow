@@ -18,5 +18,3 @@ Write-Host "📝 Next steps:" -ForegroundColor Cyan
 Write-Host "1. Write commits in conventional format (e.g., 'feat: add feature')"
 Write-Host "2. Push with: git push"
 Write-Host "3. Version auto-bumps and tags are created automatically"
-Write-Host ""
-Write-Host "📖 See VERSIONING.md for detailed instructions" -ForegroundColor Cyan

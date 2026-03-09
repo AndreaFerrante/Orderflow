@@ -36,7 +36,20 @@ def _get_datetime_fixed_pd(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"Input Pandas DataFrame is missing required columns: {missing_columns}")
 
     df = df.copy()
-    df['Datetime'] = pd.to_datetime(df['Date'].astype(str) + ' ' + df['Time'].astype(str))
+    # Ensure Date and Time are strings, then combine and parse
+    date_str = df['Date'].astype(str)
+    time_str = df['Time'].astype(str)
+    combined = date_str + ' ' + time_str
+    
+    # Parse with format that handles microseconds (HH:MM:SS.ffffff)
+    # Use infer_datetime_format for better performance on large datasets
+    df['Datetime'] = pd.to_datetime(combined, format='%Y-%m-%d %H:%M:%S.%f', errors='coerce')
+    
+    # Check for any parsing failures
+    if df['Datetime'].isna().any():
+        # Fallback to infer_datetime_format if format string didn't work
+        df['Datetime'] = pd.to_datetime(combined, infer_datetime_format=True)
+    
     return df.sort_values("Datetime", ascending=True)
 
 
@@ -47,13 +60,26 @@ def compress_to_bar_once_range_met(tick_data:pd.DataFrame, price_range:int, tick
     Transforms tick-by-tick data into range bars using NumPy.
 
     Parameters:
-    - tick_data: DataFrame containing tick-by-tick data. Must have a 'Price' column.
-    - price_range: The price range that each bar should represent.
+    - tick_data: Pandas DataFrame containing tick-by-tick data. 
+                 Required columns: 'Date', 'Time', 'Price', 'Volume', 'TradeType'
+                 Note: Date/Time are automatically converted to Datetime if not present.
+    - price_range: The price range (in ticks) that each bar should represent.
+                   Dollar range = price_range × tick_size
+                   Example: price_range=16, tick_size=0.25 → 4-point range bars
     - tick_size: The minimum price movement (tick size) for the instrument. Default is 0.25.
+                 (ES/NQ typically use 0.25, adjust for other instruments)
     - overwrite_time_with_sierras: bool
-            If True, the function will overwrite the time_column with Sierra Chart's timestamp format.
+            If True, ensures timestamps are in Sierra Chart format.
+            If False (default), automatically creates Datetime from Date+Time columns.
+    
     Returns:
-    - range_bars_df: DataFrame containing range bars.
+    - range_bars_df: Pandas DataFrame with columns:
+                     Date, Time, Open, High, Low, Close, Volume, NumberOfTrades, BidVolume, AskVolume
+    
+    Notes:
+    - Automatically handles Datetime creation from Date+Time if Datetime column missing
+    - Efficiently processes tick data using NumPy arrays
+    - Uses tqdm progress bar for visibility on large datasets
     """
 
     if not isinstance(tick_data, pd.DataFrame):
@@ -67,6 +93,14 @@ def compress_to_bar_once_range_met(tick_data:pd.DataFrame, price_range:int, tick
     #############################################
     if overwrite_time_with_sierras:
         tick_data = _get_datetime_fixed_pd(tick_data)
+    else:
+        # Ensure Datetime column exists and is datetime dtype
+        if "Datetime" not in tick_data.columns:
+            tick_data = _get_datetime_fixed_pd(tick_data)
+        elif tick_data['Datetime'].dtype == 'object':
+            # Datetime column exists but is a string - convert it to datetime
+            tick_data = tick_data.copy()
+            tick_data['Datetime'] = pd.to_datetime(tick_data['Datetime'])
     #############################################
 
     price_array = tick_data['Price'].to_numpy()

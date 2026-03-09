@@ -11,7 +11,6 @@ except ImportError:
     from orderflow.exceptions import SessionTypeAbsent
     from orderflow.configuration import *
     from orderflow.volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks
-import math
 
 
 def get_dynamic_cumulative_delta(data: pd.DataFrame) -> pd.DataFrame:

@@ -1,3 +1,8 @@
+try:
+    from orderflow._version import __version__
+except ImportError:
+    __version__ = "0.4.0.dev0"
+
 from orderflow.auctions import (
     load_tick_data,
     aggregate_auctions,

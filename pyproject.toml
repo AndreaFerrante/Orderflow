@@ -1,13 +1,12 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=61", "wheel", "setuptools_scm[toml]>=7"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "orderflow"
-version = "0.4.0"
+dynamic = ["version"]
 description = "Orderflow trading data manager and data reshaper"
-readme = "README.md"
-readme-content-type = "text/markdown"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
@@ -52,3 +51,7 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 orderflow = ["py.typed"]
+
+[tool.setuptools_scm]
+write_to = "orderflow/_version.py"
+write_to_template = "__version__ = '{version}'"

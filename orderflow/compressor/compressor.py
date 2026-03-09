@@ -3,7 +3,6 @@ from typing import Optional, Union
 from tqdm import tqdm
 import polars as pl
 import pandas as pd
-import numpy as np
 
 
 def _get_datetime_fixed_pl(df: pl.DataFrame) -> pl.DataFrame:

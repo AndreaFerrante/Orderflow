@@ -448,6 +448,105 @@ def get_tickers_in_pg_table(
     df = df.sort_values(by=['Date', 'Time'])
     return df
 
+def get_tickers_in_folder_mem_optim(
+        path:           str  = None,
+        single_file:    str  = None,
+        market:         str  = None,
+        future_letters: list = None,
+        cols:           list = None,
+        ticker:         str  = "ES",
+        year:           int  = 0,
+        break_at:       int  = 99999,
+        extension:      str  = 'txt',
+        separator:      str  = ';',
+) -> polars.DataFrame:
+
+    if path is None:
+        raise Exception("Pass to the function a path where the files are stored in.")
+
+    if cols is None:
+        cols = get_longest_columns_dataframe(path=path, ticker=ticker, single_file=single_file)
+
+    # -------------------------------------------------------------------------
+    # Vectorized substitute for map_elements pad_after_period
+    # Polars native string ops → runs in Rust, zero Python overhead, no copies
+    # -------------------------------------------------------------------------
+    def _fix_time_padding(lf: polars.LazyFrame) -> polars.LazyFrame:
+        time_parts = polars.col('Time').str.splitn('.', 2)
+        return lf.with_columns(
+            polars.when(polars.col('Time').str.contains(r'\.'))
+            .then(
+                time_parts.struct.field('field_0') + '.' +
+                time_parts.struct.field('field_1').str.pad_start(6, '0')
+            )
+            .otherwise(polars.col('Time'))
+            .alias('Time')
+        )
+
+    # -------------------------------------------------------------------------
+    # Builds a LazyFrame for a single file — nothing is loaded into RAM yet
+    # Filters are part of the query plan → applied before materialization
+    # -------------------------------------------------------------------------
+    def _build_lazy(file_path: str) -> polars.LazyFrame:
+        return (
+            polars.scan_csv(file_path, separator=separator, infer_schema_length=10_000)
+            .select(cols)
+            .filter(
+                (polars.col('Date') != "1899-12-30") & (polars.col('Price') > 0)
+            )
+        )
+
+    # -------------------------------------------------------------------------
+    # All transformations are lazy — single .collect() materializes everything
+    # Polars optimizer applies filters first, reducing data before padding/datetime
+    # -------------------------------------------------------------------------
+    def _finalize(lf: polars.LazyFrame) -> polars.DataFrame:
+        lf = _fix_time_padding(lf)
+        lf = lf.with_columns(
+            (polars.col('Date') + ' ' + polars.col('Time')).alias('Datetime')
+        )
+        lf = lf.with_columns(
+            polars.col('Datetime').str.to_datetime()
+        )
+        return apply_offset_given_dataframe(pl_df=lf.collect(), market=market)
+
+    # -------------------------------------------------------------------------
+    # Single file
+    # -------------------------------------------------------------------------
+    if single_file is not None:
+        print("Reading one single file, only...")
+        return _finalize(_build_lazy(os.path.join(path, single_file)))
+
+    # -------------------------------------------------------------------------
+    # Multiple files — build list of lazy frames, concat plans, collect once
+    # -------------------------------------------------------------------------
+    ticker = str(ticker).upper()
+    files  = [f for f in os.listdir(path) if f.upper().startswith(ticker)]
+
+    if year > 0:
+        files = [f for f in files if str(year) in f]
+
+    if future_letters is not None:
+        future_letters = [str(l).upper() for l in future_letters]
+        files = [f for f in files if any(l in f.upper() for l in future_letters)]
+
+    files = [f for f in files if f.upper().endswith(extension.upper())][:break_at + 1]
+
+    print(f"Processing {len(files)} files...")
+
+    # Lista di LazyFrame: only query plans
+    lazy_frames = [
+        _build_lazy(os.path.join(path, file))
+        for file in tqdm(files)
+    ]
+
+    print("Correcting Time and adding Datetime...")
+
+    # polars.concat su LazyFrame
+    combined_lf = polars.concat(lazy_frames, how="vertical")
+
+    return _finalize(combined_lf)
+
 
 def get_tickers_in_folder(
         path:           str  = None,

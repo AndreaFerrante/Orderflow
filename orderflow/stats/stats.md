@@ -569,9 +569,3 @@ if n_rows_sample > len(trades) * 0.5:
 - **HMM**: Rabiner, L. (1989). A Tutorial on Hidden Markov Models
 - **Bootstrap**: Efron & Tibshirani (1993). An Introduction to the Bootstrap
 - **Regime Detection**: Hamilton, J.D. (1989). Probabilistic Approach to Regime Changes
-
----
-
-**Version**: 0.1.0  
-**Last Updated**: 2026-03-09  
-**Maintained by**: OrderFlow Analytics Team

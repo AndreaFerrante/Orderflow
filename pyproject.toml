@@ -56,3 +56,22 @@ orderflow = ["py.typed"]
 write_to = "orderflow/_version.py"
 write_to_template = "__version__ = '{version}'"
 fallback_version = "0.4.0"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.5.0"
+version_files = [
+    "pyproject.toml:version",
+    "orderflow/_version.py:__version__",
+]
+tag_format = "v$version"
+update_changelog_on_bump = false
+style = [
+    ["feat", "Features"],
+    ["fix", "Bug Fixes"],
+    ["refactor", "Refactoring"],
+    ["perf", "Performance Improvements"],
+    ["test", "Tests"],
+    ["chore", "Chores"],
+    ["docs", "Documentation"],
+]

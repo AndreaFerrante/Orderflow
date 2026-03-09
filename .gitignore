@@ -1,4 +1,3 @@
-orderflow/paths.py
 orderflow/runners/
 .venv/
 

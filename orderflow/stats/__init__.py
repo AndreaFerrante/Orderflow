@@ -13,6 +13,8 @@ from .markov import (
     MarkovChainPredictor,
     AdaptiveMarkovChainPredictor,
     MultiFeatureHMM,
+    get_states_from_ohlc,
+    predict_bar_state,
 )
 
 # Markov Utilities: State generation, HMM tools, feature engineering
@@ -42,6 +44,8 @@ __all__ = [
     "MarkovChainPredictor",
     "AdaptiveMarkovChainPredictor",
     "MultiFeatureHMM",
+    "get_states_from_ohlc",
+    "predict_bar_state",
     # Utilities
     "threshold_prices_states",
     "adaptive_threshold_prices_states",

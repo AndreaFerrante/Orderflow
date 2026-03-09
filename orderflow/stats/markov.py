@@ -10,7 +10,7 @@ All classes support tick-by-tick and compressed bar (Volume/Range/Time) data.
 """
 
 from collections import defaultdict
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict, List, Union
 from .markov_utilities import *
 import numpy as np
 import pandas as pd
@@ -456,23 +456,23 @@ class MultiFeatureHMM(object):
 
 def get_states_from_ohlc(df: pd.DataFrame, method: str = "close") -> List[str]:
     """
-    Generate UP/DOWN/FLAT states from OHLC bar data.
-
-    Supports both tick-by-tick prices and compressed bars.
+    Generate UP/DOWN/FLAT states from OHLC bar data (tick or compressed bars).
 
     Parameters
     ----------
     df : pd.DataFrame
-        Must contain 'Open', 'High', 'Low', 'Close' or 'Price' column.
+        Must contain relevant OHLC columns depending on method.
     method : {"close", "hl_range", "oc_range"}
-        - "close": Compare close to previous close
-        - "hl_range": Use High-Low intrabar range
-        - "oc_range": Compare Open to Close
+        - "close": Compare each close to the previous close (adaptive threshold).
+        - "hl_range": Classify each bar as UP/DOWN/FLAT by whether
+          (High - Low) is above or below the rolling average range.
+        - "oc_range": Classify each bar directly by sign of (Close - Open).
 
     Returns
     -------
     List[str]
-        States corresponding to bar movements.
+        States corresponding to bar movements (length = len(df) for oc_range/hl_range,
+        len(df) - 1 for close).
     """
     if method == "close":
         if "Close" not in df.columns:
@@ -480,25 +480,48 @@ def get_states_from_ohlc(df: pd.DataFrame, method: str = "close") -> List[str]:
         return adaptive_threshold_prices_states(df["Close"].tolist(), window=20)
 
     elif method == "hl_range":
+        # hl_range: bar is UP if its range is above rolling-mean range, DOWN if below.
+        # This captures expansion vs contraction in compressed bars.
         if not all(c in df.columns for c in ["High", "Low"]):
             raise ValueError("'High', 'Low' columns required for method='hl_range'.")
-        ranges = (df["High"] - df["Low"]).tolist()
-        return adaptive_threshold_prices_states(ranges, window=20)
+        ranges = (df["High"] - df["Low"]).values
+        window = 20
+        states: List[str] = []
+        for i in range(len(ranges)):
+            start = max(0, i - window)
+            avg_range = np.mean(ranges[start:i]) if i > 0 else 0.0
+            if ranges[i] > avg_range:
+                states.append("UP")
+            elif ranges[i] < avg_range:
+                states.append("DOWN")
+            else:
+                states.append("FLAT")
+        return states
 
     elif method == "oc_range":
+        # oc_range: directly classify each bar by sign of (Close - Open).
+        # No diff needed — the change IS the signal.
         if not all(c in df.columns for c in ["Open", "Close"]):
             raise ValueError("'Open', 'Close' columns required for method='oc_range'.")
-        changes = (df["Close"] - df["Open"]).tolist()
-        return adaptive_threshold_prices_states(changes, window=20)
+        changes = (df["Close"] - df["Open"]).values
+        states = []
+        for chg in changes:
+            if chg > 0:
+                states.append("UP")
+            elif chg < 0:
+                states.append("DOWN")
+            else:
+                states.append("FLAT")
+        return states
 
     else:
-        raise ValueError(f"Unknown method: {method}")
+        raise ValueError(f"Unknown method: '{method}'. Use 'close', 'hl_range', or 'oc_range'.")
 
 
 def predict_bar_state(
     df: pd.DataFrame,
-    predictor: MarkovChainPredictor,
-    lookback: int = None,
+    predictor: Union[MarkovChainPredictor, AdaptiveMarkovChainPredictor],
+    lookback: Optional[int] = None,
     method: str = "close",
 ) -> Tuple[str, Dict[str, float]]:
     """
@@ -508,10 +531,12 @@ def predict_bar_state(
     ----------
     df : pd.DataFrame
         OHLC bar data.
-    predictor : MarkovChainPredictor
+    predictor : MarkovChainPredictor or AdaptiveMarkovChainPredictor
         Fitted predictor.
     lookback : int, optional
-        How many recent bars to use. Defaults to predictor.order.
+        How many recent bars to use. Defaults to predictor.order for
+        MarkovChainPredictor, or predictor.best_order for
+        AdaptiveMarkovChainPredictor.
     method : str
         State generation method (see get_states_from_ohlc).
 
@@ -521,33 +546,20 @@ def predict_bar_state(
         (Predicted state, probability distribution)
     """
     if lookback is None:
-        lookback = predictor.order
+        if isinstance(predictor, AdaptiveMarkovChainPredictor):
+            if not predictor.fitted:
+                raise RuntimeError("AdaptiveMarkovChainPredictor not fitted. Call fit() first.")
+            lookback = predictor.best_order
+        else:
+            lookback = predictor.order
 
     states = get_states_from_ohlc(df, method=method)
-    recent = states[-lookback:]
+    if len(states) < lookback:
+        raise ValueError(
+            f"Not enough bars to extract {lookback} recent states (got {len(states)}).")
 
+    recent = states[-lookback:]
     pred_state = predictor.predict_next_state(recent)
     prob_dist = predictor.predict_distribution(recent)
 
     return pred_state, prob_dist
-    # Fit finale (anche se best_hmm è già fit, in genere)
-    multi_hmm.fit(features_array)
-
-    # 5. Prediciamo gli stati con Viterbi
-    states_seq = multi_hmm.predict_states(features_array)
-    print("Stati nascosti (Viterbi) per ogni osservazione:\n", states_seq)
-
-    # 6. Calcoliamo la matrice di probabilità a posteriori (filtraggio & smoothing)
-    posterior_probs = multi_hmm.predict_proba_states(features_array)
-    print("\nMatrice di probabilità a posteriori (prime 10 righe):")
-    print(posterior_probs[:10])
-
-    # 7. Score del modello
-    loglike = multi_hmm.score(features_array)
-    print(f"\nLog-likelihood del modello sul dataset: {loglike:.2f}")
-
-
-if __name__ == "__main__":
-
-    run_adaptive_markov_chain_predictor()
-    run_multi_feature_hmm()

@@ -22,10 +22,12 @@ The `orderflow.stats` module provides cutting-edge statistical tools:
 
 | Tool | Purpose | Input | Output |
 |------|---------|-------|--------|
-| **MarkovChainPredictor** | Fixed-order state prediction | Price sequences | UP/DOWN/FLAT probabilities |
-| **AdaptiveMarkovChainPredictor** | Auto-order selection + validation | Price sequences | Best-order predictor |
+| **MarkovChainPredictor** | Fixed-order state prediction | Price sequences or OHLC bars | UP/DOWN/FLAT probabilities |
+| **AdaptiveMarkovChainPredictor** | Auto-order selection + validation | Price sequences or OHLC bars | Best-order predictor |
 | **MultiFeatureHMM** | Multi-dimensional regime detection | Features (return, vol, slope) | Hidden states + probabilities |
 | **get_montecarlo_analysis** | Strategy robustness via bootstrap | Trade P&L | Equity curves + CI + metrics |
+| **get_states_from_ohlc** | OHLC → UP/DOWN/FLAT states | Compressed bar DataFrame | State list |
+| **predict_bar_state** | Next-bar prediction on OHLC data | OHLC DataFrame + fitted predictor | (state, probability dict) |
 
 ### Key Features
 
@@ -197,13 +199,13 @@ Assess trading strategy robustness through bootstrap resampling of historical tr
 ### Basic Monte Carlo
 
 ```python
-from orderflow.stats import get_montecarlo_analysis, plot_montecarlo_paths
+from orderflow.stats import get_montecarlo_analysis
 import pandas as pd
 
 # Historical trades from backtester
 trades = pd.DataFrame({
     'Datetime': pd.date_range('2023-01-01', periods=100),
-    'Entry_Gains': [5.2, -3.1, 8.5, -1.2, 10.0, ...],  # P&L per trade
+    'Entry_Gains': [5.2, -3.1, 8.5, -1.2, 10.0],  # P&L per trade
 })
 
 # Run 500 simulations, sample 50 trades per iteration
@@ -223,8 +225,12 @@ print(f"Win rate: {stats['win_rate']:.1%}")
 print(f"Best case: ${stats['max_equity']:.2f}")
 print(f"Worst case: ${stats['min_equity']:.2f}")
 
-# Visualize equity paths
-plot_montecarlo_paths(equity_patterns, show=True)
+# Visualize equity paths (use matplotlib directly on equity_patterns)
+import matplotlib.pyplot as plt
+for path in equity_patterns:
+    plt.plot(path, alpha=0.05, color='steelblue')
+plt.title('Monte Carlo Equity Paths')
+plt.show()
 ```
 
 ### Interpreting Results
@@ -258,60 +264,102 @@ if ci_width > stats['mean_equity'] * 2:
     print("WARNING: Large CI relative to mean. Low signal clarity.")
 ```
 
-### Advanced: Profit Factor & Sharpe Ratio
 
-```python
-from orderflow.stats import compute_montecarlo_metrics
-
-metrics = compute_montecarlo_metrics(stats, initial_capital=10000)
-
-print(f"Total return: {metrics['return_pct']:.2f}%")
-print(f"Sharpe ratio: {metrics['sharpe_ratio']:.2f}")  # >1.0 is good
-print(f"Profit factor: {metrics['profit_factor']:.2f}")  # >1.5 is solid
-```
 
 ---
 
 ## Working with Compressed Bars
 
+`get_states_from_ohlc` and `predict_bar_state` are designed for compressed bars
+(range, volume, time) produced by the `orderflow.compressor` module, as well as
+any standard OHLC DataFrame.
+
 ### Volume / Range / Time Bars
 
 ```python
 from orderflow.compressor import compress_to_bar_once_range_met
-from orderflow.stats import get_states_from_ohlc, predict_bar_state
+from orderflow.stats import (
+    get_states_from_ohlc,
+    predict_bar_state,
+    MarkovChainPredictor,
+    AdaptiveMarkovChainPredictor,
+)
 import pandas as pd
 
 # Load tick data
 ticks = pd.read_csv('tbt/2023_06_29.txt', sep=';')
 
-# Compress to range bars (4-point = 16 ticks × 0.25 tick size)
+# Compress to 4-point range bars (16 ticks × 0.25 tick size)
 bars = compress_to_bar_once_range_met(
     ticks,
     price_range=16,
     tick_size=0.25
 )
+# bars has columns: Open, High, Low, Close, Volume, ...
 
-# Extract states from bar closes
-states = get_states_from_ohlc(bars, method='close')
-# → ['UP', 'DOWN', 'UP', ...]
+# ── Method 1: close-to-close trend ──────────────────────────────────────────
+states_close = get_states_from_ohlc(bars, method='close')
+# len == len(bars) - 1  →  ['UP', 'DOWN', 'UP', ...]
 
-# Fit predictor
-from orderflow.stats import MarkovChainPredictor
 predictor = MarkovChainPredictor(order=3)
-predictor.fit(states)
+predictor.fit(states_close)
+next_pred, next_probs = predict_bar_state(bars, predictor, method='close')
+print(f"Close method → {next_pred}: {next_probs}")
 
-# Predict next bar
-next_pred, next_probs = predict_bar_state(bars, predictor)
-print(f"Next bar prediction: {next_pred} {next_probs}")
+# ── Method 2: intrabar volatility regime ────────────────────────────────────
+states_hl = get_states_from_ohlc(bars, method='hl_range')
+# UP  = range > rolling avg (expansion / breakout)
+# DOWN = range < rolling avg (compression)
+# len == len(bars)
+
+adaptive = AdaptiveMarkovChainPredictor(max_order=5)
+adaptive.fit(states_hl)
+next_pred2, next_probs2 = predict_bar_state(bars, adaptive, method='hl_range')
+print(f"HL-range method (order={adaptive.best_order}) → {next_pred2}: {next_probs2}")
+
+# ── Method 3: intrabar directional bias (bar color) ─────────────────────────
+states_oc = get_states_from_ohlc(bars, method='oc_range')
+# UP  = Close > Open (bullish candle)
+# DOWN = Close < Open (bearish candle)
+# FLAT = doji
+# len == len(bars)
+
+predictor3 = MarkovChainPredictor(order=2)
+predictor3.fit(states_oc)
+next_pred3, next_probs3 = predict_bar_state(bars, predictor3, method='oc_range')
+print(f"OC-range method → {next_pred3}: {next_probs3}")
 ```
+
+### `predict_bar_state` with Both Predictor Types
+
+`predict_bar_state` accepts both `MarkovChainPredictor` and
+`AdaptiveMarkovChainPredictor`. The lookback window is resolved automatically:
+
+```python
+# MarkovChainPredictor → lookback = predictor.order
+next_state, dist = predict_bar_state(bars, predictor)
+
+# AdaptiveMarkovChainPredictor → lookback = predictor.best_order
+next_state, dist = predict_bar_state(bars, adaptive_predictor)
+
+# Override lookback manually
+next_state, dist = predict_bar_state(bars, predictor, lookback=5)
+```
+
+A `ValueError` is raised if the bar DataFrame does not contain enough rows to
+extract `lookback` states (e.g., calling on a bar series with only 2 bars while
+`lookback=3`).
 
 ### OHLC State Methods
 
-| Method | Use Case | Interpretation |
-|--------|----------|---|
-| **"close"** | General trend | Close > prev close = UP |
-| **"hl_range"** | Volatility & balance | Large range = choppy |
-| **"oc_range"** | Intrabar direction | Open to close = bar color |
+| Method | Use Case | Interpretation | Output length |
+|--------|----------|----------------|---------------|
+| **"close"** | Inter-bar trend (close-to-close) | Each bar vs its predecessor; uses adaptive volatility threshold | `len(df) - 1` |
+| **"hl_range"** | Intrabar volatility regime | UP = range expands above rolling avg (breakout); DOWN = range contracts (compression) | `len(df)` |
+| **"oc_range"** | Intrabar directional bias | UP = bullish candle `(Close > Open)`; DOWN = bearish; FLAT = doji | `len(df)` |
+
+> **Important**: `hl_range` and `oc_range` classify *each bar directly* — no price-differencing is applied.
+> `close` applies an adaptive volatility-scaled threshold across successive close prices.
 
 ---
 
@@ -467,11 +515,7 @@ for i in range(len(states)):
 ### Example 3: Strategy Monte Carlo Validation
 
 ```python
-from orderflow.stats import (
-    get_montecarlo_analysis,
-    plot_montecarlo_paths,
-    plot_montecarlo_distribution,
-)
+from orderflow.stats import get_montecarlo_analysis
 import pandas as pd
 
 # Load backtest results
@@ -490,15 +534,11 @@ equity_patterns, summary, stats = get_montecarlo_analysis(
 
 # Check if robust
 if stats['ci_lower'] > 0:
-    print("✓ Strategy is ROBUST (99% CI above zero)")
+    print("Strategy is ROBUST (99% CI above zero)")
 elif stats['mean_equity'] > 0 and stats['win_rate'] > 0.55:
-    print("⚠ Strategy is MARGINAL (needs refinement)")
+    print("Strategy is MARGINAL (needs refinement)")
 else:
-    print("✗ Strategy is NOT ROBUST (reject)")
-
-# Visualize
-plot_montecarlo_paths(equity_patterns, show=False)
-plot_montecarlo_distribution(stats, summary, show=False)
+    print("Strategy is NOT ROBUST (reject)")
 ```
 
 ---
@@ -558,8 +598,11 @@ if n_rows_sample > len(trades) * 0.5:
 | **Auto-select order** | `AdaptiveMarkovChainPredictor` | Avoids manual tuning |
 | **Multi-feature regimes** | `MultiFeatureHMM` | Captures complex dynamics |
 | **Test strategy robustness** | `get_montecarlo_analysis` | Bootstrap validates walk-forward |
-| **Tick-by-tick analysis** | Raw prices → states | High granularity |
-| **Compressed bars** | OHLC → states | Practical for live trading |
+| **Tick-by-tick analysis** | `threshold_prices_states` / `adaptive_threshold_prices_states` | High granularity on raw prices |
+| **Compressed bar states** | `get_states_from_ohlc` | Converts OHLC bars to UP/DOWN/FLAT |
+| **Next-bar prediction** | `predict_bar_state` | One-call prediction on OHLC data |
+| **Bar color bias** | `get_states_from_ohlc(method='oc_range')` | Classifies each bar by Open→Close sign |
+| **Volatility regime** | `get_states_from_ohlc(method='hl_range')` | Detects expansion vs. compression |
 
 ---
 

@@ -27,6 +27,10 @@ cvar_historical           Conditional VaR (Expected Shortfall).
 autocorrelation           Ljung-Box-ready autocorrelation at multiple lags.
 hurst_exponent            Hurst exponent via rescaled range analysis.
 information_ratio         Information ratio vs a benchmark.
+omega_ratio               Omega ratio (captures full distribution shape).
+tail_ratio                Right-tail vs left-tail magnitude.
+profit_factor             Gross profit / gross loss.
+gain_to_pain_ratio        Net return / sum of absolute losses (Schwager).
 """
 
 from __future__ import annotations
@@ -35,38 +39,15 @@ import logging
 from typing import Dict, Optional, Sequence, Union
 
 import numpy as np
-import polars as pl
+
+try:
+    import polars as pl
+except ImportError:  # pragma: no cover
+    pl = None  # type: ignore[assignment]
+
+from ._validators import EPS as _EPS, to_float64 as _to_float64, require_min_obs as _require_min_obs
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-_NUMERIC_DTYPES_PL = {
-    pl.Int8, pl.Int16, pl.Int32, pl.Int64,
-    pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
-    pl.Float32, pl.Float64,
-}
-_EPS: float = 1e-14
-
-
-def _to_float64(arr: Union[np.ndarray, Sequence[float], pl.Series]) -> np.ndarray:
-    """Convert any array-like to a clean float64 NumPy array (no NaN)."""
-    if isinstance(arr, pl.Series):
-        arr = arr.drop_nulls().to_numpy()
-    arr = np.asarray(arr, dtype=np.float64)
-    mask = np.isfinite(arr)
-    if not mask.all():
-        n_bad = int((~mask).sum())
-        logger.debug("Dropped %d non-finite values from input.", n_bad)
-        arr = arr[mask]
-    return arr
-
-
-def _require_min_obs(arr: np.ndarray, n: int, label: str = "array") -> None:
-    if len(arr) < n:
-        raise ValueError(f"{label} requires at least {n} observations, got {len(arr)}.")
 
 
 # ---------------------------------------------------------------------------
@@ -602,3 +583,155 @@ def hurst_exponent(
     # OLS regression: log(R/S) = H * log(n) + const
     coeffs = np.polyfit(log_w, log_rs, 1)
     return float(np.clip(coeffs[0], 0.0, 1.0))
+
+
+# ---------------------------------------------------------------------------
+# Additional performance ratios
+# ---------------------------------------------------------------------------
+
+def omega_ratio(
+    returns: Union[np.ndarray, Sequence[float]],
+    threshold: float = 0.0,
+) -> float:
+    """
+    Omega ratio: probability-weighted gain over loss relative to a threshold.
+
+    Ω = Σ max(r_i − τ, 0) / Σ max(τ − r_i, 0)
+
+    Unlike Sharpe, Omega captures the *entire* return distribution
+    (all higher moments) without assuming normality.
+
+    Parameters
+    ----------
+    returns : array-like
+        Per-period arithmetic returns.
+    threshold : float, default=0.0
+        Minimum acceptable return per period.
+
+    Returns
+    -------
+    float
+        Omega ratio (> 1 is desirable).
+
+    Raises
+    ------
+    ValueError
+        If no losses below threshold (denominator is zero).
+    """
+    arr = _to_float64(returns)
+    _require_min_obs(arr, 2, "omega_ratio()")
+    gains = np.sum(np.maximum(arr - threshold, 0.0))
+    losses = np.sum(np.maximum(threshold - arr, 0.0))
+    if losses < _EPS:
+        raise ValueError("No returns below threshold; Omega ratio is undefined.")
+    return float(gains / losses)
+
+
+def tail_ratio(
+    returns: Union[np.ndarray, Sequence[float]],
+    percentile: float = 0.95,
+) -> float:
+    """
+    Tail ratio: right tail magnitude relative to left tail magnitude.
+
+    tail_ratio = |percentile(returns, p)| / |percentile(returns, 1−p)|
+
+    A ratio > 1 indicates fatter right tail (desirable for long strategies).
+    A ratio < 1 indicates fatter left tail (crash risk).
+
+    Parameters
+    ----------
+    returns : array-like
+        Per-period returns.
+    percentile : float, default=0.95
+        Upper percentile (e.g. 0.95 compares 95th vs 5th percentile).
+
+    Returns
+    -------
+    float
+        Tail ratio.
+
+    Raises
+    ------
+    ValueError
+        If left tail is near zero or percentile out of (0.5, 1).
+    """
+    arr = _to_float64(returns)
+    _require_min_obs(arr, 10, "tail_ratio()")
+    if not (0.5 < percentile < 1.0):
+        raise ValueError(f"percentile must be in (0.5, 1), got {percentile}.")
+    right = float(np.percentile(arr, percentile * 100))
+    left = float(np.percentile(arr, (1.0 - percentile) * 100))
+    if abs(left) < _EPS:
+        raise ValueError("Left tail is near zero; tail ratio is undefined.")
+    return float(abs(right) / abs(left))
+
+
+def profit_factor(
+    returns: Union[np.ndarray, Sequence[float]],
+) -> float:
+    """
+    Profit factor: gross profit divided by gross loss.
+
+    PF = Σ(positive returns) / |Σ(negative returns)|
+
+    A factor > 1 indicates a profitable strategy.  PF > 2 is generally
+    considered strong.
+
+    Parameters
+    ----------
+    returns : array-like
+        Per-period or per-trade P&L.
+
+    Returns
+    -------
+    float
+        Profit factor (>= 0).
+
+    Raises
+    ------
+    ValueError
+        If no losing periods (denominator is zero).
+    """
+    arr = _to_float64(returns)
+    _require_min_obs(arr, 2, "profit_factor()")
+    gross_profit = float(np.sum(arr[arr > 0]))
+    gross_loss = float(np.abs(np.sum(arr[arr < 0])))
+    if gross_loss < _EPS:
+        raise ValueError("No losing periods; profit factor is undefined.")
+    return gross_profit / gross_loss
+
+
+def gain_to_pain_ratio(
+    returns: Union[np.ndarray, Sequence[float]],
+) -> float:
+    """
+    Gain-to-Pain ratio: net return divided by absolute sum of losses.
+
+    GPR = Σ r_i / Σ |min(r_i, 0)|
+
+    Introduced by Jack Schwager as a robust alternative to Sharpe.
+    Penalises by realised pain rather than total volatility.
+
+    Parameters
+    ----------
+    returns : array-like
+        Per-period returns.
+
+    Returns
+    -------
+    float
+        Gain-to-pain ratio.
+
+    Raises
+    ------
+    ValueError
+        If no losing periods (denominator is zero).
+    """
+    arr = _to_float64(returns)
+    _require_min_obs(arr, 2, "gain_to_pain_ratio()")
+    total_return = float(np.sum(arr))
+    total_pain = float(np.sum(np.abs(np.minimum(arr, 0.0))))
+    if total_pain < _EPS:
+        raise ValueError("No losing periods; gain-to-pain ratio is undefined.")
+    return total_return / total_pain

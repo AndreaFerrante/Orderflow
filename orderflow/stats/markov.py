@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-from hmmlearn import hmm as _hmm
+from hmmlearn import hmm
 
 from .markov_utilities import adaptive_threshold_prices_states
 
@@ -37,7 +37,7 @@ _KNOWN_STATES: Tuple[str, ...] = ("UP", "DOWN", "FLAT")
 _UNIFORM_3: Dict[str, float] = {s: 1 / 3 for s in _KNOWN_STATES}
 
 
-class MarkovChainPredictor(object):
+class MarkovChainPredictor:
     """
     Fixed-order Markov Chain predictor for market state transitions.
 
@@ -170,7 +170,7 @@ class MarkovChainPredictor(object):
         return max(dist.items(), key=lambda x: x[1])[0]
 
 
-class AdaptiveMarkovChainPredictor(object):
+class AdaptiveMarkovChainPredictor:
     """
     Adaptive variable-order Markov Chain with automatic order selection.
 
@@ -370,7 +370,7 @@ class AdaptiveMarkovChainPredictor(object):
         return list(all_states)
 
 
-class MultiFeatureHMM(object):
+class MultiFeatureHMM:
     """
     Hidden Markov Model for multi-dimensional market data.
 
@@ -388,7 +388,7 @@ class MultiFeatureHMM(object):
         Whether the model has been fitted.
     """
 
-    def __init__(self, model: Optional[hmm.GaussianHMM] = None):
+    def __init__(self, model: Optional["hmm.GaussianHMM"] = None):
         self.model = model
         self.fitted = False if model is None else True
 

@@ -33,30 +33,9 @@ from typing import Optional, Union
 import numpy as np
 import pandas as pd
 
+from ._validators import validate_positive_prices as _validate_prices
+
 logger = logging.getLogger(__name__)
-
-_EPS: float = 1e-14
-
-
-# ---------------------------------------------------------------------------
-# Type helpers
-# ---------------------------------------------------------------------------
-
-def _validate_prices(prices: Union[pd.Series, np.ndarray]) -> np.ndarray:
-    arr = np.asarray(prices, dtype=np.float64)
-    if arr.ndim != 1:
-        raise ValueError(f"prices must be 1-D, got shape {arr.shape}.")
-    if len(arr) < 2:
-        raise ValueError(f"Need at least 2 prices, got {len(arr)}.")
-    if np.any(arr <= 0):
-        raise ValueError(
-            "All prices must be strictly positive for return calculations. "
-            "Check for zero or negative values (e.g. raw P&L series passed as prices)."
-        )
-    if not np.all(np.isfinite(arr)):
-        n_bad = int(np.sum(~np.isfinite(arr)))
-        raise ValueError(f"prices contains {n_bad} non-finite value(s) (NaN or Inf).")
-    return arr
 
 
 # ---------------------------------------------------------------------------

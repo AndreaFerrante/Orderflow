@@ -6,10 +6,12 @@ Institutional-grade statistical engine for systematic trading research.
 
 Submodules
 ----------
-stats           Core descriptive stats, risk metrics, time-series diagnostics.
-returns         Return series construction, equity curves, drawdown analysis.
-montecarlo      Non-parametric bootstrap Monte Carlo for strategy robustness.
-markov          Markov chain & HMM regime predictors (no lookahead).
+stats             Core descriptive stats, risk metrics, time-series diagnostics.
+returns           Return series construction, equity curves, drawdown analysis.
+hypothesis        Statistical hypothesis tests (stationarity, normality, breaks).
+correlation       Correlation analysis (rolling, rank, stability, eigenvalues).
+montecarlo        Non-parametric bootstrap Monte Carlo for strategy robustness.
+markov            Markov chain & HMM regime predictors (no lookahead).
 markov_utilities  Feature engineering, HMM model selection, data loading.
 """
 
@@ -28,6 +30,10 @@ from .stats import (
     rolling_sharpe,
     autocorrelation,
     hurst_exponent,
+    omega_ratio,
+    tail_ratio,
+    profit_factor,
+    gain_to_pain_ratio,
 )
 
 # ── Return series analysis ───────────────────────────────────────────────────
@@ -42,6 +48,26 @@ from .returns import (
     drawdown_series,
     rolling_volatility,
     underwater_duration,
+)
+
+# ── Hypothesis testing ───────────────────────────────────────────────────────
+from .hypothesis import (
+    TestResult,
+    adf_test,
+    kpss_test,
+    is_stationary,
+    jarque_bera_test,
+    ljung_box_test,
+    holm_bonferroni,
+    cusum_test,
+)
+
+# ── Correlation analysis ─────────────────────────────────────────────────────
+from .correlation import (
+    rolling_correlation,
+    rank_correlation,
+    correlation_stability,
+    correlation_eigenvalues,
 )
 
 # ── Monte Carlo simulation ───────────────────────────────────────────────────
@@ -87,6 +113,10 @@ __all__ = [
     "rolling_sharpe",
     "autocorrelation",
     "hurst_exponent",
+    "omega_ratio",
+    "tail_ratio",
+    "profit_factor",
+    "gain_to_pain_ratio",
     # returns.py
     "to_log_returns",
     "to_arithmetic_returns",
@@ -98,6 +128,20 @@ __all__ = [
     "drawdown_series",
     "rolling_volatility",
     "underwater_duration",
+    # hypothesis.py
+    "TestResult",
+    "adf_test",
+    "kpss_test",
+    "is_stationary",
+    "jarque_bera_test",
+    "ljung_box_test",
+    "holm_bonferroni",
+    "cusum_test",
+    # correlation.py
+    "rolling_correlation",
+    "rank_correlation",
+    "correlation_stability",
+    "correlation_eigenvalues",
     # montecarlo.py
     "MonteCarloResult",
     "get_montecarlo_analysis",

@@ -28,6 +28,7 @@ Example
 from __future__ import annotations
 
 import abc
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -401,4 +402,110 @@ class CompositeExit(BaseExitStrategy):
             signal = strategy.on_tick(tick, position, price_history, indicators)
             if signal.should_exit:
                 return signal
+        return ExitSignal(should_exit=False)
+
+
+@dataclass
+class DynamicTPSLExit(BaseExitStrategy):
+    """
+    Exit strategy that uses per-signal TP and SL values from dedicated columns.
+
+    Expects signals DataFrame to have columns: Index, TradeType, TP_Ticks, SL_Ticks
+    """
+    signals_df: pd.DataFrame
+    tick_size: float = 0.25
+    _signal_lookup: Dict[int, tuple] = field(default_factory=dict, init=False, repr=False)
+    _current_tp: float = field(default=None, init=False, repr=False)
+    _current_sl: float = field(default=None, init=False, repr=False)
+
+    def __post_init__(self):
+        # Build a lookup dict: signal Index -> (TP_Ticks, SL_Ticks)
+        for _, row in self.signals_df.iterrows():
+            self._signal_lookup[int(row['Index'])] = (
+                float(row['TP_Ticks']),
+                float(row['SL_Ticks'])
+            )
+
+    def on_entry(self, tick: Tick, position: PositionState) -> None:
+        """Called when position opens — retrieve TP/SL for this signal."""
+        if tick.index in self._signal_lookup:
+            self._current_tp, self._current_sl = self._signal_lookup[tick.index]
+
+    def on_tick(
+        self,
+        tick: Tick,
+        position: PositionState,
+        price_history: np.ndarray,
+        indicators: Dict[str, Any],
+    ) -> ExitSignal:
+        price = tick.price
+        entry = position.entry_price
+
+        if self._current_tp is None or self._current_sl is None:
+            return ExitSignal(should_exit=False)
+
+        tp_distance = self._current_tp * self.tick_size
+        sl_distance = self._current_sl * self.tick_size
+
+        if position.side == Side.LONG:
+            if price - entry >= tp_distance:
+                return ExitSignal(should_exit=True, reason=ExitReason.TAKE_PROFIT)
+            if entry - price >= sl_distance:
+                return ExitSignal(should_exit=True, reason=ExitReason.STOP_LOSS)
+
+        elif position.side == Side.SHORT:
+            if entry - price >= tp_distance:
+                return ExitSignal(should_exit=True, reason=ExitReason.TAKE_PROFIT)
+            if price - entry >= sl_distance:
+                return ExitSignal(should_exit=True, reason=ExitReason.STOP_LOSS)
+
+        return ExitSignal(should_exit=False)
+
+
+@dataclass
+class HourBasedExit(BaseExitStrategy):
+    """
+    Close all positions at a specific hour of the day.
+
+    Parameters
+    ----------
+    close_hour : int
+        Hour (0-23) to force close all open positions.
+    close_minute : int
+        Minute (0-59) to force close.
+    """
+    close_hour: int = 15
+    close_minute: int = 0
+
+    def on_tick(
+            self,
+            tick: Tick,
+            position: PositionState,
+            price_history: np.ndarray,
+            indicators: Dict[str, Any],
+    ) -> ExitSignal:
+        raw = tick.datetime
+        if isinstance(raw, (int, np.int64, np.int32)):
+            raw_min = int(raw) // (60 * 1_000_000_000)  # nanosecondi → minuti
+            tick_hour = raw_min // 60 % 24
+            tick_minute = raw_min % 60
+
+        elif isinstance(raw, np.datetime64):
+            raw_min = raw.astype('datetime64[m]').astype(np.int64)  # minuti da epoch
+            tick_hour = int(raw_min // 60 % 24)
+            tick_minute = int(raw_min % 60)
+
+        else:
+            tick_hour = raw.hour
+            tick_minute = raw.minute
+
+        close_time_minutes = self.close_hour * 60 + self.close_minute
+        tick_time_minutes = tick_hour * 60 + tick_minute
+
+        if tick_time_minutes >= close_time_minutes:
+            return ExitSignal(
+                should_exit=True,
+                reason=ExitReason.TIME_EXIT,
+                metadata={"close_time": f"{self.close_hour}:{self.close_minute:02d}"},
+            )
         return ExitSignal(should_exit=False)

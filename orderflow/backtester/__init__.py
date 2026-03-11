@@ -39,6 +39,8 @@ from orderflow.backtester.exits import (
     TimeBasedExit,
     VolatilityExit,
     CompositeExit,
+    DynamicTPSLExit,
+    HourBasedExit
 )
 from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
 from orderflow.backtester.engine import BacktestEngine, BacktestResult
@@ -65,6 +67,8 @@ __all__ = [
     "TimeBasedExit",
     "VolatilityExit",
     "CompositeExit",
+    "HourBasedExit",
+    "DynamicTPSLExit",
     # Metrics
     "PerformanceMetrics",
     "compute_metrics",

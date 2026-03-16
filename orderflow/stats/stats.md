@@ -1,421 +1,458 @@
-# OrderFlow Statistics Module
+# Stats Module — Practical Guide
 
-> Institutional-grade statistical engine for systematic trading research.
-
----
-
-## Design Philosophy
-
-This module was designed with the mindset of a quantitative trading operation
-where **every statistical statement must be defensible** and **every number
-must be reproducible**.
-
-### Core Principles
-
-| Principle | How it is enforced |
-|---|---|
-| **No lookahead bias** | All rolling/expanding operations are strictly causal. Window `[t-w, t]` never includes future bars. |
-| **Numerical stability** | Log operations guarded by `EPS = 1e-14`; compensated algorithms for moments; double precision throughout. |
-| **No silent failures** | Every function raises `ValueError` on degenerate input (zero variance, insufficient data) instead of returning NaN. |
-| **Reproducibility** | All stochastic functions accept `random_state` seeds via NumPy's `default_rng` — no global state mutation. |
-| **Correctness over cleverness** | Bias-corrected estimators (n−1 for variance, Fisher for kurtosis). Standard formulas from the literature. |
-| **Production readiness** | Structured logging, type hints on all signatures, explicit validation at entry points. |
-
-### Anti-Overfitting Safeguards
-
-- **Multiple-testing correction** (`holm_bonferroni`) to prevent p-hacking.
-- **Combined stationarity tests** (ADF + KPSS together) to avoid false confidence from a single test.
-- **Marchenko–Pastur threshold** in eigenvalue analysis to distinguish signal from noise.
-- **Bootstrap Monte Carlo** for strategy robustness — tests whether performance survives resampling.
-- **Structural break detection** (CUSUM) to flag regime changes that invalidate backtest assumptions.
-
----
-
-## Module Architecture
-
-```
-stats/
-├── __init__.py            # Public API — all exports
-├── _validators.py         # Shared input validation & type coercion
-├── stats.py               # Core metrics: moments, Sharpe, Sortino, VaR, Hurst
-├── returns.py             # Return conversions, equity curves, drawdowns
-├── hypothesis.py          # Statistical tests: ADF, KPSS, Jarque-Bera, Ljung-Box, CUSUM
-├── correlation.py         # Correlation: rolling, rank, stability, eigenvalues
-├── montecarlo.py          # Bootstrap Monte Carlo simulation
-├── markov.py              # Markov chain & HMM regime predictors
-├── markov_utilities.py    # Feature engineering, HMM model selection, data I/O
-└── stats.md               # This documentation
-```
-
-### Module Dependency Graph
-
-```
-_validators.py  ← used by all modules (shared validation)
-      ↑
-stats.py        ← pure NumPy, no external statistical deps
-returns.py      ← pure NumPy + pandas
-hypothesis.py   ← scipy.stats + statsmodels
-correlation.py  ← scipy.stats + pandas
-montecarlo.py   ← pure NumPy + tqdm
-markov.py       ← hmmlearn + markov_utilities
-markov_utilities.py ← hmmlearn + pandas + matplotlib
-```
-
----
-
-## Installation
-
-The stats module requires these dependencies (already in `pyproject.toml`):
-
-```bash
-pip install numpy pandas scipy statsmodels hmmlearn tqdm matplotlib
-```
-
-Optional for enhanced performance:
-```bash
-pip install polars  # Alternative to pandas for stats.py input
-```
-
----
-
-## Quick Start
+Institutional-grade statistical engine for systematic trading research.
+Import everything from the top-level namespace:
 
 ```python
-import numpy as np
-from orderflow.stats import (
-    sharpe_ratio, sortino_ratio, max_drawdown, describe,
-    to_log_returns, equity_curve,
-    is_stationary, jarque_bera_test,
-    rolling_correlation,
-    get_montecarlo_analysis,
-)
-
-# Generate sample returns
-rng = np.random.default_rng(42)
-returns = rng.normal(0.0005, 0.01, 500)
-
-# ── Risk metrics ──
-print(f"Sharpe:   {sharpe_ratio(returns):.2f}")
-print(f"Sortino:  {sortino_ratio(returns):.2f}")
-print(f"Max DD:   {max_drawdown(returns):.2%}")
-print(f"Summary:  {describe(returns)}")
-
-# ── Stationarity check ──
-stationary, explanation = is_stationary(returns)
-print(f"Stationary: {stationary} — {explanation}")
-
-# ── Normality check ──
-jb = jarque_bera_test(returns)
-print(jb)  # TestResult: Jarque-Bera: stat=..., p=..., α=0.05 → ...
+from orderflow.stats import sharpe_ratio, adf_test, get_montecarlo_analysis  # etc.
 ```
 
 ---
 
-## Module Reference
+## File Map
 
-### `stats.py` — Core Metrics
-
-#### Distribution Analysis
-
-| Function | Description |
+| File | Purpose |
 |---|---|
-| `describe(series, percentiles)` | Full moment summary (mean, std, skew, kurt, percentiles) |
-| `is_skewed(series, threshold)` | Boolean skewness test (adjusted Fisher–Pearson) |
-| `get_kurtosis(series)` | Bias-corrected excess kurtosis (Fisher definition) |
-
-#### Performance Ratios
-
-| Function | Description |
-|---|---|
-| `sharpe_ratio(returns, risk_free_rate, periods_per_year)` | Annualised Sharpe ratio |
-| `sortino_ratio(returns, risk_free_rate, periods_per_year, mar)` | Annualised Sortino (downside-only risk) |
-| `calmar_ratio(returns, periods_per_year)` | CAGR / max drawdown |
-| `information_ratio(returns, benchmark_returns, periods_per_year)` | Active return / tracking error |
-| `omega_ratio(returns, threshold)` | Probability-weighted gain/loss (captures full distribution) |
-| `tail_ratio(returns, percentile)` | Right-tail vs left-tail magnitude |
-| `profit_factor(returns)` | Gross profit / gross loss |
-| `gain_to_pain_ratio(returns)` | Net return / sum of absolute losses (Schwager) |
-
-#### Risk Measures
-
-| Function | Description |
-|---|---|
-| `max_drawdown(returns)` | Maximum peak-to-trough drawdown |
-| `var_historical(returns, confidence_level)` | Historical Value-at-Risk |
-| `cvar_historical(returns, confidence_level)` | Conditional VaR (Expected Shortfall) |
-
-#### Time-Series Diagnostics
-
-| Function | Description |
-|---|---|
-| `rolling_sharpe(returns, window, periods_per_year)` | Rolling Sharpe (causal, no lookahead) |
-| `autocorrelation(series, max_lag)` | Sample ACF at lags 1…max_lag |
-| `hurst_exponent(series)` | R/S Hurst exponent (mean-reversion vs trend) |
+| `stats.py` | Core descriptive stats, risk metrics, time-series diagnostics |
+| `returns.py` | Return series construction, equity curves, drawdown analysis |
+| `hypothesis.py` | Statistical hypothesis tests (stationarity, normality, breaks) |
+| `correlation.py` | Correlation analysis (rolling, rank, stability, eigenvalues) |
+| `montecarlo.py` | Bootstrap Monte Carlo for strategy robustness |
+| `markov.py` | Markov chain & HMM regime predictors |
+| `markov_utilities.py` | Feature engineering, HMM model selection, data loading |
+| `_validators.py` | Internal input validation (not user-facing) |
 
 ---
 
-### `returns.py` — Return Series
+## 1. Core Stats (`stats.py`)
 
-| Function | Description |
-|---|---|
-| `to_log_returns(prices)` | Price → log returns `ln(P_t / P_{t-1})` |
-| `to_arithmetic_returns(prices)` | Price → simple returns `(P_t - P_{t-1}) / P_{t-1}` |
-| `log_to_arithmetic(log_returns)` | `exp(r) - 1` |
-| `arithmetic_to_log(arith_returns)` | `ln(1 + r)` |
-| `annualise_return(mean_return, periods)` | Compound annualisation |
-| `annualise_volatility(vol, periods)` | Square-root-of-time annualisation |
-| `equity_curve(returns, initial_capital)` | Cumulative equity from returns |
-| `drawdown_series(returns)` | Full drawdown time-series |
-| `rolling_volatility(returns, window)` | Rolling annualised vol (causal) |
-| `underwater_duration(returns)` | Consecutive bars below prior peak |
+### Descriptive Summary
+
+```python
+from orderflow.stats import describe
+
+summary = describe(returns_array)
+# Returns dict: count, mean, std, skew, kurt, min, max, p5, p25, p50, p75, p95
+```
+
+### Skewness & Kurtosis
+
+```python
+from orderflow.stats import is_skewed, get_kurtosis
+
+is_skewed(returns, threshold=0.5)   # True if |skew| > 0.5
+get_kurtosis(returns)               # Excess kurtosis (0 = normal, >0 = fat tails)
+```
+
+### Risk-Adjusted Performance
+
+```python
+from orderflow.stats import sharpe_ratio, sortino_ratio, calmar_ratio, information_ratio
+
+# All accept per-period arithmetic returns (e.g. daily)
+sharpe  = sharpe_ratio(returns, risk_free_rate=0.0, periods_per_year=252)
+sortino = sortino_ratio(returns, risk_free_rate=0.0, periods_per_year=252)
+calmar  = calmar_ratio(returns, periods_per_year=252)
+
+# Information ratio requires a benchmark
+ir = information_ratio(strategy_returns, benchmark_returns, periods_per_year=252)
+```
+
+### Risk Measures
+
+```python
+from orderflow.stats import max_drawdown, var_historical, cvar_historical
+
+mdd  = max_drawdown(returns)                         # e.g. -0.25 = -25%
+var  = var_historical(returns, confidence_level=0.95) # 95% VaR (non-positive)
+cvar = cvar_historical(returns, confidence_level=0.95)# Expected Shortfall
+```
+
+### Additional Ratios
+
+```python
+from orderflow.stats import omega_ratio, tail_ratio, profit_factor, gain_to_pain_ratio
+
+omega_ratio(returns, threshold=0.0)  # >1 is good; captures full distribution
+tail_ratio(returns, percentile=0.95) # >1 = fatter right tail (desirable)
+profit_factor(returns)               # gross_profit / gross_loss; >2 is strong
+gain_to_pain_ratio(returns)          # Schwager's alternative to Sharpe
+```
+
+### Time-Series Diagnostics
+
+```python
+from orderflow.stats import rolling_sharpe, autocorrelation, hurst_exponent
+
+# Rolling Sharpe (no lookahead). First window-1 values are NaN.
+r_sharpe = rolling_sharpe(returns, window=63, periods_per_year=252)
+
+# Autocorrelation at lags 1..10
+acf = autocorrelation(returns, max_lag=10)  # {1: 0.03, 2: -0.01, ...}
+
+# Hurst exponent: <0.5 mean-reverting, ~0.5 random walk, >0.5 trending
+H = hurst_exponent(price_series, min_window=10, n_windows=20)
+```
 
 ---
 
-### `hypothesis.py` — Statistical Tests
+## 2. Returns (`returns.py`)
 
-All tests return a `TestResult` dataclass with `test_name`, `statistic`,
-`p_value`, `reject_null`, `alpha`, and `detail`.
+### Build Return Series from Prices
 
-| Function | H₀ | Use Case |
+```python
+from orderflow.stats import to_log_returns, to_arithmetic_returns
+
+log_ret   = to_log_returns(prices)        # ln(P_t / P_{t-1}), length n-1
+arith_ret = to_arithmetic_returns(prices)  # (P_t - P_{t-1}) / P_{t-1}
+```
+
+**When to use which:**
+- **Log returns** for compounding, volatility estimation, multi-period analysis.
+- **Arithmetic returns** for single-period P&L attribution and cross-sectional comparisons.
+
+### Convert Between Return Types
+
+```python
+from orderflow.stats import log_to_arithmetic, arithmetic_to_log
+
+arith = log_to_arithmetic(log_returns)   # exp(r) - 1
+log_r = arithmetic_to_log(arith_returns) # ln(1 + r)
+```
+
+### Annualisation
+
+```python
+from orderflow.stats import annualise_return, annualise_volatility
+
+ann_ret = annualise_return(mean_daily_return, periods_per_year=252)
+ann_vol = annualise_volatility(daily_std, periods_per_year=252)
+```
+
+### Equity Curve & Drawdowns
+
+```python
+from orderflow.stats import equity_curve, drawdown_series, rolling_volatility, underwater_duration
+
+eq = equity_curve(returns, initial_capital=10_000)
+dd = drawdown_series(returns)            # 0 = at peak, -0.10 = 10% below peak
+rv = rolling_volatility(returns, window=21, periods_per_year=252)
+uw = underwater_duration(returns)        # consecutive bars below prior peak
+```
+
+---
+
+## 3. Hypothesis Testing (`hypothesis.py`)
+
+All tests return a `TestResult` dataclass with `.test_name`, `.statistic`, `.p_value`, `.reject_null`, `.alpha`, `.detail`.
+
+### Stationarity (use both together)
+
+```python
+from orderflow.stats import adf_test, kpss_test, is_stationary
+
+# Individual tests
+adf = adf_test(series, alpha=0.05)    # H0: unit root (non-stationary)
+kps = kpss_test(series, alpha=0.05)   # H0: stationary (opposite of ADF)
+
+# Combined verdict (recommended)
+stationary, explanation = is_stationary(series, alpha=0.05)
+# Returns (True/False, "Stationary (ADF rejects unit root, KPSS does not reject stationarity).")
+```
+
+**Interpretation matrix:**
+
+| ADF rejects | KPSS rejects | Verdict |
 |---|---|---|
-| `adf_test(series)` | Series has unit root | Check if returns are stationary |
-| `kpss_test(series)` | Series is stationary | Complement to ADF |
-| `is_stationary(series)` | — | Combined ADF + KPSS verdict |
-| `jarque_bera_test(series)` | Data is normal | Check normality assumption |
-| `ljung_box_test(series)` | Data is white noise | Detect serial correlation |
-| `cusum_test(series)` | No structural break | Detect regime changes |
-| `holm_bonferroni(p_values)` | — | Multiple-testing correction (FWER) |
+| Yes | No | Stationary |
+| No | Yes | Non-stationary |
+| Yes | Yes | Trend-stationary (detrend it) |
+| No | No | Inconclusive (need more data) |
 
-#### Stationarity Decision Matrix
-
-```
-┌────────────┬──────────────┬─────────────────────────────┐
-│ ADF reject │ KPSS reject  │ Conclusion                  │
-├────────────┼──────────────┼─────────────────────────────┤
-│ Yes        │ No           │ Stationary ✓                │
-│ No         │ Yes          │ Non-stationary (unit root)  │
-│ Yes        │ Yes          │ Trend-stationary            │
-│ No         │ No           │ Inconclusive                │
-└────────────┴──────────────┴─────────────────────────────┘
-```
-
----
-
-### `correlation.py` — Correlation Analysis
-
-| Function | Description |
-|---|---|
-| `rolling_correlation(x, y, window)` | Rolling Pearson (causal) |
-| `rank_correlation(x, y, method)` | Spearman or Kendall with p-value |
-| `correlation_stability(x, y, n_splits)` | Segment-wise correlation variability |
-| `correlation_eigenvalues(returns_matrix)` | Eigenvalue decomposition + Marchenko–Pastur |
-
----
-
-### `montecarlo.py` — Bootstrap Simulation
+### Normality
 
 ```python
+from orderflow.stats import jarque_bera_test
+
+jb = jarque_bera_test(returns, alpha=0.05)
+# jb.reject_null = True → returns are NOT normal (expected for financial data)
+# jb.detail contains skewness and kurtosis values
+```
+
+### Serial Correlation
+
+```python
+from orderflow.stats import ljung_box_test
+
+lb = ljung_box_test(returns, max_lag=10, alpha=0.05)
+# lb.reject_null = True → returns have significant autocorrelation (exploitable)
+# lb.detail['per_lag_pvalues'] gives p-values at each lag
+```
+
+### Structural Breaks
+
+```python
+from orderflow.stats import cusum_test
+
+cs = cusum_test(series, alpha=0.05)
+# cs.reject_null = True → structural break detected
+# cs.detail['break_index'] → approximate location of the break
+```
+
+### Multiple Testing Correction
+
+```python
+from orderflow.stats import holm_bonferroni
+
+# When running multiple tests, correct for false discovery
+p_values = [adf.p_value, jb.p_value, lb.p_value]
+corrected = holm_bonferroni(p_values, alpha=0.05)
+# Returns: [(original_idx, adjusted_p, reject_null), ...]
+```
+
+---
+
+## 4. Correlation (`correlation.py`)
+
+### Rolling Correlation
+
+```python
+from orderflow.stats import rolling_correlation
+
+# Causal rolling Pearson correlation (no lookahead)
+rc = rolling_correlation(returns_x, returns_y, window=63, min_periods=20)
+# Returns np.ndarray; early positions are NaN
+```
+
+### Rank Correlation
+
+```python
+from orderflow.stats import rank_correlation
+
+# Robust to outliers; captures monotonic (not just linear) dependence
+corr, pval = rank_correlation(x, y, method="spearman")  # or "kendall"
+```
+
+### Stability Over Time
+
+```python
+from orderflow.stats import correlation_stability
+
+result = correlation_stability(returns_x, returns_y, n_splits=4)
+# result = {mean_corr, std_corr, min_corr, max_corr, range_corr, n_splits}
+# Large std_corr or range_corr → unstable relationship (don't trust it)
+```
+
+### Factor Analysis (Eigenvalues)
+
+```python
+from orderflow.stats import correlation_eigenvalues
+
+# Pass a (n_obs, n_assets) matrix
+result = correlation_eigenvalues(returns_matrix)
+# result['n_significant']          → number of real factors (above Marchenko-Pastur bound)
+# result['eigenvalues']            → sorted descending
+# result['explained_variance_ratio'] → fraction of variance per factor
+# result['condition_number']       → large = multicollinearity
+```
+
+---
+
+## 5. Monte Carlo (`montecarlo.py`)
+
+### Run Simulation
+
+```python
+import pandas as pd
 from orderflow.stats import get_montecarlo_analysis
-import pandas as pd, numpy as np
 
-trades = pd.DataFrame({"Entry_Gains": np.random.default_rng(0).normal(10, 50, 200)})
+# trades DataFrame must have a P&L column
+trades = pd.DataFrame({"Entry_Gains": [50, -30, 20, -10, 80, ...]})
+
 result = get_montecarlo_analysis(
-    trades, n_rows_sample=100, n_simulations=5000, random_state=42
+    trades,
+    n_rows_sample=100,        # trades per simulation
+    n_simulations=1000,       # bootstrap replications (>=1000 for publication)
+    pnl_col="Entry_Gains",    # column name with per-trade P&L
+    confidence_level=0.95,
+    random_state=42,           # reproducible
 )
+
 print(result.summary())
-# Plot equity paths: plot_montecarlo_paths(result)
-# Plot distribution: plot_montecarlo_distribution(result)
+# {mean_equity, std_equity, min_equity, max_equity, ci_lower, ci_upper, win_rate, ...}
+```
+
+### Visualise
+
+```python
+from orderflow.stats import plot_montecarlo_paths, plot_montecarlo_distribution
+
+plot_montecarlo_paths(result)         # equity curve spaghetti plot with mean + CI band
+plot_montecarlo_distribution(result)  # final equity histogram with CI markers
+```
+
+Both accept `show=False` to return the `plt.Figure` instead of displaying.
+
+---
+
+## 6. Markov & HMM Regime Detection (`markov.py`)
+
+### Fixed-Order Markov Chain
+
+```python
+from orderflow.stats import MarkovChainPredictor, threshold_prices_states
+
+# Step 1: convert prices to UP/DOWN/FLAT states
+states = threshold_prices_states(prices, threshold=0.01)
+
+# Step 2: fit a Markov chain
+mc = MarkovChainPredictor(order=2, smoothing_alpha=0.1)
+mc.fit(states)
+
+# Step 3: predict
+dist = mc.predict_distribution(["UP", "DOWN"])  # {"UP": 0.4, "DOWN": 0.35, "FLAT": 0.25}
+next_state = mc.predict_next_state(["UP", "DOWN"])  # "UP"
+```
+
+### Adaptive Markov Chain (auto order selection)
+
+```python
+from orderflow.stats import AdaptiveMarkovChainPredictor
+
+amc = AdaptiveMarkovChainPredictor(max_order=5, smoothing_alpha=0.1)
+amc.fit(states, validation_ratio=0.2)
+# amc.best_order → automatically selected (e.g. 3)
+
+dist = amc.predict_distribution(["UP", "DOWN", "FLAT"])
+```
+
+### OHLC Bar States + Prediction
+
+```python
+from orderflow.stats import get_states_from_ohlc, predict_bar_state
+
+# DataFrame must have Open, High, Low, Close columns
+states = get_states_from_ohlc(df, method="close")     # adaptive threshold on close-to-close
+states = get_states_from_ohlc(df, method="hl_range")   # bar expansion/contraction
+states = get_states_from_ohlc(df, method="oc_range")   # sign of (Close - Open)
+
+# One-call prediction on a fitted predictor
+predicted, prob_dist = predict_bar_state(df, predictor=mc, method="close")
+```
+
+### Hidden Markov Model (Multi-Feature)
+
+```python
+from orderflow.stats import MultiFeatureHMM, select_best_hmm_model, compute_df_features
+
+# Step 1: engineer features from bar data (needs 'price' and 'volume' columns)
+df_feat = compute_df_features(df, window_volatility=20, window_slope=5)
+# Adds: log_return, volatility, slope, log_volume
+
+# Step 2: select best number of hidden states via BIC
+features = df_feat[["log_return", "volatility", "slope", "log_volume"]].values
+best_model = select_best_hmm_model(
+    features,
+    n_states_range=[2, 3, 4, 5],
+    criterion="bic",
+    random_state=42,
+)
+
+# Step 3: wrap and use
+hmm_predictor = MultiFeatureHMM(model=best_model)
+hidden_states = hmm_predictor.predict_states(features)      # Viterbi decoding
+state_probs   = hmm_predictor.predict_proba_states(features) # posterior probabilities
+log_lik       = hmm_predictor.score(features)                # model fit quality
 ```
 
 ---
 
-### `markov.py` — Regime Detection
+## 7. Markov Utilities (`markov_utilities.py`)
 
-| Class / Function | Description |
-|---|---|
-| `MarkovChainPredictor(order)` | Fixed-order MC with Laplace smoothing |
-| `AdaptiveMarkovChainPredictor(max_order)` | Auto-selects best order via validation log-likelihood |
-| `MultiFeatureHMM(model)` | Wrapper for hmmlearn Gaussian HMM |
-| `get_states_from_ohlc(df, method)` | OHLC → UP/DOWN/FLAT states |
-| `predict_bar_state(df, predictor)` | One-call next-bar prediction |
+### State Generation
 
-### `markov_utilities.py` — Feature Engineering
+```python
+from orderflow.stats import threshold_prices_states, adaptive_threshold_prices_states
 
-| Function | Description |
-|---|---|
-| `threshold_prices_states(prices, threshold)` | Fixed-threshold state classification |
-| `adaptive_threshold_prices_states(prices, window)` | Volatility-scaled state classification |
-| `compute_df_features(df)` | Engineer log_return, volatility, slope, log_volume |
-| `select_best_hmm_model(data, n_states_range)` | BIC/AIC model selection |
-| `simulate_market_data(num_steps, seed)` | Generate synthetic GBM data |
+# Fixed threshold (absolute price difference)
+states = threshold_prices_states(prices, threshold=0.5)
+
+# Adaptive threshold (volatility-scaled, no lookahead)
+states = adaptive_threshold_prices_states(prices, window=20, z_score_threshold=0.5)
+```
+
+### SierraChart Data Loading
+
+```python
+from orderflow.stats import concat_sc_bar_data
+
+# Load all .txt bar export files from a directory
+df = concat_sc_bar_data("path/to/sc_exports/", file_extension="txt")
+# Adds 'Instrument' column, sorts by Date+Time
+```
+
+### Synthetic Data & Plotting
+
+```python
+from orderflow.stats import simulate_market_data, plot_distribution_of_float_series
+
+# Generate test data (GBM with drift)
+df = simulate_market_data(num_steps=10_000, seed=123)
+# Columns: price, volume
+
+# Quick histogram of any float Series
+plot_distribution_of_float_series(df["price"], bins=75, title="Price Distribution")
+```
 
 ---
 
-## Example Workflows
-
-### 1. Pre-Trade Statistical Due Diligence
-
-Before running any backtest, validate your data:
+## Typical Workflow
 
 ```python
-from orderflow.stats import (
-    is_stationary, jarque_bera_test, ljung_box_test, hurst_exponent,
-    to_log_returns,
-)
-
-prices = ...  # your price series
-log_ret = to_log_returns(prices)
-
-# 1. Check stationarity of returns
-stat, msg = is_stationary(log_ret)
-print(msg)
-
-# 2. Test for normality (spoiler: it will reject)
-jb = jarque_bera_test(log_ret)
-print(jb)
-
-# 3. Check for serial correlation (alpha signal or data issue?)
-lb = ljung_box_test(log_ret, max_lag=20)
-print(lb)
-
-# 4. Characterise trending vs mean-reverting behaviour
-h = hurst_exponent(log_ret)
-print(f"Hurst exponent: {h:.3f}")
-```
-
-### 2. Strategy Performance Report
-
-```python
-from orderflow.stats import (
-    sharpe_ratio, sortino_ratio, calmar_ratio, omega_ratio,
-    max_drawdown, profit_factor, gain_to_pain_ratio,
-    var_historical, cvar_historical,
-    equity_curve, drawdown_series, underwater_duration,
-)
-
-returns = ...  # strategy daily returns
-
-report = {
-    "sharpe":       sharpe_ratio(returns),
-    "sortino":      sortino_ratio(returns),
-    "calmar":       calmar_ratio(returns),
-    "omega":        omega_ratio(returns),
-    "profit_factor": profit_factor(returns),
-    "gain_to_pain": gain_to_pain_ratio(returns),
-    "max_dd":       max_drawdown(returns),
-    "VaR_95":       var_historical(returns, 0.95),
-    "CVaR_95":      cvar_historical(returns, 0.95),
-}
-print(report)
-```
-
-### 3. Multi-Strategy Comparison (with Multiple-Testing Correction)
-
-```python
-from orderflow.stats import sharpe_ratio, holm_bonferroni
-from scipy import stats as sp_stats
 import numpy as np
-
-# Simulate 20 strategy return streams
-rng = np.random.default_rng(42)
-strategies = [rng.normal(0.0001 * i, 0.01, 500) for i in range(20)]
-
-# Test each: H₀ = mean return ≤ 0
-p_values = []
-for ret in strategies:
-    t_stat, p = sp_stats.ttest_1samp(ret, 0.0)
-    p_values.append(p / 2 if t_stat > 0 else 1.0)  # one-sided
-
-# Correct for multiple comparisons
-results = holm_bonferroni(p_values, alpha=0.05)
-for idx, adj_p, reject in results:
-    if reject:
-        print(f"Strategy {idx}: adj_p={adj_p:.4f} — SIGNIFICANT")
-```
-
-### 4. Correlation Regime Analysis
-
-```python
+import pandas as pd
 from orderflow.stats import (
-    rolling_correlation, rank_correlation,
-    correlation_stability, correlation_eigenvalues,
+    to_log_returns, describe, sharpe_ratio, max_drawdown,
+    is_stationary, jarque_bera_test, ljung_box_test,
+    get_montecarlo_analysis, plot_montecarlo_paths,
+    hurst_exponent, equity_curve,
 )
-import numpy as np
 
-rng = np.random.default_rng(42)
-asset_a = rng.normal(0, 0.01, 1000)
-asset_b = 0.5 * asset_a + rng.normal(0, 0.008, 1000)
+# 1. Build returns
+prices = pd.read_csv("prices.csv")["Close"].values
+returns = to_log_returns(prices)
 
-# Rolling correlation
-rho = rolling_correlation(asset_a, asset_b, window=63)
+# 2. Descriptive stats
+print(describe(returns))
+print(f"Sharpe: {sharpe_ratio(returns):.2f}")
+print(f"Max DD: {max_drawdown(returns):.2%}")
 
-# Rank correlation (robust to outliers)
-spearman_r, p_val = rank_correlation(asset_a, asset_b, method="spearman")
+# 3. Check assumptions
+stationary, msg = is_stationary(returns)
+print(f"Stationary: {stationary} — {msg}")
 
-# Stability over time
-stability = correlation_stability(asset_a, asset_b, n_splits=4)
-print(f"Correlation range: {stability['range_corr']:.3f}")
+jb = jarque_bera_test(returns)
+print(f"Normal: {not jb.reject_null}")
 
-# Multi-asset eigenvalue analysis
-returns_matrix = np.column_stack([
-    rng.normal(0, 0.01, 1000) for _ in range(10)
-])
-eig = correlation_eigenvalues(returns_matrix)
-print(f"Significant factors: {eig['n_significant']} (above MP threshold)")
+lb = ljung_box_test(returns)
+print(f"White noise: {not lb.reject_null}")
+
+H = hurst_exponent(returns)
+print(f"Hurst: {H:.3f} ({'trending' if H > 0.5 else 'mean-reverting'})")
+
+# 4. Monte Carlo robustness
+trades = pd.DataFrame({"Entry_Gains": returns})
+mc = get_montecarlo_analysis(trades, n_rows_sample=len(returns)//2, n_simulations=2000)
+print(mc.summary())
+plot_montecarlo_paths(mc)
 ```
 
 ---
 
-## Best Practices
+## Input Conventions
 
-### Do
-
-- ✅ Always check stationarity before fitting time-series models.
-- ✅ Use `is_stationary()` (combined ADF + KPSS) rather than a single test.
-- ✅ Apply `holm_bonferroni()` when testing multiple strategies simultaneously.
-- ✅ Use `random_state` parameter for reproducible Monte Carlo runs.
-- ✅ Use log returns for multi-period compounding; arithmetic returns for single-period P&L.
-- ✅ Use `rank_correlation` for fat-tailed data instead of Pearson.
-- ✅ Check `correlation_eigenvalues` to verify your factors are truly independent.
-
-### Don't
-
-- ❌ Never use a single stationarity test in isolation.
-- ❌ Never report raw p-values from multiple tests without correction.
-- ❌ Never assume financial returns are normally distributed.
-- ❌ Never use Sharpe ratio alone — always complement with Sortino, Calmar, and Omega.
-- ❌ Never backtest on the same data used for parameter selection.
-- ❌ Never ignore the Hurst exponent — it tells you whether mean-reversion or trend-following is appropriate.
-- ❌ Never use rolling statistics with `min_periods=1` — this creates unreliable early estimates.
-
----
-
-## Common Pitfalls & Warnings
-
-### 1. Survivorship Bias in Sharpe Ratio
-The Sharpe ratio is upward-biased when computed on strategies that were selected
-*because* they performed well.  Always use `holm_bonferroni` when comparing
-multiple strategies.
-
-### 2. Autocorrelated Returns Inflate Sharpe
-If `ljung_box_test` rejects white noise, your Sharpe ratio may be overstated.
-Consider using the Newey–West adjusted standard error or reducing
-`periods_per_year` to account for effective degrees of freedom.
-
-### 3. Non-Stationary Data Produces Spurious Correlations
-Two independent random walks will appear correlated purely by accident.
-Always check stationarity before computing correlations.
-
-### 4. Drawdown Underestimation with Low Frequency Data
-`max_drawdown` on weekly data will miss intra-week drawdowns.
-Use the highest-frequency data available for accurate drawdown measurement.
-
-### 5. Monte Carlo Assumes i.i.d. Trades
-The bootstrap resamples trades with replacement, destroying temporal
-structure.  This is correct for estimating the *distribution of outcomes*
-but does not test regime-dependent strategies.
-
-### 6. HMM State Labels Are Arbitrary
-Hidden Markov Model states are identified by index (0, 1, 2…), not by
-economic meaning.  States can permute between fits.  Always interpret
-states by their emission distributions, not their labels.
+- **Returns**: always 1-D arrays or `pd.Series` of per-period arithmetic returns unless noted.
+- **Prices**: strictly positive, finite, 1-D. At least 2 values.
+- **Minimum observations**: most functions require 2-20+ observations and raise `ValueError` if not met.
+- **Polars support**: `stats.py` functions accept `pl.Series` directly (auto-converted to NumPy).
+- **No lookahead**: every rolling/expanding operation is strictly causal.

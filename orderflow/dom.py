@@ -103,7 +103,3 @@ def get_dom_shape_for_n_levels(
     data["DOMSumBid_" + str(l1_level_to_watch) + "_Shape"] = ( data[bid_dom_columns].sum(axis=1) ) / (np.max(data[bid_dom_columns], axis=1) * l1_level_to_watch)
 
     return data
-
-
-
-

@@ -348,6 +348,114 @@ def example_layered_risk_and_strategy() -> None:
 
 
 # ======================================================================== #
+#  Example 6: VolatilityExit — exit when realised vol spikes              #
+# ======================================================================== #
+
+def example_volatility_exit() -> None:
+    """
+    Use ``VolatilityExit`` to close a position whenever the rolling
+    realised volatility (std of the last *window* prices) exceeds a
+    threshold.  Useful for protecting open PnL during sudden regime
+    changes or news events.
+
+    The strategy is layered with a hard ``RiskManager`` SL/TP as a safety
+    net.  ``VolatilityExit`` fires first if vol spikes; the risk manager
+    catches any remaining disasters.
+    """
+    print("\n" + "=" * 70)
+    print("  EXAMPLE 6: VolatilityExit — realised vol spike protection")
+    print("=" * 70)
+
+    data = generate_synthetic_tick_data(n_ticks=300_000, seed=11)
+    signals = generate_synthetic_signals(data, n_signals=200, seed=22)
+
+    # Exit whenever std(last 50 prices) > 1.5 price units.
+    # window=50 keeps the indicator responsive to short-lived spikes.
+    vol_exit = VolatilityExit(vol_threshold=1.5, window=50)
+
+    # Hard backstop: TP=20 ticks, SL=15 ticks — fires if vol guard misses.
+    rm = RiskManager(
+        tp_ticks=20,
+        sl_ticks=15,
+        tick_size=0.25,
+        tick_value=12.5,
+    )
+
+    engine = BacktestEngine(
+        tick_size=0.25,
+        tick_value=12.5,
+        commission=4.5,
+        slippage_model=SlippageModel(mode=SlippageMode.UNIFORM, max_ticks=1, seed=33),
+        progress_bar=False,
+    )
+
+    result = engine.run(data, signals, exit_strategy=vol_exit, risk_manager=rm)
+    result.summary()
+
+    # Show how often VolatilityExit was the actual trigger.
+    if not result.trades_df.empty and "exit_reason" in result.trades_df.columns:
+        reason_counts = result.trades_df["exit_reason"].value_counts()
+        print("\nExit reason breakdown:")
+        print(reason_counts.to_string())
+
+
+# ======================================================================== #
+#  Example 7: BreakEvenExit — lock in break-even once in profit           #
+# ======================================================================== #
+
+def example_break_even_exit() -> None:
+    """
+    Use ``BreakEvenExit`` to move the stop to (near) entry once price has
+    moved at least *activation_ticks* in the trade's favour.  This
+    eliminates the risk of a winner turning into a loser.
+
+    Setup:
+    - ``activation_ticks=6``: break-even triggers when 6 ticks in profit.
+    - ``offset_ticks=1``: stop locks at entry + 1 tick (small cushion for
+      costs), not exactly at entry.
+    - Hard ``RiskManager`` SL/TP acts as a backstop for cases where price
+      never reaches the activation threshold.
+    """
+    print("\n" + "=" * 70)
+    print("  EXAMPLE 7: BreakEvenExit — lock in break-even once in profit")
+    print("=" * 70)
+
+    data = generate_synthetic_tick_data(n_ticks=300_000, seed=77)
+    signals = generate_synthetic_signals(data, n_signals=200, seed=88)
+
+    be_exit = BreakEvenExit(
+        activation_ticks=6,
+        offset_ticks=1,
+        tick_size=0.25,
+    )
+
+    # Hard backstop: protects trades that never reach break-even activation.
+    rm = RiskManager(
+        tp_ticks=20,
+        sl_ticks=10,
+        tick_size=0.25,
+        tick_value=12.5,
+    )
+
+    engine = BacktestEngine(
+        tick_size=0.25,
+        tick_value=12.5,
+        commission=4.5,
+        slippage_model=SlippageModel(mode=SlippageMode.UNIFORM, max_ticks=1, seed=99),
+        progress_bar=False,
+    )
+
+    result = engine.run(data, signals, exit_strategy=be_exit, risk_manager=rm)
+    result.summary()
+
+    # Show how often BreakEvenExit was the actual trigger.
+    if not result.trades_df.empty and "exit_reason" in result.trades_df.columns:
+        reason_counts = result.trades_df["exit_reason"].value_counts()
+        print("\nExit reason breakdown:")
+        print(reason_counts.to_string())
+
+
+# ======================================================================== #
 #  Main                                                                    #
 # ======================================================================== #
 
@@ -358,6 +466,8 @@ def run_all_examples() -> None:
     example_trailing_break_even()
     example_custom_strategy()
     example_layered_risk_and_strategy()
+    example_volatility_exit()
+    example_break_even_exit()
     print("\n\n All examples completed successfully.\n")
 
 

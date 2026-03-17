@@ -42,8 +42,3 @@ See runnable examples and usage patterns in [`examples.py`](examples.py).
 - [metrics.py](metrics.py)  
 - [models.py](models.py)  
 - [risk.py](risk.py)
-
-## License
-See repository LICENSE.
-
-```

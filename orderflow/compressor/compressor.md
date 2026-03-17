@@ -1,10 +1,11 @@
 # Orderflow Compressor Module Documentation
 
 ## Overview
-The **compressor module** transforms tick-by-tick trading data into aggregated bar formats for analysis. It supports three compression strategies:
+The **compressor module** transforms tick-by-tick trading data into aggregated bar formats for analysis. It supports four compression strategies:
 - **Volume Bars**: Group by cumulative volume threshold
 - **Range Bars**: Group by price range
-- **Minute Bars**: Group by time intervals
+- **Time Bars**: Group by time intervals
+- **Delta Bars**: Group by cumulative bid/ask delta (SierraChart-compatible)
 
 All functions handle both Pandas and Polars DataFrames where applicable.
 
@@ -88,7 +89,54 @@ compress_to_bar_once_range_met(
 
 ---
 
-### 3. `compress_to_minute_bars_pl()`
+### 3. `compress_to_delta_bars()`
+**Purpose**: Compress tick data into delta bars (SierraChart Delta Volume Per Bar implementation)
+
+```python
+compress_to_delta_bars(
+    tick_data: Union[pd.DataFrame, pl.DataFrame],
+    delta_threshold: float
+) -> Union[pd.DataFrame, pl.DataFrame]
+```
+
+**Parameters**:
+- `tick_data`: Tick-by-tick data (Pandas or Polars DataFrame)
+  - Required columns: `Price`, `Volume`, `TradeType`
+  - Optional: `Datetime`, `Date`, `Time`
+- `delta_threshold`: Absolute delta value threshold. New bar closes when |cumsum_delta| >= threshold.
+  - Example: `delta_threshold=1000` → bar closes when |bid_vol - ask_vol| >= 1000
+
+**Returns**: DataFrame with columns:
+| Column | Type | Description |
+|--------|------|-------------|
+| `OpenTime` | datetime | Timestamp of first tick in bar |
+| `CloseTime` | datetime | Timestamp of last tick in bar |
+| `Open` | float | First price |
+| `High` | float | Maximum price |
+| `Low` | float | Minimum price |
+| `Close` | float | Last price |
+| `Volume` | int | Total volume |
+| `BidVolume` | int | Sum of TradeType==1 volume |
+| `AskVolume` | int | Sum of TradeType==2 volume |
+| `Delta` | int | Net delta (BidVolume - AskVolume) |
+| `NumberOfTrades` | int | Tick count |
+
+**Implementation Details**:
+- Bars close when absolute cumulative delta reaches/exceeds threshold
+- Delta is calculated as: bid_volume - ask_volume (TradeType: 1=bid, 2=ask)
+- Matches SierraChart's Delta Volume Per Bar compression exactly
+- Both Pandas and Polars versions available; both produce identical output
+
+**Economic Rationale**:
+Delta bars emphasize orderflow imbalance. Bars close when accumulated bid-ask imbalance reaches a significant level, making them ideal for:
+- Auction theory analysis (detecting institutional accumulation/distribution)
+- Orderflow-driven breakout detection
+- Volume-weighted directional bias analysis
+- Market microstructure studies
+
+---
+
+### 4. `compress_to_minute_bars_pl()`
 **Purpose**: Create minute-interval bars (Polars only)
 
 ```python
@@ -182,7 +230,33 @@ print(volume_bars.head())
 
 ---
 
-### Example 3: Create Range Bars (4-point range on ES/NQ)
+### Example 3: Create Delta Bars (SierraChart-compatible, 1000 delta threshold)
+```python
+import pandas as pd
+from orderflow.compressor import compress_to_delta_bars
+
+# Load tick-by-tick data
+df = pd.read_csv('data/tbt/2023_06_29.txt', sep=';')
+df['Datetime'] = pd.to_datetime(df['Date'].astype(str) + ' ' + df['Time'].astype(str))
+
+# Create delta bars with 1000-contract imbalance threshold
+delta_bars = compress_to_delta_bars(tick_data=df, delta_threshold=1000)
+
+print(delta_bars.head())
+print(f"Total Ticks: {len(df)}, Delta Bars: {len(delta_bars)}")
+print(f"\nDelta stats:\n{delta_bars[['Delta', 'BidVolume', 'AskVolume']].describe()}")
+```
+
+**Output**:
+```
+        OpenTime              CloseTime    Open    High     Low   Close  Volume  BidVolume  AskVolume  Delta  NumberOfTrades
+0 2023-06-29 08:30:00.000000 2023-06-29 08:30:02.345000 4414.00 4414.25 4413.50 4413.75     2100       1550         550     1000          ...
+1 2023-06-29 08:30:02.346000 2023-06-29 08:30:04.123000 4413.75 4414.00 4413.50 4413.75     2050        450        1600    -1150          ...
+```
+
+---
+
+### Example 3b: Create Range Bars (4-point range on ES/NQ)
 ```python
 import pandas as pd
 from orderflow.compressor import compress_to_bar_once_range_met
@@ -204,7 +278,31 @@ print(f"Total Range Bars: {len(range_bars)}")
 
 ---
 
-### Example 4: Create 5-Minute Bars (Polars)
+### Example 4: Create Delta Bars (Polars)
+```python
+import polars as pl
+from orderflow.compressor import compress_to_delta_bars
+
+# Load and prepare data
+df = pl.read_csv('data/tbt/2023_06_29.txt', separator=';')
+df = (df
+    .with_columns(
+        pl.concat_str(['Date', 'Time'], separator=' ')
+        .str.to_datetime(format='%Y-%m-%d %H:%M:%S%.f')
+        .alias('Datetime')
+    )
+)
+
+# Create delta bars (1500-contract imbalance threshold)
+delta_bars = compress_to_delta_bars(df, delta_threshold=1500)
+
+print(delta_bars.head())
+print(f"Bars created: {delta_bars.shape[0]}")
+```
+
+---
+
+### Example 5: Create 5-Minute Bars (Polars)
 ```python
 import polars as pl
 from orderflow.compressor import compress_to_minute_bars_pl
@@ -230,11 +328,12 @@ print(minute_bars_5m.head())
 
 ---
 
-### Example 5: Compare Compression Methods
+### Example 6: Compare Compression Methods
 ```python
 import pandas as pd
 from orderflow.compressor import (
     compress_to_volume_bars,
+    compress_to_delta_bars,
     compress_to_bar_once_range_met
 )
 
@@ -245,19 +344,23 @@ df['Datetime'] = pd.to_datetime(df['Date'].astype(str) + ' ' + df['Time'].astype
 # Method 1: Volume bars
 vol_bars = compress_to_volume_bars(df, volume_amount=500)
 
-# Method 2: Range bars
+# Method 2: Delta bars
+delta_bars = compress_to_delta_bars(df, delta_threshold=1000)
+
+# Method 3: Range bars
 range_bars = compress_to_bar_once_range_met(df, price_range=16, tick_size=0.25)
 
 print(f"Ticks: {len(df)}")
 print(f"Volume Bars (500-contract): {len(vol_bars)}")
+print(f"Delta Bars (1000-delta): {len(delta_bars)}")
 print(f"Range Bars (4-point): {len(range_bars)}")
-print(f"\nVolume Bar Stats:")
-print(vol_bars[['Open', 'High', 'Low', 'Close', 'Volume']].describe())
+print(f"\nDelta Bar Stats:")
+print(delta_bars[['Delta', 'BidVolume', 'AskVolume', 'Volume']].describe())
 ```
 
 ---
 
-### Example 6: Extract Trade Direction Statistics
+### Example 7: Extract Trade Direction Statistics
 ```python
 import pandas as pd
 from orderflow.compressor import compress_to_volume_bars

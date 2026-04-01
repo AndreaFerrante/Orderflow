@@ -448,6 +448,7 @@ def get_tickers_in_pg_table(
     df = df.sort_values(by=['Date', 'Time'])
     return df
 
+
 def get_tickers_in_folder_mem_optim(
         path:           str  = None,
         single_file:    str  = None,

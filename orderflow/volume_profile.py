@@ -499,18 +499,28 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
     volume_profile[price[0]] = volume[0]
     peaks_valleys[0] = 0
 
+    # ── cache source e weight ──────────────────────────────────────────
+    source = np.array(sorted(volume_profile.keys()))
+    weight = np.array([volume_profile[k] for k in source])
+
     for i in tqdm(range(1, len_ - 1)):
 
         if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
             volume_profile.clear()
+            source = np.array([], dtype=np.float64)
+            weight = np.array([], dtype=np.float64)
 
         if price[i] in volume_profile.keys():
             volume_profile[price[i]] += volume[i]
+            idx = np.searchsorted(source, price[i])
+            weight[idx] += volume[i]
         else:
             volume_profile[price[i]] = volume[i]
+            source = np.array(sorted(volume_profile.keys()))
+            weight = np.array([volume_profile[k] for k in source])
 
-        source        = np.array(sorted(volume_profile.keys()))
-        weight        = np.array([volume_profile[key] for key in source])
+        #source        = np.array(sorted(volume_profile.keys()))
+        #weight        = np.array([volume_profile[key] for key in source])
         kde           = gaussian_kde_numba_parallel(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
         peaks_indexes = get_kde_high_low_price_peaks(kde)
 

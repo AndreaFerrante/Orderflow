@@ -5,12 +5,12 @@ from tqdm import tqdm
 try:
     from .exceptions import SessionTypeAbsent
     from .configuration import *
-    from .volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks
+    from .volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks, gaussian_kde_sliding_window 
 except ImportError:
     # Fallback for notebook/interactive usage
     from orderflow.exceptions import SessionTypeAbsent
     from orderflow.configuration import *
-    from orderflow.volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks
+    from orderflow.volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks, gaussian_kde_sliding_window
 
 
 def get_dynamic_cumulative_delta(data: pd.DataFrame) -> pd.DataFrame:
@@ -474,16 +474,21 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
     return value_area
 
 
-def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25) -> np.array:
+def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25, fast: bool = False) -> np.array:
 
     """
     Given the canonical dataframe recorded, this function returns an array with info if the price is in a
     peak or valley of volumes
     :param df: canonical dataframe recorded
+    :param tick_size: tick size of the instrument, used to compute the distance between peaks and valleys
+    :param fast: if True, it uses a faster but less accurate method to compute the KDE (gaussian_kde_numba_parallel instead of gaussian_kde). Efficient only if the number of price levels is greater than 200, otherwise the overhead of the parallelization might outweigh the benefits.
     :return: numpy array with values: High Peak = 2, High Peak Area = 1, Valley Peak = -2, Valley Peak Area = -1
     """
     
-    print(f'Get volume profile peaks and valleys...')
+    print(f'Get volume profile peaks and valleys')
+    if fast:
+        print(' fast')
+    print('...')
 
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
@@ -498,19 +503,36 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
     volume_profile[price[0]] = volume[0]
     peaks_valleys[0] = 0
 
+    # ── cache source e weight ──────────────────────────────────────────
+    source = np.array(sorted(volume_profile.keys()))
+    weight = np.array([volume_profile[k] for k in source])
+    g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (len(source) * KDE_VARIANCE_VALUE)
+
     for i in tqdm(range(1, len_ - 1)):
 
         if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
             volume_profile.clear()
+            source = np.array([], dtype=np.float64)
+            weight = np.array([], dtype=np.float64)
+            g_const = 0.0
 
         if price[i] in volume_profile.keys():
             volume_profile[price[i]] += volume[i]
+            idx = np.searchsorted(source, price[i])
+            weight[idx] += volume[i]
         else:
             volume_profile[price[i]] = volume[i]
+            source = np.array(sorted(volume_profile.keys()))
+            weight = np.array([volume_profile[k] for k in source])
+            g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (len(source) * KDE_VARIANCE_VALUE)
 
-        source        = np.array(sorted(volume_profile.keys()))
-        weight        = np.array([volume_profile[key] for key in source])
-        kde           = gaussian_kde_numba_parallel(source=source, weight=weight, h=KDE_VARIANCE_VALUE)
+        KDE_SWITCH_THRESHOLD = 200
+        
+        if fast and len(source) > KDE_SWITCH_THRESHOLD:
+            kde = gaussian_kde_sliding_window(source=source, weight=weight, h=KDE_VARIANCE_VALUE, g_const=g_const)
+        else:
+            kde = gaussian_kde_numba_parallel(source=source, weight=weight, h=KDE_VARIANCE_VALUE, g_const=g_const)
+        
         peaks_indexes = get_kde_high_low_price_peaks(kde)
 
         if np.any(peaks_indexes):

@@ -1,7 +1,7 @@
 try:
     from orderflow._version import __version__
 except ImportError:
-    __version__ = "0.4.0.dev0"
+    __version__ = "0.5.2.dev0"
 
 from orderflow.auctions import (
     load_tick_data,
@@ -101,7 +101,8 @@ from orderflow.volume_profile_kde import (
     gaussian_kde_vectorized,
     gaussian_kde_numba,
     gaussian_kde_numba_parallel,
-    get_kde_high_low_price_peaks
+    get_kde_high_low_price_peaks,
+    gaussian_kde_sliding_window
 )
 
 from orderflow.vwap import (

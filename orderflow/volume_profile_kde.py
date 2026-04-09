@@ -108,10 +108,11 @@ def gaussian_kde_numba(source: np.array, weight: np.array, h: float = 1.0):
 
 
 @jit(nopython=True, parallel=True)
-def gaussian_kde_numba_parallel(source, weight, h: float = 1.0):
+def gaussian_kde_numba_parallel(source, weight, h: float = 1.0, g_const: float = 0.0):
     n = source.shape[0]
     result = np.empty(n, dtype=source.dtype)
-    g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (n * h)
+    if g_const == 0.0:
+        g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (n * h)
 
     for j in prange(n):
         sum_val = 0.0
@@ -123,6 +124,41 @@ def gaussian_kde_numba_parallel(source, weight, h: float = 1.0):
                 val *= weight[i]
             sum_val += val
         result[j] = sum_val
+    return result
+
+
+@jit(nopython=True, parallel=True)
+def gaussian_kde_sliding_window(source, weight, h: float = 1.0, g_const: float = 0.0, truncate_factor: float = 3.0):
+    '''
+    Computes the Gaussian KDE using a sliding window approach. This method is more efficient
+    only if the source has more than 200 elements, otherwise the overhead of the sliding window might outweigh the benefits.
+    param source: array of price levels
+    param weight: array of corresponding volumes
+    param h: bandwidth (standard deviation) of the Gaussian kernel
+    param g_const: precomputed constant for the Gaussian kernel (optional). If set to 0.0, it will be computed based on the length of the source and h.
+    param truncate_factor: factor to determine the radius of the sliding window (default is 3
+    '''
+    n = source.shape[0]
+    result = np.zeros(n, dtype=source.dtype)
+    if g_const == 0.0:
+        g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (n * h)
+
+    radius = truncate_factor * h
+
+    for j in prange(n):
+        x_j   = source[j]
+        start = np.searchsorted(source, x_j - radius)
+        end   = np.searchsorted(source, x_j + radius)
+
+        sum_val = 0.0
+        for i in range(start, end):
+            dist    = (x_j - source[i]) / h
+            val     = g_const * np.exp(-0.5 * dist * dist)
+            if weight.size != 0:
+                val *= weight[i]
+            sum_val += val
+        result[j] = sum_val
+
     return result
 
 

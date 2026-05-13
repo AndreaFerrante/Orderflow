@@ -62,3 +62,9 @@ docs/_build
 /Sources/
 /data
 /orderflow/Sources
+
+CLAUDE.d
+
+docs/
+
+.claude/

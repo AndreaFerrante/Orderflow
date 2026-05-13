@@ -226,4 +226,5 @@ class TradeRecord:
     mae_ticks: float
     mfe_ticks: float
     ticks_in_trade: int
+    break_even_activated: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)

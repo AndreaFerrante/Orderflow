@@ -1,7 +1,7 @@
 try:
     from orderflow._version import __version__
 except ImportError:
-    __version__ = "0.4.0.dev0"
+    __version__ = "0.6.0.dev0"
 
 from orderflow.auctions import (
     load_tick_data,
@@ -44,14 +44,30 @@ from orderflow.stats import (
 )
 
 from orderflow.backtester import (
-    backtester,
-    engine, 
-    examples,
-    execution,
-    exits,
-    metrics,
-    models,
-    risk    
+    BacktestEngine,
+    BacktestResult,
+    SlippageModel,
+    FillSimulator,
+    RiskManager,
+    BaseExitStrategy,
+    FixedTPSLExit,
+    TrailingStopExit,
+    BreakEvenExit,
+    TimeBasedExit,
+    VolatilityExit,
+    CompositeExit,
+    DynamicTPSLExit,
+    CVDBreakEvenExit,
+    HourBasedExit,
+    PerformanceMetrics,
+    compute_metrics,
+    Side,
+    ExitReason,
+    ExitSignal,
+    Tick,
+    PositionState,
+    TradeRecord,
+    BacktestConfig,
 )
 
 from orderflow.compressor.compressor import (
@@ -101,7 +117,8 @@ from orderflow.volume_profile_kde import (
     gaussian_kde_vectorized,
     gaussian_kde_numba,
     gaussian_kde_numba_parallel,
-    get_kde_high_low_price_peaks
+    get_kde_high_low_price_peaks,
+    gaussian_kde_sliding_window
 )
 
 from orderflow.vwap import (

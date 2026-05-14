@@ -19,7 +19,6 @@ Quick start
 >>> results.summary()
 """
 
-from orderflow.backtester import backtester
 from orderflow.backtester.models import (
     Side,
     ExitReason,
@@ -40,6 +39,7 @@ from orderflow.backtester.exits import (
     VolatilityExit,
     CompositeExit,
     DynamicTPSLExit,
+    CVDBreakEvenExit,
     HourBasedExit
 )
 from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
@@ -69,6 +69,7 @@ __all__ = [
     "CompositeExit",
     "HourBasedExit",
     "DynamicTPSLExit",
+    "CVDBreakEvenExit",
     # Metrics
     "PerformanceMetrics",
     "compute_metrics",

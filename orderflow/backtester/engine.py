@@ -867,6 +867,7 @@ class BacktestEngine:
                     mae_ticks=mae,
                     mfe_ticks=mfe,
                     ticks_in_trade=pos.ticks_in_trade,
+                    break_even_activated=pos.break_even_triggered,
                     metadata=exit_signal.metadata,
                 ))
 
@@ -922,6 +923,7 @@ class BacktestEngine:
                 mae_ticks=mae,
                 mfe_ticks=mfe,
                 ticks_in_trade=pos.ticks_in_trade,
+                break_even_activated=pos.break_even_triggered,
             ))
 
             pos.reset()
@@ -958,5 +960,6 @@ class BacktestEngine:
                 "mae_ticks": t.mae_ticks,
                 "mfe_ticks": t.mfe_ticks,
                 "ticks_in_trade": t.ticks_in_trade,
+                "break_even_activated": t.break_even_activated,
             })
         return pd.DataFrame(rows)

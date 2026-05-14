@@ -462,6 +462,154 @@ class DynamicTPSLExit(BaseExitStrategy):
         return ExitSignal(should_exit=False)
 
 
+# ---------------------------------------------------------------------------
+# CVD-confirmed break-even
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CVDBreakEvenExit(BaseExitStrategy):
+    """
+    Move the stop to break-even once session CVD confirms the trade direction.
+
+    Activation logic (one-shot, never reverts) — **both** gates must open on
+    the same tick:
+
+    * **Gate 1 — minimum profit**: price has moved at least
+      ``min_profit_ticks * tick_size`` favourably from entry.
+    * **Gate 2 — CVD confirmation**: current CVD has shifted by at least
+      ``cvd_delta_threshold`` beyond the baseline CVD recorded at the trigger
+      tick (long: increase; short: decrease).
+
+    Once activated the break-even stop is fixed at
+    ``entry_price ± offset_ticks * tick_size`` and never reverts.  If neither
+    gate ever opens, the original TP/SL (from another strategy in the
+    composite) remains in force.
+
+    Parameters
+    ----------
+    signals_df : pd.DataFrame
+        Signals DataFrame **as passed to the engine** (after ``drop_nulls``).
+        Must contain columns ``'Index'`` (entry index) and ``cvd_col``
+        (session CVD at the trigger tick — used as the per-trade baseline).
+    cvd_col : str
+        Name of the CVD column in both ``signals_df`` and the ``indicators``
+        dict.  The engine populates ``indicators`` from the tick data when
+        ``indicator_columns=[cvd_col]`` is passed to ``engine.run()``.
+    min_profit_ticks : float
+        Minimum favourable price move in ticks before CVD is even evaluated.
+        Prevents premature break-even activation immediately after entry.
+    cvd_delta_threshold : float
+        Minimum CVD shift beyond the signal baseline required for activation.
+        ``0.0`` activates on *any* confirming movement.
+    offset_ticks : float
+        Extra ticks above/below entry price for the break-even stop.
+        ``0.0`` = exact break-even (no profit lock-in).
+    tick_size : float
+        Minimum price increment.
+
+    Notes
+    -----
+    Place this strategy *after* ``DynamicTPSLExit`` (or similar) and *before*
+    ``HourBasedExit`` inside ``CompositeExit``.  Because the break-even stop
+    sits between the entry price and the original SL, it fires before the SL
+    once activated, without interfering with take-profit logic.
+
+    ``indicator_columns=[cvd_col]`` **must** be passed to ``engine.run()`` and
+    the tick-data DataFrame must contain that column.
+
+    Example
+    -------
+    >>> exit_strategy = CompositeExit([
+    ...     DynamicTPSLExit(signals_df=signals, tick_size=0.25),
+    ...     CVDBreakEvenExit(signals_df=signals, cvd_col="CVD", min_profit_ticks=4),
+    ...     HourBasedExit(close_hour=15, close_minute=0),
+    ... ])
+    >>> result = engine.run(data, signals, exit_strategy=exit_strategy,
+    ...                     indicator_columns=["CVD"])
+    """
+
+    signals_df: pd.DataFrame
+    cvd_col: str = "CVD"
+    min_profit_ticks: float = 4.0
+    cvd_delta_threshold: float = 0.0
+    offset_ticks: float = 0.0
+    tick_size: float = 0.25
+
+    _baseline_lookup: Dict[int, float] = field(default_factory=dict, init=False, repr=False)
+    _baseline_cvd: float = field(default=0.0, init=False, repr=False)
+    _activated: bool = field(default=False, init=False, repr=False)
+    _be_stop: float = field(default=0.0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        for _, row in self.signals_df.iterrows():
+            self._baseline_lookup[int(row["Index"])] = float(row[self.cvd_col])
+
+    def on_entry(self, tick: Tick, position: PositionState) -> None:
+        self._baseline_cvd = self._baseline_lookup.get(tick.index, float("nan"))
+        self._activated = False
+        self._be_stop = 0.0
+
+    def on_tick(
+        self,
+        tick: Tick,
+        position: PositionState,
+        price_history: np.ndarray,
+        indicators: Dict[str, Any],
+    ) -> ExitSignal:
+        current_cvd = indicators.get(self.cvd_col)
+        if current_cvd is None or np.isnan(self._baseline_cvd):
+            return ExitSignal(should_exit=False)
+
+        # Try to activate (one-shot, irreversible)
+        # Gate 1: minimum profit reached; Gate 2: CVD confirms direction
+        if not self._activated:
+            min_move = self.min_profit_ticks * self.tick_size
+            offset = self.offset_ticks * self.tick_size
+            if (
+                position.side == Side.LONG
+                and tick.price >= position.entry_price + min_move
+                and current_cvd > self._baseline_cvd + self.cvd_delta_threshold
+            ):
+                self._activated = True
+                position.break_even_triggered = True
+                self._be_stop = position.entry_price + offset
+            elif (
+                position.side == Side.SHORT
+                and tick.price <= position.entry_price - min_move
+                and current_cvd < self._baseline_cvd - self.cvd_delta_threshold
+            ):
+                self._activated = True
+                position.break_even_triggered = True
+                self._be_stop = position.entry_price - offset
+
+        # Check BE stop once activated
+        if self._activated:
+            if position.side == Side.LONG and tick.price <= self._be_stop:
+                return ExitSignal(
+                    should_exit=True,
+                    reason=ExitReason.BREAK_EVEN,
+                    exit_price=self._be_stop,
+                    metadata={
+                        "break_even_activated": True,
+                        "baseline_cvd": self._baseline_cvd,
+                        "trigger_cvd": float(current_cvd),
+                    },
+                )
+            if position.side == Side.SHORT and tick.price >= self._be_stop:
+                return ExitSignal(
+                    should_exit=True,
+                    reason=ExitReason.BREAK_EVEN,
+                    exit_price=self._be_stop,
+                    metadata={
+                        "break_even_activated": True,
+                        "baseline_cvd": self._baseline_cvd,
+                        "trigger_cvd": float(current_cvd),
+                    },
+                )
+
+        return ExitSignal(should_exit=False)
+
+
 @dataclass
 class HourBasedExit(BaseExitStrategy):
     """

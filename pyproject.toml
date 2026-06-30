@@ -23,6 +23,8 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
     "Operating System :: OS Independent",
 ]
@@ -46,11 +48,14 @@ Issues = "https://github.com/andreaferrante/orderflow/issues"
 Documentation = "https://github.com/andreaferrante/orderflow/README.md"
 
 [tool.setuptools]
-packages = ["orderflow", "orderflow.backtester", "orderflow.compressor", "orderflow.stats"]
 include-package-data = true
 
+[tool.setuptools.packages.find]
+include = ["orderflow*"]
+namespaces = false
+
 [tool.setuptools.package-data]
-orderflow = ["py.typed"]
+orderflow = ["py.typed", "storage/sql/*.sql"]
 
 [tool.setuptools_scm]
 write_to = "orderflow/_version.py"

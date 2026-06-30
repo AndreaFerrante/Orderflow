@@ -285,7 +285,7 @@ def load_raw_txt_to_table(folder: str | Path, symbol: str) -> dict:
     Returns:
         Summary dict with keys: symbol, month_keys, rows_staged, rows_upserted.
     """
-    from orderflow._volume_factory import get_tickers_in_folder_mem_optim
+    from orderflow.market.utilities._volume_factory import get_tickers_in_folder_mem_optim
 
     logger = _configure_logger()
     symbol = symbol.upper()

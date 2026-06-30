@@ -20,8 +20,7 @@ setup(
         "Programming Language :: Python :: 3 :: Only",
     ],
     keywords="datetime, setuptools",
-    packages=find_packages(),
+    packages=find_packages(include=["orderflow*"]),
     python_requires=">=3.6, <4",
     install_requires=["pandas", "numpy", "polars", "matplotlib", "hmmlearn"],
-    py_modules=["orderflow"],
 )

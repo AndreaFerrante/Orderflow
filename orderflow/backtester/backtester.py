@@ -80,7 +80,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 from tqdm import tqdm
-from ..exceptions import SessionTypeAbsent, IndexAbsent, DatetimeTypeAbsent
+from orderflow.core.exceptions import SessionTypeAbsent, IndexAbsent, DatetimeTypeAbsent
 
 
 def update_datetime_signal_index(datetime_all, datetime_signal, index_, signal_idx_):

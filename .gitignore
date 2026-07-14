@@ -6,6 +6,7 @@ orderflow/test/
 Sources/
 screenshots/
 tasks/
+.DS_Store
 
 # File privati ovunque
 **/*.md

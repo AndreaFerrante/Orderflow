@@ -4,6 +4,8 @@ docs/
 .claude/
 orderflow/test/
 Sources/
+screenshots/
+tasks/
 
 # File privati ovunque
 **/*.md

@@ -1,6 +1,6 @@
 # Orderflow
 
-Orderflow is a Python toolkit for market microstructure research, tick-data reshaping, backtesting, and PostgreSQL storage.
+Orderflow is a serious Python toolkit for market microstructure research, tick-data reshaping, backtesting, and PostgreSQL storage.
 
 ## Package Layout
 

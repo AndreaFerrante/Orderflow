@@ -1,7 +1,7 @@
 # ------------------ PostgreSQL ----------------------
 PG_USER = 'remora_user'
-PG_PWD = 'remora'
-PG_HOST = '100.87.5.16'
+PG_PWD = ''
+PG_HOST = ''
 PG_PORT = '5432'
 PG_DATABASE = 'remora'
 

@@ -1,5 +1,5 @@
 # Cartelle private
-orderflow/runners/
+orderflow/storage/configuration.py
 docs/
 .claude/
 orderflow/test/

@@ -8,6 +8,7 @@ from .compressor import (
     compress_to_volume_bars,
     compress_to_minute_bars_pl,
     compress_to_delta_bars,
+    assign_delta_bar_ids,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "compress_to_volume_bars",
     "compress_to_minute_bars_pl",
     "compress_to_delta_bars",
+    "assign_delta_bar_ids",
 ]

@@ -28,7 +28,7 @@ from orderflow.backtester.models import (
     TradeRecord,
     BacktestConfig,
 )
-from orderflow.backtester.execution import SlippageModel, FillSimulator
+from orderflow.backtester.execution import SlippageModel, SlippageMode, FillSimulator
 from orderflow.backtester.risk import RiskManager
 from orderflow.backtester.exits import (
     BaseExitStrategy,
@@ -40,7 +40,8 @@ from orderflow.backtester.exits import (
     CompositeExit,
     DynamicTPSLExit,
     CVDBreakEvenExit,
-    HourBasedExit
+    LiveVWAPExit,
+    HourBasedExit,
 )
 from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
 from orderflow.backtester.engine import BacktestEngine, BacktestResult
@@ -56,6 +57,7 @@ __all__ = [
     "BacktestConfig",
     # Execution
     "SlippageModel",
+    "SlippageMode",
     "FillSimulator",
     # Risk
     "RiskManager",
@@ -70,6 +72,7 @@ __all__ = [
     "HourBasedExit",
     "DynamicTPSLExit",
     "CVDBreakEvenExit",
+    "LiveVWAPExit",
     # Metrics
     "PerformanceMetrics",
     "compute_metrics",

@@ -231,3 +231,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.tomlbash.exe.stackdump
+orderflow/_version.py
+bash.exe.stackdump

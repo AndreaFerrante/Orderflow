@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 
 from orderflow.backtester.models import (
     ExitReason,
@@ -605,6 +606,63 @@ class CVDBreakEvenExit(BaseExitStrategy):
                         "baseline_cvd": self._baseline_cvd,
                         "trigger_cvd": float(current_cvd),
                     },
+                )
+
+        return ExitSignal(should_exit=False)
+
+
+@dataclass
+class LiveVWAPExit(BaseExitStrategy):
+    """
+    Structural stop + live VWAP target exit.
+
+    Checks stop first (same-tick priority), then VWAP. Returns no exit_price
+    override — the engine fills at the current tick price.
+    """
+    signals_df: pd.DataFrame
+    vwap_col: str = "vwap"
+    _stop_lookup: Dict[int, float] = field(default_factory=dict, init=False, repr=False)
+    _current_stop: float = field(default=float("nan"), init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        for _, row in self.signals_df.iterrows():
+            self._stop_lookup[int(row["Index"])] = float(row["stop_loss"])
+
+    def on_entry(self, tick: Tick, position: PositionState) -> None:
+        self._current_stop = self._stop_lookup.get(int(tick.timestamp), float("nan"))
+
+    def on_tick(
+        self,
+        tick: Tick,
+        position: PositionState,
+        price_history: np.ndarray,
+        indicators: Dict[str, Any],
+    ) -> ExitSignal:
+        price = tick.price
+
+        if position.side == Side.LONG:
+            if price <= self._current_stop:
+                return ExitSignal(
+                    should_exit=True, reason=ExitReason.STOP_LOSS,
+                    metadata={"trigger": "structural_stop", "level": self._current_stop},
+                )
+            vwap = indicators.get(self.vwap_col)
+            if vwap is not None and not np.isnan(vwap) and price >= vwap:
+                return ExitSignal(
+                    should_exit=True, reason=ExitReason.CUSTOM,
+                    metadata={"trigger": "live_vwap", "level": float(vwap)},
+                )
+        elif position.side == Side.SHORT:
+            if price >= self._current_stop:
+                return ExitSignal(
+                    should_exit=True, reason=ExitReason.STOP_LOSS,
+                    metadata={"trigger": "structural_stop", "level": self._current_stop},
+                )
+            vwap = indicators.get(self.vwap_col)
+            if vwap is not None and not np.isnan(vwap) and price <= vwap:
+                return ExitSignal(
+                    should_exit=True, reason=ExitReason.CUSTOM,
+                    metadata={"trigger": "live_vwap", "level": float(vwap)},
                 )
 
         return ExitSignal(should_exit=False)

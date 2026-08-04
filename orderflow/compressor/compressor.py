@@ -1,6 +1,7 @@
 from collections import deque
 from typing import Optional, Union
 from tqdm import tqdm
+import numpy as np
 import polars as pl
 import pandas as pd
 
@@ -451,159 +452,205 @@ def compress_to_minute_bars_pl(
     return minute_bars
 
 
-def compress_to_delta_bars(
+def _compute_delta_bar_ids(
+    trade_types: np.ndarray,
+    volumes: np.ndarray,
+    session_types: Optional[np.ndarray],
+    delta_threshold: float,
+) -> tuple:
+    """Core loop: assign bar IDs based on running ask-minus-bid delta."""
+    n = len(trade_types)
+    bar_ids = np.empty(n, dtype=np.int64)
+
+    current_bar = 0
+    running_delta = 0.0
+    completed = set()
+    prev_session = session_types[0] if session_types is not None and n > 0 else None
+
+    for i in range(n):
+        if session_types is not None and i > 0:
+            curr_session = session_types[i]
+            if prev_session == "RTH" and curr_session != "RTH":
+                current_bar += 1
+                running_delta = 0.0
+            prev_session = curr_session
+
+        if trade_types[i] == 2:
+            running_delta += volumes[i]
+        else:
+            running_delta -= volumes[i]
+
+        bar_ids[i] = current_bar
+
+        if abs(running_delta) >= delta_threshold:
+            completed.add(current_bar)
+            current_bar += 1
+            running_delta = 0.0
+
+    if n == 0:
+        return bar_ids, np.empty(0, dtype=bool)
+
+    max_id = int(bar_ids[-1])
+    mask = np.zeros(max_id + 1, dtype=bool)
+    for b in completed:
+        mask[b] = True
+    return bar_ids, mask[bar_ids]
+
+
+def assign_delta_bar_ids(
     tick_data: Union[pd.DataFrame, pl.DataFrame],
-    delta_threshold: float
+    delta_threshold: float,
 ) -> Union[pd.DataFrame, pl.DataFrame]:
+    """Assign delta-bar membership to each tick.
+
+    Adds ``delta_bar_id`` (int) and ``delta_bar_complete`` (bool).  Tick delta
+    is ``+Volume`` for ``TradeType == 2`` (ask, buy aggression) and
+    ``-Volume`` for ``TradeType == 1`` (bid, sell aggression).  A bar closes on
+    the first tick where ``abs(running_delta) >= delta_threshold``.  Running
+    delta resets to zero for the next tick.  When ``SessionType`` is present, an
+    RTH-to-ETH transition also forces a reset so no bar crosses a session
+    boundary.  Only bars that closed on a threshold hit are marked complete.
     """
-    Compress tick-by-tick trading data into delta bars.
+    is_polars = isinstance(tick_data, pl.DataFrame)
 
-    Delta bars close when the absolute value of cumulative delta (BidVolume - AskVolume)
-    reaches or exceeds the specified threshold. This matches SierraChart's Delta Volume
-    Per Bar implementation.
-
-    Parameters:
-        tick_data: Tick-by-tick data (Pandas or Polars DataFrame).
-                   Must contain: 'Price', 'Volume', 'TradeType' columns.
-                   Optionally 'Datetime', 'Date', 'Time' for timestamps.
-                   TradeType: 1=bid (buy), 2=ask (sell)
-        delta_threshold: Absolute delta value threshold. New bar opens when |cumulative_delta| >= threshold.
-                        Example: delta_threshold=1000 → bar closes when |bid_vol - ask_vol| >= 1000
-
-    Returns:
-        DataFrame with delta bars containing:
-        - Open, High, Low, Close: OHLC prices
-        - Volume: Total volume in bar
-        - AskVolume, BidVolume: Volume breakdown (TradeType: 1=bid, 2=ask)
-        - Delta: Net delta (BidVolume - AskVolume)
-        - NumberOfTrades: Tick count
-        - Timestamps (if available in input)
-
-    Notes:
-        - Implements SierraChart's Delta Volume Per Bar compression
-        - Bars close when |delta| >= delta_threshold
-        - Delta resets to zero at bar boundaries
-    """
-    # Handle Polars
-    if isinstance(tick_data, pl.DataFrame):
-        return _compress_to_delta_bars_pl(tick_data, delta_threshold)
-
-    # Handle Pandas
+    if is_polars:
+        tt = tick_data["TradeType"].to_numpy()
+        vol = tick_data["Volume"].to_numpy().astype(np.float64)
+        st = tick_data["SessionType"].to_numpy() if "SessionType" in tick_data.columns else None
     elif isinstance(tick_data, pd.DataFrame):
-        return _compress_to_delta_bars_pd(tick_data, delta_threshold)
-
+        tt = tick_data["TradeType"].values
+        vol = tick_data["Volume"].values.astype(np.float64)
+        st = tick_data["SessionType"].values if "SessionType" in tick_data.columns else None
     else:
         raise TypeError("tick_data must be Pandas or Polars DataFrame")
+
+    bar_ids, complete = _compute_delta_bar_ids(tt, vol, st, delta_threshold)
+
+    if is_polars:
+        return tick_data.with_columns(
+            pl.Series("delta_bar_id", bar_ids),
+            pl.Series("delta_bar_complete", complete),
+        )
+    df = tick_data.copy()
+    df["delta_bar_id"] = bar_ids
+    df["delta_bar_complete"] = complete
+    return df
+
+
+def compress_to_delta_bars(
+    tick_data: Union[pd.DataFrame, pl.DataFrame],
+    delta_threshold: float,
+) -> Union[pd.DataFrame, pl.DataFrame]:
+    """Compress tick-by-tick data into delta bars.
+
+    Delta bars close when the absolute value of per-bar running delta
+    (AskVolume - BidVolume) reaches or exceeds *delta_threshold*.
+
+    Parameters
+    ----------
+    tick_data : DataFrame
+        Must contain ``Price``, ``Volume``, ``TradeType``.
+        ``TradeType``: 1 = bid (sell aggression), 2 = ask (buy aggression).
+    delta_threshold : float
+        Absolute delta threshold for bar closure.
+
+    Returns
+    -------
+    DataFrame
+        OHLC, Volume, AskVolume, BidVolume, Delta (AskVolume - BidVolume),
+        NumberOfTrades, and timestamps when available.
+    """
+    if isinstance(tick_data, pl.DataFrame):
+        return _compress_to_delta_bars_pl(tick_data, delta_threshold)
+    if isinstance(tick_data, pd.DataFrame):
+        return _compress_to_delta_bars_pd(tick_data, delta_threshold)
+    raise TypeError("tick_data must be Pandas or Polars DataFrame")
 
 
 def _compress_to_delta_bars_pd(
     tick_data: pd.DataFrame,
-    delta_threshold: float
+    delta_threshold: float,
 ) -> pd.DataFrame:
     """Compress delta bars using Pandas."""
     required_columns = {"Price", "Volume", "TradeType"}
-    missing_columns = required_columns - set(tick_data.columns)
-    if missing_columns:
-        raise ValueError(f"Input DataFrame missing: {missing_columns}")
+    missing = required_columns - set(tick_data.columns)
+    if missing:
+        raise ValueError(f"Input DataFrame missing: {missing}")
 
     tick_data = tick_data.copy()
-
-    # Ensure Datetime exists
     if "Datetime" not in tick_data.columns:
         if "Date" in tick_data.columns and "Time" in tick_data.columns:
             tick_data = _get_datetime_fixed_pd(tick_data)
         else:
             raise ValueError("Need either 'Datetime' or ('Date' + 'Time') columns")
 
-    # Vectorized delta calculation: bid (+volume) vs ask (-volume)
-    tick_data['tick_delta'] = tick_data['TradeType'].apply(
-        lambda x: 1 if x == 1 else -1
-    ) * tick_data['Volume']
+    tick_data = assign_delta_bar_ids(tick_data, delta_threshold)
+    completed = tick_data[tick_data["delta_bar_complete"]].copy()
 
-    # Cumulative delta
-    tick_data['cumsum_delta'] = tick_data['tick_delta'].cumsum()
-    tick_data['abs_delta'] = tick_data['cumsum_delta'].abs()
+    if len(completed) == 0:
+        return pd.DataFrame(
+            columns=["OpenTime", "CloseTime", "Open", "High", "Low", "Close",
+                     "Volume", "BidVolume", "AskVolume", "Delta", "NumberOfTrades"]
+        )
 
-    # Create bar groups: new bar closes when |cumsum_delta| >= threshold
-    # Track bar boundaries: each time we hit/exceed threshold, increment bar group
-    threshold_hit = (tick_data['abs_delta'] >= delta_threshold).astype(int)
-    # Detect transitions from False to True
-    bar_closes = threshold_hit & (threshold_hit.shift(fill_value=0) == 0)
-    tick_data['bar_group'] = bar_closes.cumsum()
+    completed = completed.assign(
+        _bid_vol=lambda d: d["Volume"].where(d["TradeType"] == 1, 0),
+        _ask_vol=lambda d: d["Volume"].where(d["TradeType"] == 2, 0),
+    )
 
-    # Aggregate by bar group
-    delta_bars = tick_data.groupby('bar_group', sort=False).agg({
-        'Datetime': ['first', 'last'],
-        'Price': ['first', 'max', 'min', 'last'],
-        'Volume': 'sum'
-    }).reset_index(drop=True)
+    delta_bars = (
+        completed.groupby("delta_bar_id", sort=False)
+        .agg(
+            OpenTime=("Datetime", "first"),
+            CloseTime=("Datetime", "last"),
+            Open=("Price", "first"),
+            High=("Price", "max"),
+            Low=("Price", "min"),
+            Close=("Price", "last"),
+            Volume=("Volume", "sum"),
+            BidVolume=("_bid_vol", "sum"),
+            AskVolume=("_ask_vol", "sum"),
+            NumberOfTrades=("Price", "size"),
+        )
+        .reset_index(drop=True)
+    )
 
-    # Flatten column names
-    delta_bars.columns = ['OpenTime', 'CloseTime', 'Open', 'High', 'Low', 'Close', 'Volume']
-
-    # Calculate bid/ask volumes and delta
-    bid_vol = tick_data[tick_data['TradeType'] == 1].groupby('bar_group')['Volume'].sum()
-    ask_vol = tick_data[tick_data['TradeType'] == 2].groupby('bar_group')['Volume'].sum()
-    num_trades = tick_data.groupby('bar_group').size()
-
-    delta_bars['BidVolume'] = bid_vol.values
-    delta_bars['AskVolume'] = ask_vol.values
-    delta_bars['Delta'] = delta_bars['BidVolume'] - delta_bars['AskVolume']
-    delta_bars['NumberOfTrades'] = num_trades.values
-
-    # Fill NaN values
-    delta_bars = delta_bars.fillna(0)
-
+    delta_bars["Delta"] = delta_bars["AskVolume"] - delta_bars["BidVolume"]
     return delta_bars
 
 
 def _compress_to_delta_bars_pl(
     tick_data: pl.DataFrame,
-    delta_threshold: float
+    delta_threshold: float,
 ) -> pl.DataFrame:
     """Compress delta bars using Polars."""
     required_columns = {"Price", "Volume", "TradeType"}
-    missing_columns = required_columns - set(tick_data.columns)
-    if missing_columns:
-        raise ValueError(f"Input DataFrame missing: {missing_columns}")
+    missing = required_columns - set(tick_data.columns)
+    if missing:
+        raise ValueError(f"Input DataFrame missing: {missing}")
 
-    # Ensure Datetime exists
     if "Datetime" not in tick_data.columns:
         if "Date" in tick_data.columns and "Time" in tick_data.columns:
             tick_data = _get_datetime_fixed_pl(tick_data)
         else:
             raise ValueError("Need either 'Datetime' or ('Date' + 'Time') columns")
 
-    # Calculate tick-level delta: bid (+) vs ask (-)
-    df = tick_data.with_columns(
-        pl.when(pl.col("TradeType") == 1)
-        .then(pl.col("Volume"))
-        .otherwise(-pl.col("Volume"))
-        .alias("tick_delta")
-    )
+    tick_data = assign_delta_bar_ids(tick_data, delta_threshold)
+    completed = tick_data.filter(pl.col("delta_bar_complete"))
 
-    # Cumulative delta
-    df = df.with_columns(
-        pl.col("tick_delta").cum_sum().alias("cumsum_delta"),
-        pl.col("tick_delta").cum_sum().abs().alias("abs_delta")
-    )
+    if len(completed) == 0:
+        return pl.DataFrame(schema={
+            "OpenTime": pl.Datetime, "CloseTime": pl.Datetime,
+            "Open": pl.Float64, "High": pl.Float64,
+            "Low": pl.Float64, "Close": pl.Float64,
+            "Volume": pl.Float64, "BidVolume": pl.Float64,
+            "AskVolume": pl.Float64, "Delta": pl.Float64,
+            "NumberOfTrades": pl.UInt32,
+        })
 
-    # Create bar groups: new bar closes when |cumsum_delta| >= threshold
-    # Detect when threshold is first hit in each bar
-    df = df.with_columns(
-        (pl.col("abs_delta") >= delta_threshold).cast(pl.Int32).alias("threshold_hit")
-    )
-    df = df.with_columns(
-        (
-            pl.col("threshold_hit") &
-            (pl.col("threshold_hit").shift(1).fill_null(0) == 0)
-        ).cast(pl.Int32).cum_sum().alias("bar_group")
-    )
-
-    # Aggregate by bar group
     delta_bars = (
-        df.group_by("bar_group", maintain_order=True)
-        .agg([
+        completed.group_by("delta_bar_id", maintain_order=True)
+        .agg(
             pl.col("Datetime").first().alias("OpenTime"),
             pl.col("Datetime").last().alias("CloseTime"),
             pl.col("Price").first().alias("Open"),
@@ -611,24 +658,16 @@ def _compress_to_delta_bars_pl(
             pl.col("Price").min().alias("Low"),
             pl.col("Price").last().alias("Close"),
             pl.col("Volume").sum().alias("Volume"),
-            pl.when(pl.col("TradeType") == 1)
-            .then(pl.col("Volume"))
-            .otherwise(0)
-            .sum()
-            .alias("BidVolume"),
-            pl.when(pl.col("TradeType") == 2)
-            .then(pl.col("Volume"))
-            .otherwise(0)
-            .sum()
-            .alias("AskVolume"),
-            pl.len().alias("NumberOfTrades")
-        ])
-        .drop("bar_group")
+            pl.when(pl.col("TradeType") == 1).then(pl.col("Volume")).otherwise(0)
+                .sum().alias("BidVolume"),
+            pl.when(pl.col("TradeType") == 2).then(pl.col("Volume")).otherwise(0)
+                .sum().alias("AskVolume"),
+            pl.len().alias("NumberOfTrades"),
+        )
+        .drop("delta_bar_id")
     )
 
-    # Calculate delta
     delta_bars = delta_bars.with_columns(
-        (pl.col("BidVolume") - pl.col("AskVolume")).alias("Delta")
+        (pl.col("AskVolume") - pl.col("BidVolume")).alias("Delta")
     )
-
     return delta_bars

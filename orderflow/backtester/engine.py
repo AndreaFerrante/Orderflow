@@ -187,6 +187,10 @@ def _numba_core_loop(
                 signal_ptr += 1
             continue
 
+        # Consume signal slot for entry_mask hits while in position
+        if entry_mask[i] and signal_ptr < len(signal_sides):
+            signal_ptr += 1
+
         # --- In position: update extremes ---
         ticks_count += 1
         if side == 1:
@@ -571,6 +575,14 @@ class BacktestEngine:
         signal_ts    = np.ascontiguousarray(signals["Index"].values, dtype=np.int64)
         signal_sides = np.ascontiguousarray(signals["TradeType"].values, dtype=np.int64)
 
+        if len(signal_sides) > 0:
+            invalid = ~np.isin(signal_sides, [1, 2])
+            if invalid.any():
+                bad = np.unique(signal_sides[invalid]).tolist()
+                raise ValueError(
+                    f"TradeType contains invalid values: {bad}. Only 1 (SHORT) and 2 (LONG) are valid."
+                )
+
         # RTH filtering
         if self.trade_in_rth:
             signal_ts, signal_sides = self._filter_rth_signals(data, signal_ts, signal_sides)
@@ -807,6 +819,10 @@ class BacktestEngine:
                 continue
 
             # ---- In position: evaluate risk + strategy ----
+            # Consume signal slot for entry_mask hits while in position
+            if entry_mask[i] and signal_ptr < len(signal_sides):
+                signal_ptr += 1
+
             tick_obj = Tick(
                 index=i, timestamp=timestamps[i], datetime=datetimes[i],
                 price=price, bid=float(bids[i]), ask=float(asks[i]),
@@ -876,16 +892,6 @@ class BacktestEngine:
                     exit_strategy.on_exit(tick_obj, pos, exit_signal.reason)
 
                 pos.reset()
-
-                # Advance signal pointer past any signals during this trade
-                while signal_ptr < len(signal_sides):
-                    if signal_ptr >= len(signal_sides):
-                        break
-                    # Find next signal that is in the future
-                    # (signal_ts is implicit via entry_mask — we just step ptr)
-                    if entry_mask[i] and signal_ptr < len(signal_sides):
-                        signal_ptr += 1
-                    break
 
         # --- Close dangling position at end of data ---
         if not pos.is_flat:

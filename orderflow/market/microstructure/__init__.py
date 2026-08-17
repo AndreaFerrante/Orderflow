@@ -1,5 +1,10 @@
 """Orderflow and depth-of-market primitives."""
 
+from .aggressor import (
+    assign_aggressor_order_ids,
+    build_aggressor_orders,
+    flag_sweeps,
+)
 from .auctions import (
     BUY_CODE_DEFAULT,
     N_CONSECUTIVE_DEFAULT,

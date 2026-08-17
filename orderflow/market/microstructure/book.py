@@ -65,7 +65,7 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
-__all__ = ["accumulate_book_state", "compute_refresh_ratio"]
+__all__ = ["accumulate_book_state", "compute_refresh_ratio", "compute_vanish_ratio"]
 
 
 _REQUIRED_COLUMNS = (
@@ -83,6 +83,14 @@ _STATE_SCHEMA = {
     "last_displayed": pl.Float64,
     "traded": pl.Float64,
     "n_depth_updates": pl.Int64,
+}
+
+_VANISH_SCHEMA = {
+    "session_id": pl.Int64,
+    "price": pl.Float64,
+    "consumed": pl.Float64,
+    "vanished": pl.Float64,
+    "vanish_ratio": pl.Float64,
 }
 
 
@@ -365,4 +373,188 @@ def compute_refresh_ratio(
         .otherwise(None)  # null, not NaN -- see Notes
         .cast(pl.Float64)
         .alias("refresh_ratio")
+    )
+
+
+def compute_vanish_ratio(
+    ticks: pl.DataFrame,
+    *,
+    tick_size: float,
+    max_levels: int = 30,
+    session_col: str = "SessionType",
+) -> pl.DataFrame:
+    """Split disappearing depth into consumed and vanished, per price and session.
+
+    When displayed size falls at a price, either someone traded against it or the
+    participant pulled it. Separating the two is the only spoof filter
+    constructible without order IDs, and it is the condition that cancels an
+    otherwise-perfect absorption fade: depth that leaves untraded was never
+    defending the level.
+
+    Between consecutive depth snapshots covering a price::
+
+        drop      = max(0, previous_displayed - current_displayed)
+        consumed += min(volume traded at the price in the interval, drop)
+        vanished += max(0, drop - volume traded at the price in the interval)
+
+    The ``min`` matters. A level that traded 100 while its depth fell only 40 was
+    refilled by 60; without the ``min`` that produces negative vanish. Refill is
+    :func:`compute_refresh_ratio`'s measure, not this one. Depth that *increased*
+    contributes to neither bucket.
+
+    Parameters
+    ----------
+    ticks : pl.DataFrame
+        Enriched tick data, same columns as :func:`accumulate_book_state`.
+    tick_size : float
+        Instrument minimum price increment. Required.
+    max_levels : int, default 30
+        Ladder levels read per side.
+    session_col : str, default "SessionType"
+        Column holding ``"RTH"`` / ``"ETH"`` labels.
+
+    Returns
+    -------
+    pl.DataFrame
+        One row per ``(session_id, price)`` observed in the ladder, with
+        ``consumed``, ``vanished`` and ``vanish_ratio``.
+
+        ``vanish_ratio`` is ``vanished / (vanished + consumed)``, bounded to
+        [0, 1]. It is **null** when nothing left the level at all, which is
+        undecidable rather than zero-risk. Per §4.0 the sentinel is null and not
+        NaN: Polars orders NaN above every float, so a NaN would *pass* a
+        ``> max_ratio`` spoof filter instead of dropping out of it.
+
+    Notes
+    -----
+    Volume is attributed to the transition that follows it. A trade arriving
+    while the ladder is locked, or between two identical ``DepthSequence``
+    values, stays pending until the next readable snapshot rather than being
+    discarded.
+    """
+    if not isinstance(tick_size, (int, float)) or tick_size <= 0:
+        raise ValueError(f"tick_size must be a positive number, got {tick_size!r}")
+    if isinstance(max_levels, bool) or not isinstance(max_levels, (int, np.integer)) \
+            or max_levels <= 0:
+        raise ValueError(f"max_levels must be a positive integer, got {max_levels!r}")
+
+    missing = [c for c in _REQUIRED_COLUMNS if c not in ticks.columns]
+    if session_col not in ticks.columns:
+        missing.append(session_col)
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    level_cols = [f"AskDOM_{i}" for i in range(max_levels)]
+    level_cols += [f"BidDOM_{i}" for i in range(max_levels)]
+    missing_levels = [c for c in level_cols if c not in ticks.columns]
+    if missing_levels:
+        raise ValueError(f"Missing required columns: {missing_levels}")
+
+    if ticks.height == 0:
+        return pl.DataFrame(schema=_VANISH_SCHEMA)
+
+    session_ids = _session_ids(ticks[session_col].to_numpy())
+    depth_seq = ticks["DepthSequence"].to_numpy()
+    volume = ticks["Volume"].to_numpy().astype(np.float64)
+    ask_anchor = ticks["AskDOMPrice"].to_numpy().astype(np.float64)
+    bid_anchor = ticks["BidDOMPrice"].to_numpy().astype(np.float64)
+
+    if np.any(ask_anchor < bid_anchor):
+        raise ValueError(
+            "ladder anchors are crossed (AskDOMPrice < BidDOMPrice); the depth "
+            "feed is corrupt"
+        )
+
+    ask_sizes = np.column_stack(
+        [ticks[f"AskDOM_{i}"].to_numpy() for i in range(max_levels)]
+    ).astype(np.float64)
+    bid_sizes = np.column_stack(
+        [ticks[f"BidDOM_{i}"].to_numpy() for i in range(max_levels)]
+    ).astype(np.float64)
+
+    def to_ticks(prices: np.ndarray) -> np.ndarray:
+        return np.rint(prices / tick_size).astype(np.int64)
+
+    ask_anchor_ticks = to_ticks(ask_anchor)
+    bid_anchor_ticks = to_ticks(bid_anchor)
+    trade_ticks = to_ticks(ticks["Price"].to_numpy().astype(np.float64))
+
+    lo_tick = int(min(bid_anchor_ticks.min() - max_levels + 1, trade_ticks.min()))
+    hi_tick = int(max(ask_anchor_ticks.max() + max_levels - 1, trade_ticks.max()))
+    shape = (int(session_ids[-1]) + 1, hi_tick - lo_tick + 1)
+
+    consumed = np.zeros(shape, dtype=np.float64)
+    vanished = np.zeros(shape, dtype=np.float64)
+    previous = np.zeros(shape, dtype=np.float64)
+    has_previous = np.zeros(shape, dtype=bool)
+    pending_volume = np.zeros(shape, dtype=np.float64)
+    seen = np.zeros(shape, dtype=bool)
+
+    is_new_snapshot = np.empty(len(depth_seq), dtype=bool)
+    is_new_snapshot[0] = True
+    is_new_snapshot[1:] = depth_seq[1:] != depth_seq[:-1]
+    readable = is_new_snapshot & (ask_anchor_ticks != bid_anchor_ticks)
+
+    # ponytail: one Python iteration per tick, needed because each snapshot's
+    # transition depends on the previous one -- the running state is not a
+    # vectorisable reduction. njit with a Python fallback if it becomes hot.
+    for i in range(len(depth_seq)):
+        session = session_ids[i]
+
+        # Volume is attributed to the transition that follows it, so a trade
+        # arriving during a locked or repeated snapshot stays pending rather
+        # than being discarded.
+        if volume[i] > 0:
+            pending_volume[session, trade_ticks[i] - lo_tick] += volume[i]
+
+        if not readable[i]:
+            continue
+
+        ask_lo = ask_anchor_ticks[i] - lo_tick
+        bid_hi = bid_anchor_ticks[i] - lo_tick + 1
+
+        for lo, hi, sizes in (
+            (ask_lo, ask_lo + max_levels, ask_sizes[i]),
+            (bid_hi - max_levels, bid_hi, bid_sizes[i][::-1]),
+        ):
+            window = (session, slice(lo, hi))
+            current = sizes
+            known = has_previous[window]
+
+            drop = np.where(known, np.maximum(0.0, previous[window] - current), 0.0)
+            traded = pending_volume[window]
+
+            consumed[window] += np.minimum(traded, drop)
+            vanished[window] += np.maximum(0.0, drop - traded)
+
+            previous[window] = current
+            has_previous[window] = True
+            pending_volume[window] = 0.0
+            seen[window] = True
+
+    session_idx, price_idx = np.nonzero(seen)
+    left = vanished[session_idx, price_idx]
+    took = consumed[session_idx, price_idx]
+    total = left + took
+
+    # Nothing left the level at all: undecidable, not zero-risk. Emitted as null
+    # rather than NaN -- see the module docstring.
+    decided = total > 0
+    ratio = np.full(total.shape, np.nan, dtype=np.float64)
+    np.divide(left, total, out=ratio, where=decided)
+
+    return (
+        pl.DataFrame(
+            {
+                "session_id": session_idx,
+                # See accumulate_book_state: tick_count * tick_size reintroduces
+                # float error for non-binary tick sizes.
+                "price": np.round((price_idx + lo_tick) * tick_size, 10),
+                "consumed": took,
+                "vanished": left,
+                "vanish_ratio": pl.Series(ratio).fill_nan(None),
+            }
+        )
+        .cast(_VANISH_SCHEMA)
+        .sort("session_id", "price")
     )

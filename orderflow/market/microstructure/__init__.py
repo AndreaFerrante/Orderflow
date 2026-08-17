@@ -5,7 +5,11 @@ from .aggressor import (
     build_aggressor_orders,
     flag_sweeps,
 )
-from .book import accumulate_book_state, compute_refresh_ratio
+from .book import (
+    accumulate_book_state,
+    compute_refresh_ratio,
+    compute_vanish_ratio,
+)
 from .auctions import (
     BUY_CODE_DEFAULT,
     N_CONSECUTIVE_DEFAULT,

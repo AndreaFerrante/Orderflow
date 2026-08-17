@@ -10,6 +10,7 @@ from .book import (
     compute_refresh_ratio,
     compute_vanish_ratio,
 )
+from .impact import compute_realized_lambda
 from .auctions import (
     BUY_CODE_DEFAULT,
     N_CONSECUTIVE_DEFAULT,

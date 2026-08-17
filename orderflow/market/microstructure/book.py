@@ -45,6 +45,19 @@ artificially low maximum, which inflates any refresh ratio built on it.
 
 All functions are strictly causal: the accumulators only ever grow, so computing
 on the input truncated at row *k* reproduces the state as it stood at *k*.
+
+Missing values are ``null``, never ``NaN``
+------------------------------------------
+Polars orders ``NaN`` **above** every float, so ``pl.col("x") >= 2.5`` returns
+``True`` for ``NaN`` -- the opposite of Python and NumPy, where it is ``False``::
+
+    >>> pl.DataFrame({"x": [float("nan")]}).filter(pl.col("x") >= 2.5).height
+    1
+
+Any derived ratio here that used ``NaN`` to mean "do not trust this level" would
+therefore make untrustworthy levels *pass* every threshold rather than fail it,
+firing signals hardest at prices the book never displayed. ``null`` compares to
+``null``, which ``filter`` drops. Use ``null``.
 """
 
 from __future__ import annotations
@@ -52,7 +65,7 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
-__all__ = ["accumulate_book_state"]
+__all__ = ["accumulate_book_state", "compute_refresh_ratio"]
 
 
 _REQUIRED_COLUMNS = (
@@ -270,4 +283,86 @@ def accumulate_book_state(
         )
         .cast(_STATE_SCHEMA)
         .sort("session_id", "price")
+    )
+
+
+def compute_refresh_ratio(
+    book_state: pl.DataFrame,
+    *,
+    min_depth_updates: int = 5,
+) -> pl.DataFrame:
+    """Volume traded at a price divided by the most ever displayed there.
+
+    ``R = 3`` means three times more volume traded at the price than was ever
+    visible on the book there, so someone was refreshing or icebergging. This is
+    a better proxy for a large hidden participant than order size, because it
+    identifies the trader deliberately concealing size rather than the one who
+    failed to.
+
+    **R is ordinal, never causal.** Without market-by-order data, one iceberg
+    replenishing twenty times and twenty independent traders arriving at the
+    same price are indistinguishable. Rank R within a comparable population --
+    the same time-of-day bucket, say -- rather than comparing raw values across
+    a session, and record the raw value for later analysis.
+
+    R alone is not a signal. It is only meaningful alongside price failing to
+    break through the level.
+
+    Parameters
+    ----------
+    book_state : pl.DataFrame
+        Output of :func:`accumulate_book_state`, carrying ``max_displayed``,
+        ``traded`` and ``n_depth_updates``.
+    min_depth_updates : int, default 5
+        Minimum depth snapshots covering a price before its ratio is trusted.
+
+    Returns
+    -------
+    pl.DataFrame
+        The input with ``refresh_ratio`` appended. **null** where the ratio
+        cannot be trusted:
+
+        * ``max_displayed <= 0`` -- the price was never displayed in the ladder
+          window, so it is unobserved rather than infinitely refreshed. Dividing
+          would give ``inf``, which compares greater than any threshold and
+          would make every unobserved price read as maximal absorption.
+        * ``n_depth_updates < min_depth_updates`` -- the price entered the
+          window too recently for its maximum to mean anything, which inflates
+          the ratio for a reason unrelated to hidden liquidity.
+
+    Notes
+    -----
+    **The sentinel is ``null``, not ``NaN``, and the difference is not cosmetic.**
+    Polars orders ``NaN`` *above* every float, so ``pl.col("x") >= 2.5`` returns
+    ``True`` for ``NaN`` -- the opposite of Python and NumPy, where the same
+    comparison is ``False``. A ``NaN`` sentinel here would have made every
+    unobserved and every thin-history level *pass* the refresh threshold instead
+    of failing it, firing signals hardest at prices the book never showed.
+
+    ``null`` yields ``null`` under comparison, which ``filter`` drops. No signal
+    fires on an untrustworthy level, which is the intended behaviour rather than
+    a fallback.
+    """
+    if isinstance(min_depth_updates, bool) or \
+            not isinstance(min_depth_updates, (int, np.integer)) or \
+            min_depth_updates < 0:
+        raise ValueError(
+            f"min_depth_updates must be a non-negative integer, "
+            f"got {min_depth_updates!r}"
+        )
+
+    required = ("max_displayed", "traded", "n_depth_updates")
+    missing = [c for c in required if c not in book_state.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    trustworthy = (pl.col("max_displayed") > 0) & (
+        pl.col("n_depth_updates") >= min_depth_updates
+    )
+    return book_state.with_columns(
+        pl.when(trustworthy)
+        .then(pl.col("traded") / pl.col("max_displayed"))
+        .otherwise(None)  # null, not NaN -- see Notes
+        .cast(pl.Float64)
+        .alias("refresh_ratio")
     )

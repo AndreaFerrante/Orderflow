@@ -15,9 +15,25 @@ Measured on MES tick data (2,000,000-tick samples, four files spanning
 groups are already single-sided. Splitting on ``TradeType`` as well removes the
 remainder, which are two aggressors landing in the same match event.
 
-Caveat that must travel with these functions: because ties are broken
-*artificially*, the 1-microsecond spacing is a grouping key, not a true
-inter-arrival time. Do not derive latency or arrival-rate features from it.
+Two caveats that must travel with these functions.
+
+**The 1-microsecond spacing is a grouping key, not a true inter-arrival time**,
+because ties are broken artificially. Do not derive latency or arrival-rate
+features from it.
+
+**A long run is a chain of match events, not one order.** In fast markets the
+1-microsecond stream never breaks, so consecutive match events merge into a
+single reconstructed "order". Measured on the same 3M-tick sample: orders
+flagged as 3+ level sweeps have a median of 24 fills and a maximum of 530, and
+the widest spans 40 levels in 285 fills. A genuine MES aggressor clearing three
+levels prints roughly 3-10 fills. 59% of flagged sweeps carry more than 20
+fills and are therefore chained bursts rather than single orders.
+
+Run-based grouping cannot separate them without a match-event identifier.
+``aggressor_n_fills`` and ``aggressor_duration_us`` are emitted so callers can
+gate on burst shape; a caller that needs single-aggressor semantics must apply
+that gate itself. Treating every flagged sweep as one participant's decision
+overstates what the data supports.
 
 Conventions
 -----------
@@ -44,6 +60,7 @@ _ORDER_SCHEMA = {
     "aggressor_size": pl.Float64,
     "aggressor_levels": pl.Int64,
     "aggressor_n_fills": pl.Int64,
+    "aggressor_duration_us": pl.Int64,
     "aggressor_price_start": pl.Float64,
     "aggressor_price_end": pl.Float64,
     "aggressor_vwap": pl.Float64,
@@ -56,8 +73,17 @@ def _validate(ticks: pl.DataFrame, gap_us: int) -> None:
     missing = [c for c in _REQUIRED_COLUMNS if c not in ticks.columns]
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
-    if not isinstance(gap_us, (int, np.integer)) or gap_us < 0:
+    if isinstance(gap_us, bool) or not isinstance(gap_us, (int, np.integer)) or gap_us < 0:
         raise ValueError(f"gap_us must be a non-negative integer, got {gap_us!r}")
+
+    # A null in Price or Volume does not produce NaN downstream -- Polars' sum()
+    # skips it in the numerator but the row still contributes to the denominator,
+    # so aggressor_vwap comes out wrong by an arbitrary factor with nothing to
+    # signal it. Reject at the boundary instead.
+    for col in _REQUIRED_COLUMNS:
+        n_null = ticks[col].null_count()
+        if n_null:
+            raise ValueError(f"{col} contains {n_null} null values")
 
 
 def assign_aggressor_order_ids(
@@ -94,9 +120,22 @@ def assign_aggressor_order_ids(
     dt = ticks["Datetime"].to_numpy().astype("datetime64[us]").astype("int64")
     tt = ticks["TradeType"].to_numpy()
 
+    diffs = np.diff(dt)
+
+    # A backwards jump yields a negative diff, which is not > gap_us, so the tick
+    # would silently merge into the previous order -- producing a fabricated
+    # multi-level sweep spanning the discontinuity. Do not "fix" this by sorting:
+    # sorting on Datetime alone reorders ties inside a match event and destroys
+    # the fill order that aggressor_price_start / _end depend on.
+    if diffs.size and diffs.min() < 0:
+        raise ValueError(
+            "Datetime must be non-decreasing; the input is out of chronological "
+            "order and would be grouped into fabricated orders"
+        )
+
     starts = np.empty(len(dt), dtype=bool)
     starts[0] = False
-    starts[1:] = (np.diff(dt) > gap_us) | (tt[1:] != tt[:-1])
+    starts[1:] = (diffs > gap_us) | (tt[1:] != tt[:-1])
 
     return ticks.with_columns(
         pl.Series("aggressor_id", np.cumsum(starts), dtype=pl.Int64)
@@ -138,9 +177,17 @@ def build_aggressor_orders(
         ``aggressor_size``
             Total volume executed.
         ``aggressor_levels``
-            Distinct price levels spanned, ``round(span / tick_size) + 1``.
+            Price levels spanned, ``round(span / tick_size) + 1``. This counts
+            the span, so levels that were skipped rather than traded are
+            included -- it is not a count of distinct traded prices.
         ``aggressor_n_fills``
-            Number of source ticks.
+            Number of source ticks. Together with ``aggressor_duration_us``,
+            this is the discriminator between a single aggressor (roughly 3-10
+            fills for a 3-level sweep) and a chained burst of match events; see
+            the module docstring.
+        ``aggressor_duration_us``
+            Microseconds from first to last fill. Artificial for tie-broken
+            runs, informative for long chains.
         ``aggressor_price_start`` / ``aggressor_price_end``
             First and last fill price, in fill order -- **not** min and max, so
             the direction of a sweep survives.
@@ -166,6 +213,9 @@ def build_aggressor_orders(
             pl.col("Price").min().alias("_price_min"),
             pl.col("Price").max().alias("_price_max"),
             pl.len().cast(pl.Int64).alias("aggressor_n_fills"),
+            (pl.col("Datetime").last() - pl.col("Datetime").first())
+            .dt.total_microseconds()
+            .alias("aggressor_duration_us"),
             pl.col("Price").first().alias("aggressor_price_start"),
             pl.col("Price").last().alias("aggressor_price_end"),
             (pl.col("Price") * pl.col("Volume")).sum().alias("_notional"),
@@ -183,17 +233,29 @@ def build_aggressor_orders(
         )
         .drop("_price_min", "_price_max", "_notional")
         .select(list(_ORDER_SCHEMA))
+        # Cast so the empty and non-empty paths agree. Without it the dtypes are
+        # inherited from the input, and a pl.concat over a per-day loop that hits
+        # one empty day raises SchemaError.
+        .cast(_ORDER_SCHEMA)
     )
 
 
 def flag_sweeps(orders: pl.DataFrame, *, min_levels: int = 3) -> pl.DataFrame:
     """Mark aggressor orders that consumed several price levels in one direction.
 
-    Aggressive volume printing at three or more distinct levels within one match
-    event is almost certainly a single aggressor order clearing the book, which
-    is the momentum trigger. The direction check is not decoration: an aggressive
-    buy whose last fill sits *below* its first is a data artefact or a mixed
-    group, and trading it would take the position backwards.
+    Aggressive volume printing at three or more levels in one reconstructed
+    order is liquidity being cleared in one direction, which is the momentum
+    trigger.
+
+    **This is not evidence of a single participant.** Long tie-break runs chain
+    several match events together, and 59% of orders flagged here carry more
+    than 20 fills. Gate on ``aggressor_n_fills`` / ``aggressor_duration_us`` if
+    single-aggressor semantics are required; see the module docstring.
+
+    The direction check is not decoration: an aggressive buy whose last fill
+    sits *below* its first is a data artefact or a chained reversal, and trading
+    it would take the position backwards. It rejects roughly 4% of orders that
+    otherwise meet the level threshold.
 
     Parameters
     ----------

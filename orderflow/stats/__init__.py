@@ -47,6 +47,7 @@ from .returns import (
     equity_curve,
     drawdown_series,
     rolling_volatility,
+    ewma_volatility,
     underwater_duration,
 )
 
@@ -127,6 +128,7 @@ __all__ = [
     "equity_curve",
     "drawdown_series",
     "rolling_volatility",
+    "ewma_volatility",
     "underwater_duration",
     # hypothesis.py
     "TestResult",

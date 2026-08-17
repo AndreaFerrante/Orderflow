@@ -352,6 +352,77 @@ def rolling_volatility(
     return roll_vol.to_numpy()
 
 
+def ewma_volatility(
+    returns: Union[pd.Series, np.ndarray],
+    halflife: float,
+    min_periods: int = 2,
+    annualise: bool = False,
+    periods_per_year: int = 252,
+) -> Union[pd.Series, np.ndarray]:
+    """
+    Exponentially-weighted volatility (strictly causal — no lookahead).
+
+    The exponentially-weighted sibling of :func:`rolling_volatility`. Volatility
+    clusters, so weighting recent observations more heavily adapts faster to a
+    regime change than a simple window of the same span — a simple window gives
+    a shock arriving today exactly the same weight as one from twenty bars ago,
+    and then drops it off a cliff when it leaves the window.
+
+    Prefer this wherever a position's size or barriers scale with volatility:
+    reacting late means sizing yesterday's regime.
+
+    Parameters
+    ----------
+    returns : pd.Series | np.ndarray
+        Per-period return series.
+    halflife : float
+        Periods over which an observation's weight decays by half. Short values
+        adapt quickly and are noisier; three to five periods is typical for
+        intraday sizing.
+    min_periods : int, default=2
+        Minimum observations required to produce a non-NaN value. Two is the
+        floor, since a single observation has no dispersion.
+    annualise : bool, default=False
+        Scale by ``sqrt(periods_per_year)``. Defaults to ``False`` because the
+        common use is sizing in the return series' own units;
+        :func:`rolling_volatility` annualises unconditionally.
+    periods_per_year : int, default=252
+        Used only when ``annualise`` is ``True``.
+
+    Returns
+    -------
+    pd.Series | np.ndarray
+        Volatility in the same units as ``returns`` unless ``annualise`` is set.
+        Early positions are NaN while fewer than ``min_periods`` observations are
+        available. The input type is preserved, and a Series keeps its index.
+
+    Notes
+    -----
+    Causal by construction: each value uses only observations at or before its
+    own position, so appending later data never revises an earlier one. That
+    matters for backtests — an estimator that peeks re-sizes past trades with
+    information they did not have, and flatters the result.
+    """
+    if not isinstance(halflife, (int, float)) or halflife <= 0:
+        raise ValueError(f"halflife must be a positive number, got {halflife!r}")
+    if isinstance(min_periods, bool) or not isinstance(min_periods, (int, np.integer)) \
+            or min_periods < 1:
+        raise ValueError(f"min_periods must be a positive integer, got {min_periods!r}")
+
+    is_series = isinstance(returns, pd.Series)
+    if not is_series:
+        returns = pd.Series(np.asarray(returns, dtype=np.float64))
+
+    ewma_vol = returns.ewm(halflife=halflife, min_periods=min_periods).std(bias=False)
+
+    if annualise:
+        ewma_vol = ewma_vol * np.sqrt(periods_per_year)
+
+    if is_series:
+        return ewma_vol
+    return ewma_vol.to_numpy()
+
+
 def underwater_duration(
     returns: Union[pd.Series, np.ndarray],
     log_returns: bool = False,

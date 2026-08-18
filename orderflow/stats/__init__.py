@@ -99,6 +99,12 @@ from .markov_utilities import (
     plot_distribution_of_float_series,
 )
 
+from .seasonality import (
+    bucket_of_day,
+    causal_bucket_zscore,
+    normalize_by_depth,
+)
+
 __all__ = [
     # stats.py
     "describe",
@@ -129,6 +135,9 @@ __all__ = [
     "drawdown_series",
     "rolling_volatility",
     "ewma_volatility",
+    "bucket_of_day",
+    "causal_bucket_zscore",
+    "normalize_by_depth",
     "underwater_duration",
     # hypothesis.py
     "TestResult",

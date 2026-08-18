@@ -101,6 +101,7 @@ def classify_session_regime(
     rotational_slope_max: float,
     directional_slope_min: float,
     cross_confirm_distance: float,
+    min_conditions: int = 3,
 ) -> pl.DataFrame:
     """Label each session ROTATIONAL, DIRECTIONAL or INDETERMINATE.
 
@@ -128,6 +129,13 @@ def classify_session_regime(
         How far beyond VWAP price must travel, in price units, before a side
         change counts. Without it the bid-ask bounce registers hundreds of
         crosses per session and both cross conditions become unreachable.
+    min_conditions : int, default 3
+        How many of the four conditions must hold for a label. Requiring all
+        four leaves about 6% of sessions labelled, because each condition passes
+        roughly half the population and their conjunction collapses; scoring
+        keeps each input's information without that collapse. A session scoring
+        at or above the threshold on *both* labels is INDETERMINATE -- arguing
+        equally for both is not evidence of either.
 
     Returns
     -------
@@ -162,6 +170,8 @@ def classify_session_regime(
         "vwap_slope": pl.Float64,
         "poc_migration": pl.Float64,
         "elapsed_minutes": pl.Float64,
+        "rotational_score": pl.Int64,
+        "directional_score": pl.Int64,
     }
     if ticks.height == 0:
         return pl.DataFrame(schema=schema)
@@ -240,6 +250,7 @@ def classify_session_regime(
                 return INDETERMINATE, {
                     "vwap_crosses": 0, "vwap_slope": float("nan"),
                     "poc_migration": float("nan"), "elapsed_minutes": 0.0,
+                    "rotational_score": 0, "directional_score": 0,
                 }
 
             elapsed = float(observed[-1] - observed[0])
@@ -255,6 +266,8 @@ def classify_session_regime(
                 "vwap_slope": slope,
                 "poc_migration": migration,
                 "elapsed_minutes": elapsed,
+                "rotational_score": 0,
+                "directional_score": 0,
             }
 
             # Spec 6.1: a session with no prior POC has no opening-location
@@ -264,25 +277,36 @@ def classify_session_regime(
             if elapsed < min_window_minutes:
                 return INDETERMINATE, inputs
 
-            rotational = (
-                ib_width_z > 0
-                and open_location == "inside"
-                and crosses >= 2
-                and abs(slope) < rotational_slope_max
+            # Score, do not conjoin. Requiring all four conditions at once left
+            # 3 to 4 labelled sessions in 60: each is satisfied by roughly half
+            # the population, so their `and` lands near 6%. Counting how many
+            # hold keeps every input's information while letting a session
+            # qualify on the strength of the rest when one disagrees.
+            rotational_score = int(
+                (ib_width_z > 0)
+                + (open_location == "inside")
+                + (crosses >= 2)
+                + (abs(slope) < rotational_slope_max)
             )
+            directional_score = int(
+                (ib_width_z < 0)
+                + (crosses <= 1)
+                + (abs(slope) > directional_slope_min)
+                + (migration != 0 and np.sign(migration) == np.sign(slope))
+            )
+            inputs["rotational_score"] = rotational_score
+            inputs["directional_score"] = directional_score
+
+            rotational = rotational_score >= min_conditions
+            directional = directional_score >= min_conditions
+
+            # A session arguing equally for both is not evidence of either.
+            if rotational and directional:
+                return INDETERMINATE, inputs
             if rotational:
                 return ROTATIONAL, inputs
-
-            directional = (
-                ib_width_z < 0
-                and crosses <= 1
-                and abs(slope) > directional_slope_min
-                and np.sign(migration) == np.sign(slope)
-                and migration != 0
-            )
             if directional:
                 return DIRECTIONAL, inputs
-
             return INDETERMINATE, inputs
 
         regime, frozen_inputs = evaluate(float(window_open))

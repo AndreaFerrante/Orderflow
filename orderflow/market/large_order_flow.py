@@ -35,7 +35,11 @@ import re
 import numpy as np
 import polars as pl
 
-__all__ = ["apply_session_gates", "classify_session_regime"]
+__all__ = [
+    "apply_session_gates",
+    "classify_session_regime",
+    "find_absorption_fade_signals",
+]
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -431,4 +435,200 @@ def apply_session_gates(
     return regime.with_columns(
         veto.alias("trend_day_veto"),
         pl.Series("volatility_halted", halted, dtype=pl.Boolean),
+    )
+
+
+_FEATURE_COLUMNS = (
+    "session_id",
+    "Index",
+    "signal_index",
+    "hour_ct",
+    "minute_ct",
+    "regime",
+    "trend_day_veto",
+    "volatility_halted",
+    "level_price",
+    "distance_to_level_ticks",
+    "level_touches",
+    "side",
+    "flow_z",
+    "refresh_rank",
+    "vanish_rank",
+    "lambda_rank",
+    "closed_beyond_level",
+    "trigger_confirmed",
+    "trigger_bar_delta",
+    "next_bar_open",
+    "sigma",
+)
+
+_SIGNAL_COLUMNS = (
+    "signal_index",
+    "Index",
+    "TradeType",
+    "signal_direction",
+    "entry_price",
+    "stop_loss",
+    "target_type",
+    "variant",
+    "regime",
+    "sigma_at_entry",
+    "stop_distance_points",
+    "level_price",
+    "refresh_rank",
+    "vanish_rank",
+    "lambda_rank",
+    "flow_z",
+    "trapped_traders",
+    "cvd_divergence",
+    "stacked_levels",
+)
+
+
+def find_absorption_fade_signals(
+    features: pl.DataFrame,
+    *,
+    band_tolerance_ticks: int,
+    min_level_touches: int,
+    flow_burst_z: float,
+    refresh_rank_min: float,
+    vanish_rank_max: float,
+    lambda_rank_max: float,
+    stop_vol_multiple: float,
+    window_hours: tuple,
+    late_entry_hour: int,
+    late_entry_minute: int,
+) -> pl.DataFrame:
+    """Select absorption-fade entries from a prepared bar-level feature frame.
+
+    Aggressive flow arrives at a level that was chosen in advance, something
+    absorbs it without repricing, and the defender does not simply pull. Fade the
+    exhausted push.
+
+    Ten conditions, all required. Each is expressed as a column comparison so
+    that a test can break exactly one and watch the signal disappear -- a filter
+    nobody can prove is wired in is a filter that will eventually stop being.
+
+    **Ranked, not thresholded.** Refresh and vanish ratios arrive as ranks within
+    their session rather than raw values. Both raw measures accumulate from the
+    session open, so their scales bear no relation to the thresholds the source
+    methodology describes: an absolute refresh floor of 2.5 admits three quarters
+    of all prices, and an absolute vanish ceiling of 0.20 admits none at all.
+    Ranking restores the intended meaning -- unusually refreshed, unusually
+    persistent -- without inventing a scale.
+
+    Parameters
+    ----------
+    features : pl.DataFrame
+        One row per candidate bar, from :func:`build_absorption_features`.
+    band_tolerance_ticks : int
+        How close to a level counts as "at" it.
+    min_level_touches : int
+        Prior touches required before a level may be faded. The first test of a
+        level fails more often than the second, because the flow driving price
+        there is usually a metaorder still working.
+    flow_burst_z : float
+        Minimum depth-normalised flow z-score into the level.
+    refresh_rank_min : float
+        Minimum within-session rank of the refresh ratio, 0 to 1.
+    vanish_rank_max : float
+        Maximum within-session rank of the vanish ratio. High vanish means the
+        depth left untraded, which is pulling rather than defending.
+    lambda_rank_max : float
+        Maximum within-session rank of realised lambda. High lambda is informed
+        flow moving a thin book, and must never be faded.
+    stop_vol_multiple : float
+        Stop offset beyond the level, in units of sigma. Stops cluster one tick
+        past obvious levels; this deliberately sits outside that pile.
+    window_hours : tuple of int
+        Chicago hours in which entries are permitted.
+    late_entry_hour, late_entry_minute : int
+        After this time no new entry is taken, because a late trade has less room
+        to work before the hard flat.
+
+    Returns
+    -------
+    pl.DataFrame
+        One row per accepted signal, sorted ascending by ``Index``. The engine
+        consumes signals by array position rather than by timestamp lookup, so
+        unsorted rows would attach to the wrong ticks.
+
+        ``TradeType`` is 2 for long and 1 for short -- the engine validates that
+        column and rejects anything else, and it is what actually determines
+        trade direction.
+    """
+    missing = [c for c in _FEATURE_COLUMNS if c not in features.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    if features.height == 0:
+        return pl.DataFrame(
+            schema={
+                "signal_index": pl.Int64, "Index": pl.Int64, "TradeType": pl.Int64,
+                "signal_direction": pl.String, "entry_price": pl.Float64,
+                "stop_loss": pl.Float64, "target_type": pl.String, "variant": pl.String,
+                "regime": pl.String, "sigma_at_entry": pl.Float64,
+                "stop_distance_points": pl.Float64, "level_price": pl.Float64,
+                "refresh_rank": pl.Float64, "vanish_rank": pl.Float64,
+                "lambda_rank": pl.Float64, "flow_z": pl.Float64,
+                "trapped_traders": pl.Boolean, "cvd_divergence": pl.Boolean,
+                "stacked_levels": pl.Boolean,
+            }
+        )
+
+    is_long = pl.col("side") == "long"
+    minutes = pl.col("hour_ct") * 60 + pl.col("minute_ct")
+    cutoff = late_entry_hour * 60 + late_entry_minute
+
+    accepted = (
+        # 1. Regime and session gates. A vetoed or halted session does not fade.
+        (pl.col("regime") == "ROTATIONAL")
+        & ~pl.col("trend_day_veto")
+        & ~pl.col("volatility_halted")
+        # 2. Inside the trading window, before the late-entry cutoff.
+        & pl.col("hour_ct").is_in(list(window_hours))
+        & (minutes <= cutoff)
+        # 3. At a level chosen in advance, not in no-man's land.
+        & (pl.col("distance_to_level_ticks").abs() <= band_tolerance_ticks)
+        # 4. Not the first test of that level.
+        & (pl.col("level_touches") >= min_level_touches)
+        # 5. A real burst of flow into the level.
+        & (pl.col("flow_z") >= flow_burst_z)
+        # 6. Something is absorbing it.
+        & (pl.col("refresh_rank") >= refresh_rank_min)
+        # 7. Not informed flow through a thin book.
+        & (pl.col("lambda_rank") <= lambda_rank_max)
+        # 8. The defender is not merely pulling. A cancel, not a preference.
+        & (pl.col("vanish_rank") <= vanish_rank_max)
+        # 9. The level held: price did not close beyond it.
+        & ~pl.col("closed_beyond_level")
+        # 10. A trigger bar closed back on the origin side, with agreeing delta.
+        & pl.col("trigger_confirmed")
+        & pl.when(is_long)
+        .then(pl.col("trigger_bar_delta") > 0)
+        .otherwise(pl.col("trigger_bar_delta") < 0)
+    )
+
+    # A null measure is untrustworthy, never permissive. Polars propagates null
+    # through comparisons, and `fill_null(False)` is what turns that into a
+    # rejection rather than letting it reach the filter as an unknown.
+    stop_offset = pl.col("sigma") * stop_vol_multiple
+
+    return (
+        features.filter(accepted.fill_null(False))
+        .with_columns(
+            pl.when(is_long).then(2).otherwise(1).cast(pl.Int64).alias("TradeType"),
+            pl.col("side").alias("signal_direction"),
+            pl.col("next_bar_open").alias("entry_price"),
+            pl.when(is_long)
+            .then(pl.col("level_price") - stop_offset)
+            .otherwise(pl.col("level_price") + stop_offset)
+            .alias("stop_loss"),
+            pl.lit("triple_barrier").alias("target_type"),
+            pl.lit("lof_absorption_fade").alias("variant"),
+            pl.col("sigma").alias("sigma_at_entry"),
+            stop_offset.alias("stop_distance_points"),
+        )
+        .select(list(_SIGNAL_COLUMNS))
+        .sort("Index")
     )

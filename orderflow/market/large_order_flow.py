@@ -39,6 +39,7 @@ __all__ = [
     "apply_session_gates",
     "classify_session_regime",
     "find_absorption_fade_signals",
+    "find_sweep_momentum_signals",
 ]
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
@@ -630,5 +631,197 @@ def find_absorption_fade_signals(
             stop_offset.alias("stop_distance_points"),
         )
         .select(list(_SIGNAL_COLUMNS))
+        .sort("Index")
+    )
+
+
+_SWEEP_FEATURE_COLUMNS = (
+    "session_id",
+    "Index",
+    "signal_index",
+    "hour_ct",
+    "minute_ct",
+    "regime",
+    "side",
+    "sweep_levels",
+    "sweep_size_z",
+    "sweep_origin_price",
+    "destination_thin",
+    "thin_area_far_edge",
+    "farside_refresh_rank",
+    "lambda_rank",
+    "pullback_confirmed",
+    "pullback_held_origin",
+    "trigger_bar_delta",
+    "next_bar_open",
+    "sigma",
+)
+
+_SWEEP_SIGNAL_COLUMNS = (
+    "signal_index",
+    "Index",
+    "TradeType",
+    "signal_direction",
+    "entry_price",
+    "stop_loss",
+    "target_type",
+    "variant",
+    "regime",
+    "sigma_at_entry",
+    "stop_distance_points",
+    "sweep_levels",
+    "sweep_size_z",
+    "sweep_origin_price",
+    "thin_area_far_edge",
+    "farside_refresh_rank",
+    "lambda_rank",
+    "aggressor_n_fills",
+)
+
+_SWEEP_SIGNAL_SCHEMA = {
+    "signal_index": pl.Int64, "Index": pl.Int64, "TradeType": pl.Int64,
+    "signal_direction": pl.String, "entry_price": pl.Float64, "stop_loss": pl.Float64,
+    "target_type": pl.String, "variant": pl.String, "regime": pl.String,
+    "sigma_at_entry": pl.Float64, "stop_distance_points": pl.Float64,
+    "sweep_levels": pl.Int64, "sweep_size_z": pl.Float64,
+    "sweep_origin_price": pl.Float64, "thin_area_far_edge": pl.Float64,
+    "farside_refresh_rank": pl.Float64, "lambda_rank": pl.Float64,
+    "aggressor_n_fills": pl.Int64,
+}
+
+
+def find_sweep_momentum_signals(
+    features: pl.DataFrame,
+    *,
+    sweep_min_levels: int,
+    flow_burst_z: float,
+    farside_refresh_rank_max: float,
+    lambda_rank_min: float,
+    stop_vol_multiple: float,
+    window_hours: tuple,
+    late_entry_hour: int,
+    late_entry_minute: int,
+) -> pl.DataFrame:
+    """Select sweep-momentum entries from a prepared bar-level feature frame.
+
+    One aggressor order clears several price levels into an area where little has
+    traded on previous sessions, and nothing is waiting on the far side. Price
+    moves through thin areas quickly because there is nobody there to stop it,
+    and the same premise is what the stop keys on: re-entry means the thesis
+    failed.
+
+    **This is not Rule A with the sign flipped.** Three conditions invert and two
+    gates do not apply:
+
+    * Far-side refresh must be **low**. Rule A wants a hidden defender; this rule
+      wants nobody home.
+    * Lambda must **not** be in the bottom quantile. A sweep into collapsing
+      lambda is being absorbed, which is Rule A's setup -- this is the condition
+      that stops both rules firing on one event.
+    * The **volatility kill switch does not apply**. It exists because absorption
+      is short volatility in disguise; momentum is long it, so a violent session
+      is where this rule belongs.
+    * The **trend-day veto does not apply**. It blocks the fade and explicitly
+      does not enable momentum, so it has nothing to say about a session already
+      labelled directional.
+
+    Selectivity is the live risk here. Raw sweeps run at roughly 45 per session
+    inside the trading window against a source expectation of one or two setups
+    an evening, so conditions 4 through 7 supply nearly all the filtering. If the
+    trade count comes back high, that is where to look first.
+
+    Parameters
+    ----------
+    features : pl.DataFrame
+        One row per candidate bar, from :func:`build_sweep_features`.
+    sweep_min_levels : int
+        Price levels an aggressor order must clear to count as a sweep.
+    flow_burst_z : float
+        Minimum time-bucketed z-score of the sweep's size.
+    farside_refresh_rank_max : float
+        Maximum within-session refresh rank beyond the sweep's endpoint. High
+        refresh there means hidden size is waiting, which is a reason not to go.
+    lambda_rank_min : float
+        Minimum within-session rank of realised lambda. Below it, the sweep is
+        being absorbed rather than clearing.
+    stop_vol_multiple : float
+        Stop offset beyond the thin area's far edge, in units of sigma.
+    window_hours : tuple of int
+        Chicago hours in which entries are permitted.
+    late_entry_hour, late_entry_minute : int
+        After this time no new entry is taken.
+
+    Returns
+    -------
+    pl.DataFrame
+        One row per accepted signal, sorted ascending by ``Index``, carrying
+        ``TradeType`` (2 long, 1 short) for the engine.
+
+        ``aggressor_n_fills`` is **recorded, not filtered on**. Only about a
+        tenth of sweeps are shaped like a single aggressor; the rest are chained
+        match events. Gating on it would cut candidates by roughly 90%, and
+        whether that sharpens the signal or starves an already marginal sample is
+        an open question rather than a decided one.
+    """
+    missing = [c for c in _SWEEP_FEATURE_COLUMNS if c not in features.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    if features.height == 0:
+        return pl.DataFrame(schema=_SWEEP_SIGNAL_SCHEMA)
+
+    frame = features
+    if "aggressor_n_fills" not in frame.columns:
+        frame = frame.with_columns(pl.lit(None, dtype=pl.Int64).alias("aggressor_n_fills"))
+
+    is_long = pl.col("side") == "long"
+    minutes = pl.col("hour_ct") * 60 + pl.col("minute_ct")
+    cutoff = late_entry_hour * 60 + late_entry_minute
+
+    accepted = (
+        # 1. Directional session. Neither session gate applies here -- see above.
+        (pl.col("regime") == "DIRECTIONAL")
+        # 2. Inside the window, before the late-entry cutoff.
+        & pl.col("hour_ct").is_in(list(window_hours))
+        & (minutes <= cutoff)
+        # 3. A real sweep, unusual for this time of day.
+        & (pl.col("sweep_levels") >= sweep_min_levels)
+        & (pl.col("sweep_size_z") >= flow_burst_z)
+        # 4. Into somewhere little has traded before.
+        & pl.col("destination_thin")
+        # 5. And on the far side, nothing.
+        & (pl.col("farside_refresh_rank") <= farside_refresh_rank_max)
+        # 6. Clearing, not being absorbed.
+        & (pl.col("lambda_rank") >= lambda_rank_min)
+        # 7. A shallow pullback that held, then a bar closing with the sweep.
+        & pl.col("pullback_confirmed")
+        & pl.col("pullback_held_origin")
+        & pl.when(is_long)
+        .then(pl.col("trigger_bar_delta") > 0)
+        .otherwise(pl.col("trigger_bar_delta") < 0)
+    )
+
+    # A null measure is untrustworthy, never permissive. Polars propagates null
+    # through comparisons; fill_null(False) turns that into a rejection.
+    stop_offset = pl.col("sigma") * stop_vol_multiple
+
+    return (
+        frame.filter(accepted.fill_null(False))
+        .with_columns(
+            pl.when(is_long).then(2).otherwise(1).cast(pl.Int64).alias("TradeType"),
+            pl.col("side").alias("signal_direction"),
+            pl.col("next_bar_open").alias("entry_price"),
+            # The thin area is not supposed to be revisited, so the stop sits
+            # just beyond the edge price came in through.
+            pl.when(is_long)
+            .then(pl.col("thin_area_far_edge") - stop_offset)
+            .otherwise(pl.col("thin_area_far_edge") + stop_offset)
+            .alias("stop_loss"),
+            pl.lit("triple_barrier").alias("target_type"),
+            pl.lit("lof_sweep_momentum").alias("variant"),
+            pl.col("sigma").alias("sigma_at_entry"),
+            stop_offset.alias("stop_distance_points"),
+        )
+        .select(list(_SWEEP_SIGNAL_COLUMNS))
         .sort("Index")
     )

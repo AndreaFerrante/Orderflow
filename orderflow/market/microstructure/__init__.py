@@ -28,5 +28,9 @@ from .dom import (
     remove_DOM_columns,
     sum_first_n_DOM_levels,
 )
-from .footprint import filter_big_prints_on_ask, filter_big_prints_on_bid
+from .footprint import (
+    filter_big_prints_on_ask,
+    filter_big_prints_on_bid,
+    find_stacked_imbalances,
+)
 

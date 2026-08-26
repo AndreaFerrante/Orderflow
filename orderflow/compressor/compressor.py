@@ -537,6 +537,91 @@ def assign_delta_bar_ids(
     return df
 
 
+def _compute_volume_bar_ids(
+    volumes: np.ndarray,
+    session_types: Optional[np.ndarray],
+    volume_threshold: float,
+) -> tuple:
+    """Core loop: assign bar IDs based on running cumulative volume."""
+    n = len(volumes)
+    bar_ids = np.empty(n, dtype=np.int64)
+
+    current_bar = 0
+    running = 0.0
+    completed = set()
+    prev_session = session_types[0] if session_types is not None and n > 0 else None
+
+    for i in range(n):
+        if session_types is not None and i > 0:
+            curr_session = session_types[i]
+            if curr_session != prev_session:
+                current_bar += 1
+                running = 0.0
+            prev_session = curr_session
+
+        running += volumes[i]
+        bar_ids[i] = current_bar
+
+        if running >= volume_threshold:
+            completed.add(current_bar)
+            current_bar += 1
+            running = 0.0
+
+    if n == 0:
+        return bar_ids, np.empty(0, dtype=bool)
+
+    max_id = int(bar_ids[-1])
+    mask = np.zeros(max_id + 1, dtype=bool)
+    for b in completed:
+        mask[b] = True
+    return bar_ids, mask[bar_ids]
+
+
+def assign_volume_bar_ids(
+    tick_data: Union[pd.DataFrame, pl.DataFrame],
+    volume_threshold: float,
+) -> Union[pd.DataFrame, pl.DataFrame]:
+    """Assign volume-bar membership to each tick.
+
+    Adds ``volume_bar_id`` (int) and ``volume_bar_complete`` (bool).  A bar
+    closes on the first tick where cumulative ``Volume`` reaches
+    ``volume_threshold``; the running total then resets.  When ``SessionType``
+    is present, any session transition also forces a reset so no bar crosses
+    a session boundary.
+
+    Spec amendment: this deliberately does **not** reproduce
+    ``compress_to_volume_bars``' bar boundaries.  That function computes
+    ``floor(cumsum(Volume) / N)`` as a global running total that never
+    resets, so a single oversized tick can skip bar ids entirely.  This
+    function accumulates and resets on close, like ``assign_delta_bar_ids``,
+    so every bar holds at least ``volume_threshold`` and no bar spans a
+    session boundary -- the bounded-slice property a footprint needs. Do not
+    "fix" this divergence to match ``compress_to_volume_bars``.
+    """
+    is_polars = isinstance(tick_data, pl.DataFrame)
+
+    if is_polars:
+        vol = tick_data["Volume"].to_numpy().astype(np.float64)
+        st = tick_data["SessionType"].to_numpy() if "SessionType" in tick_data.columns else None
+    elif isinstance(tick_data, pd.DataFrame):
+        vol = tick_data["Volume"].values.astype(np.float64)
+        st = tick_data["SessionType"].values if "SessionType" in tick_data.columns else None
+    else:
+        raise TypeError("tick_data must be Pandas or Polars DataFrame")
+
+    bar_ids, complete = _compute_volume_bar_ids(vol, st, float(volume_threshold))
+
+    if is_polars:
+        return tick_data.with_columns(
+            pl.Series("volume_bar_id", bar_ids),
+            pl.Series("volume_bar_complete", complete),
+        )
+    df = tick_data.copy()
+    df["volume_bar_id"] = bar_ids
+    df["volume_bar_complete"] = complete
+    return df
+
+
 def compress_to_delta_bars(
     tick_data: Union[pd.DataFrame, pl.DataFrame],
     delta_threshold: float,

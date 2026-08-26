@@ -46,6 +46,51 @@ def _sell_flag(ask, bid, p, ratio, eps):
     return bool(bid[p] >= ratio * (ask[p + 1] + eps))
 
 
+def _flag_at(ask, bid, p, direction, ratio, eps):
+    if direction == 1:
+        return _buy_flag(ask, bid, p, ratio, eps)
+    return _sell_flag(ask, bid, p, ratio, eps)
+
+
+def _pair_volume(ask, bid, p, direction):
+    """Both legs of the diagonal pair at level ``p``."""
+    if direction == 1:
+        return ask[p] + bid[p - 1]
+    return bid[p] + ask[p + 1]
+
+
+def _scan_stack(ask, bid, p, direction, ratio, n_consecutive, min_diagonal_volume, eps):
+    """Return ``(lo, hi, diagonal_volume)`` for the qualifying run containing ``p``.
+
+    Returns ``(-1, -1, 0.0)`` when ``p`` is unflagged, when the run is shorter
+    than ``n_consecutive``, or when the summed diagonal volume is below
+    ``min_diagonal_volume``.
+    """
+    n = ask.shape[0]
+    if p < 1 or p >= n - 1:
+        return -1, -1, 0.0
+    if not _flag_at(ask, bid, p, direction, ratio, eps):
+        return -1, -1, 0.0
+
+    lo = p
+    while lo - 1 >= 1 and _flag_at(ask, bid, lo - 1, direction, ratio, eps):
+        lo -= 1
+    hi = p
+    while hi + 1 < n - 1 and _flag_at(ask, bid, hi + 1, direction, ratio, eps):
+        hi += 1
+
+    if (hi - lo + 1) < n_consecutive:
+        return -1, -1, 0.0
+
+    total = 0.0
+    for lvl in range(lo, hi + 1):
+        total += _pair_volume(ask, bid, lvl, direction)
+
+    if total < min_diagonal_volume:
+        return -1, -1, 0.0
+    return lo, hi, total
+
+
 def filter_big_prints_on_ask(
     data: pd.DataFrame, volume_filter: int = 100
 ) -> pd.DataFrame:

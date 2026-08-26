@@ -2,6 +2,32 @@ import pandas as pd
 import numpy as np
 
 
+def _buy_flag(ask, bid, p, ratio, eps):
+    """Buy imbalance at level ``p``: ask at P against bid one level BELOW.
+
+    ``TradeType 2`` is ask volume, buy aggression, LONG.  The level below is
+    ``p - 1`` because the ladder index increases with price.
+
+    A level with zero on *both* sides is untouched ladder padding, not an
+    observed zero, and must not trip the zero-denominator bypass below it —
+    otherwise every padded cell next to a real print would spuriously flag.
+    """
+    if bid[p - 1] <= 0 and ask[p - 1] <= 0:
+        return False
+    return bool(ask[p] >= ratio * (bid[p - 1] + eps))
+
+
+def _sell_flag(ask, bid, p, ratio, eps):
+    """Sell imbalance at level ``p``: bid at P against ask one level ABOVE.
+
+    ``TradeType 1`` is bid volume, sell aggression, SHORT. Same untouched-cell
+    guard as ``_buy_flag``, mirrored on the level above.
+    """
+    if ask[p + 1] <= 0 and bid[p + 1] <= 0:
+        return False
+    return bool(bid[p] >= ratio * (ask[p + 1] + eps))
+
+
 def filter_big_prints_on_ask(
     data: pd.DataFrame, volume_filter: int = 100
 ) -> pd.DataFrame:

@@ -11,6 +11,9 @@ def _buy_flag(ask, bid, p, ratio, eps):
     A level with zero on *both* sides is untouched ladder padding, not an
     observed zero, and must not trip the zero-denominator bypass below it —
     otherwise every padded cell next to a real print would spuriously flag.
+    In market terms: a price that never traded had no auction there to be
+    imbalanced against, so it does not flag. This is deliberate, not an
+    artefact of the fixed-width ladder array.
     """
     if bid[p - 1] <= 0 and ask[p - 1] <= 0:
         return False
@@ -21,7 +24,9 @@ def _sell_flag(ask, bid, p, ratio, eps):
     """Sell imbalance at level ``p``: bid at P against ask one level ABOVE.
 
     ``TradeType 1`` is bid volume, sell aggression, SHORT. Same untouched-cell
-    guard as ``_buy_flag``, mirrored on the level above.
+    guard as ``_buy_flag``, mirrored on the level above: a price that never
+    traded had no auction there to be imbalanced against, so it does not
+    flag. Deliberate, not an artefact of the fixed-width ladder array.
     """
     if ask[p + 1] <= 0 and bid[p + 1] <= 0:
         return False

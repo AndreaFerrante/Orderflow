@@ -542,7 +542,15 @@ def _compute_volume_bar_ids(
     session_types: Optional[np.ndarray],
     volume_threshold: float,
 ) -> tuple:
-    """Core loop: assign bar IDs based on running cumulative volume."""
+    """Core loop: assign bar IDs based on running cumulative volume.
+
+    Resets on *any* session change, unlike ``_compute_delta_bar_ids`` which
+    resets only on RTH-exit (``prev_session == "RTH" and curr_session !=
+    "RTH"``; an ETH->RTH transition does not start a new delta bar there).
+    A footprint ladder must map to one bounded slice of trade, so an
+    ETH->RTH transition here must also force a new bar -- otherwise a bar
+    could straddle the overnight session and the cash open.
+    """
     n = len(volumes)
     bar_ids = np.empty(n, dtype=np.int64)
 
@@ -586,8 +594,10 @@ def assign_volume_bar_ids(
     Adds ``volume_bar_id`` (int) and ``volume_bar_complete`` (bool).  A bar
     closes on the first tick where cumulative ``Volume`` reaches
     ``volume_threshold``; the running total then resets.  When ``SessionType``
-    is present, any session transition also forces a reset so no bar crosses
-    a session boundary.
+    is present, any session transition -- including ETH->RTH -- also forces
+    a reset so no bar crosses a session boundary.  This is stricter than
+    ``assign_delta_bar_ids``, which resets only on RTH-exit and lets a delta
+    bar span an ETH->RTH transition; see ``_compute_volume_bar_ids`` for why.
 
     Spec amendment: this deliberately does **not** reproduce
     ``compress_to_volume_bars``' bar boundaries.  That function computes

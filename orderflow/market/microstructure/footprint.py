@@ -1,5 +1,8 @@
+import warnings
+
 import pandas as pd
 import numpy as np
+import polars as pl
 
 
 def _buy_flag(ask, bid, p, ratio, eps):
@@ -125,3 +128,152 @@ def filter_big_prints_on_bid(
     )
 
     return filtered_on_bid
+
+
+_REQUIRED_COLUMNS = ("Index", "Datetime", "Price", "Volume", "TradeType", "SessionType")
+
+
+def _detect_python(
+    prices, volumes, trade_types, bar_ids, session_ids, indices,
+    tick_size, ratio, n_consecutive, min_diagonal_volume, eps, ladder_width,
+):
+    n = prices.shape[0]
+    half = ladder_width // 2
+    bid = np.zeros(ladder_width, dtype=np.float64)
+    ask = np.zeros(ladder_width, dtype=np.float64)
+
+    out_signal_idx, out_entry_idx, out_dir = [], [], []
+    out_levels, out_lo_px, out_hi_px, out_vol, out_bar = [], [], [], [], []
+    out_row = []
+
+    origin = 0.0
+    armed = {1: (-1, -1), -1: (-1, -1)}   # direction -> fired (lo, hi)
+    overflow = 0
+
+    for i in range(n):
+        new_bar = (i == 0) or (bar_ids[i] != bar_ids[i - 1]) or (session_ids[i] != session_ids[i - 1])
+        if new_bar:
+            bid[:] = 0.0
+            ask[:] = 0.0
+            origin = prices[i]
+            armed = {1: (-1, -1), -1: (-1, -1)}
+
+        p = int(round((prices[i] - origin) / tick_size)) + half
+        if p < 1 or p >= ladder_width - 1:
+            overflow += 1
+            continue
+
+        if trade_types[i] == 2:
+            ask[p] += volumes[i]
+        elif trade_types[i] == 1:
+            bid[p] += volumes[i]
+
+        # A tick at p can only move four flags: buy at p and p+1, sell at p and p-1.
+        for direction, candidates in ((1, (p, p + 1)), (-1, (p, p - 1))):
+            # clear the armed state if the stack that fired has broken
+            lo_a, hi_a = armed[direction]
+            if lo_a >= 0:
+                still = all(
+                    _flag_at(ask, bid, lvl, direction, ratio, eps)
+                    for lvl in range(lo_a, hi_a + 1)
+                )
+                if not still:
+                    armed[direction] = (-1, -1)
+
+            if armed[direction][0] >= 0:
+                continue
+
+            for cand in candidates:
+                lo, hi, vol = _scan_stack(
+                    ask, bid, cand, direction, ratio, n_consecutive, min_diagonal_volume, eps
+                )
+                if lo < 0:
+                    continue
+                if i + 1 >= n:
+                    break                       # no entry tick exists
+                armed[direction] = (lo, hi)
+                out_signal_idx.append(indices[i])
+                out_entry_idx.append(indices[i + 1])
+                out_dir.append(direction)
+                out_levels.append(hi - lo + 1)
+                out_lo_px.append(origin + (lo - half) * tick_size)
+                out_hi_px.append(origin + (hi - half) * tick_size)
+                out_vol.append(vol)
+                out_bar.append(bar_ids[i])
+                out_row.append(i)
+                break
+
+    return (
+        out_signal_idx, out_entry_idx, out_dir, out_levels,
+        out_lo_px, out_hi_px, out_vol, out_bar, out_row, overflow,
+    )
+
+
+def find_stacked_imbalances(
+    ticks: pl.DataFrame,
+    tick_size: float,
+    imbalance_ratio: float = 3.0,
+    n_consecutive: int = 3,
+    min_diagonal_volume: float = 0.0,
+    bar_id_col: str = "volume_bar_id",
+    eps: float = 1e-6,
+    ladder_width: int = 512,
+) -> pl.DataFrame:
+    """Find stacked diagonal imbalances tick by tick.
+
+    A stack is ``n_consecutive`` or more adjacent price levels where the same
+    side dominates its diagonal counterpart by at least ``imbalance_ratio``,
+    and where the summed volume of both legs of every diagonal pair reaches
+    ``min_diagonal_volume``.
+
+    Buy stacks yield ``direction = +1`` (LONG, ``TradeType 2``); sell stacks
+    yield ``direction = -1`` (SHORT, ``TradeType 1``).  Detection is
+    edge-triggered: a stack that persists across many ticks emits one signal
+    and re-arms only once it breaks.  The ladder resets on every bar roll and
+    session change, so no stack spans either boundary.
+
+    ``ladder_width`` bounds the price window held per bar.
+    ponytail: fixed 512-level window, grow-on-overflow if any instrument ever
+    prints a bar spanning more than that; overflowing ticks are counted and
+    skipped, never written out of bounds.
+    """
+    missing = [c for c in (*_REQUIRED_COLUMNS, bar_id_col) if c not in ticks.columns]
+    if missing:
+        raise ValueError(f"ticks is missing required columns: {missing}")
+
+    bar_ids = ticks[bar_id_col].to_numpy()
+    session_codes = ticks["SessionType"].cast(pl.Categorical).to_physical().to_numpy()
+
+    (sig, ent, dirs, levels, lo_px, hi_px, vols, bars, rows, overflow) = _detect_python(
+        ticks["Price"].to_numpy().astype(np.float64),
+        ticks["Volume"].to_numpy().astype(np.float64),
+        ticks["TradeType"].to_numpy().astype(np.int64),
+        bar_ids.astype(np.int64),
+        session_codes.astype(np.int64),
+        ticks["Index"].to_numpy().astype(np.int64),
+        float(tick_size), float(imbalance_ratio), int(n_consecutive),
+        float(min_diagonal_volume), float(eps), int(ladder_width),
+    )
+
+    if overflow:
+        warnings.warn(
+            f"{overflow} tick(s) fell outside the {ladder_width}-level ladder "
+            f"and were skipped; raise ladder_width if this is not negligible.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    datetimes = ticks["Datetime"].to_list()
+    return pl.DataFrame(
+        {
+            "signal_index": pl.Series(sig, dtype=pl.Int64),
+            "entry_index": pl.Series(ent, dtype=pl.Int64),
+            "direction": pl.Series(dirs, dtype=pl.Int64),
+            "n_levels": pl.Series(levels, dtype=pl.Int64),
+            "stack_low_price": pl.Series(lo_px, dtype=pl.Float64),
+            "stack_high_price": pl.Series(hi_px, dtype=pl.Float64),
+            "diagonal_volume": pl.Series(vols, dtype=pl.Float64),
+            "bar_id": pl.Series(bars, dtype=pl.Int64),
+            "Datetime": pl.Series([datetimes[r] for r in rows]),
+        }
+    ).sort("entry_index")

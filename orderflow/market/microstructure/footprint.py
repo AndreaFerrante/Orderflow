@@ -14,7 +14,17 @@ def _buy_flag(ask, bid, p, ratio, eps):
     In market terms: a price that never traded had no auction there to be
     imbalanced against, so it does not flag. This is deliberate, not an
     artefact of the fixed-width ladder array.
+
+    ``eps`` is added to the denominator deliberately: an exact
+    ``ask == ratio * bid`` must reject, not accept, so the zero-denominator
+    bypass above needs no special case.
+
+    ``p`` must have a real neighbour on both sides (``1 <= p <= len - 2``);
+    out of that range a Python negative index would silently wrap to the far
+    end of the ladder instead of raising, so it is rejected explicitly.
     """
+    if p < 1 or p >= len(ask) - 1:
+        return False
     if bid[p - 1] <= 0 and ask[p - 1] <= 0:
         return False
     return bool(ask[p] >= ratio * (bid[p - 1] + eps))
@@ -24,10 +34,13 @@ def _sell_flag(ask, bid, p, ratio, eps):
     """Sell imbalance at level ``p``: bid at P against ask one level ABOVE.
 
     ``TradeType 1`` is bid volume, sell aggression, SHORT. Same untouched-cell
-    guard as ``_buy_flag``, mirrored on the level above: a price that never
-    traded had no auction there to be imbalanced against, so it does not
-    flag. Deliberate, not an artefact of the fixed-width ladder array.
+    and boundary guards as ``_buy_flag``, mirrored on the level above: a
+    price that never traded had no auction there to be imbalanced against,
+    so it does not flag, and ``eps`` makes an exact ratio match reject, not
+    accept.
     """
+    if p < 1 or p >= len(ask) - 1:
+        return False
     if ask[p + 1] <= 0 and bid[p + 1] <= 0:
         return False
     return bool(bid[p] >= ratio * (ask[p + 1] + eps))

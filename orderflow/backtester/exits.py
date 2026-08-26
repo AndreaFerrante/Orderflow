@@ -429,8 +429,8 @@ class DynamicTPSLExit(BaseExitStrategy):
 
     def on_entry(self, tick: Tick, position: PositionState) -> None:
         """Called when position opens — retrieve TP/SL for this signal."""
-        if tick.index in self._signal_lookup:
-            self._current_tp, self._current_sl = self._signal_lookup[tick.index]
+        if tick.timestamp in self._signal_lookup:
+            self._current_tp, self._current_sl = self._signal_lookup[tick.timestamp]
 
     def on_tick(
         self,

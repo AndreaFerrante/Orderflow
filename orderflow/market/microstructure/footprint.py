@@ -147,7 +147,7 @@ def _detect_python(
     out_row = []
 
     origin = 0.0
-    armed = {1: (-1, -1), -1: (-1, -1)}   # direction -> fired (lo, hi)
+    armed = {1: [], -1: []}   # direction -> list of fired (lo, hi) ranges, concurrently active
     overflow = 0
 
     for i in range(n):
@@ -156,7 +156,7 @@ def _detect_python(
             bid[:] = 0.0
             ask[:] = 0.0
             origin = prices[i]
-            armed = {1: (-1, -1), -1: (-1, -1)}
+            armed = {1: [], -1: []}
 
         p = int(round((prices[i] - origin) / tick_size)) + half
         if p < 1 or p >= ladder_width - 1:
@@ -170,18 +170,17 @@ def _detect_python(
 
         # A tick at p can only move four flags: buy at p and p+1, sell at p and p-1.
         for direction, candidates in ((1, (p, p + 1)), (-1, (p, p - 1))):
-            # clear the armed state if the stack that fired has broken
-            lo_a, hi_a = armed[direction]
-            if lo_a >= 0:
-                still = all(
+            # drop any armed range whose stack has broken; ranges that still
+            # qualify stay armed so a persisting stack fires only once, while
+            # a second, disjoint stack is still free to fire independently
+            armed[direction] = [
+                (lo_a, hi_a)
+                for (lo_a, hi_a) in armed[direction]
+                if all(
                     _flag_at(ask, bid, lvl, direction, ratio, eps)
                     for lvl in range(lo_a, hi_a + 1)
                 )
-                if not still:
-                    armed[direction] = (-1, -1)
-
-            if armed[direction][0] >= 0:
-                continue
+            ]
 
             for cand in candidates:
                 lo, hi, vol = _scan_stack(
@@ -189,9 +188,13 @@ def _detect_python(
                 )
                 if lo < 0:
                     continue
+                # suppress only if this candidate range overlaps a range
+                # already armed for this direction; a disjoint stack is not suppressed
+                if any(not (hi < a_lo or lo > a_hi) for (a_lo, a_hi) in armed[direction]):
+                    continue
                 if i + 1 >= n:
-                    break                       # no entry tick exists
-                armed[direction] = (lo, hi)
+                    continue                    # no entry tick exists
+                armed[direction].append((lo, hi))
                 out_signal_idx.append(indices[i])
                 out_entry_idx.append(indices[i + 1])
                 out_dir.append(direction)
@@ -201,7 +204,6 @@ def _detect_python(
                 out_vol.append(vol)
                 out_bar.append(bar_ids[i])
                 out_row.append(i)
-                break
 
     return (
         out_signal_idx, out_entry_idx, out_dir, out_levels,
@@ -229,8 +231,17 @@ def find_stacked_imbalances(
     Buy stacks yield ``direction = +1`` (LONG, ``TradeType 2``); sell stacks
     yield ``direction = -1`` (SHORT, ``TradeType 1``).  Detection is
     edge-triggered: a stack that persists across many ticks emits one signal
-    and re-arms only once it breaks.  The ladder resets on every bar roll and
-    session change, so no stack spans either boundary.
+    and re-arms only once it breaks.  Two disjoint stacks in the same
+    direction and the same bar can be armed concurrently — a candidate only
+    gets suppressed when its price range overlaps an already-armed one, not
+    merely because some other stack for that direction is still active.  The
+    ladder resets on every bar roll and session change, so no stack spans
+    either boundary.
+
+    ``Datetime`` on the output is the trigger tick's timestamp (the tick
+    that completed the stack), not the entry tick's — the entry tick is
+    identified separately by ``entry_index``. Hourly/regime splits in the
+    downstream analysis are meant to bucket by when the signal fired.
 
     ``ladder_width`` bounds the price window held per bar.
     ponytail: fixed 512-level window, grow-on-overflow if any instrument ever
@@ -240,6 +251,12 @@ def find_stacked_imbalances(
     missing = [c for c in (*_REQUIRED_COLUMNS, bar_id_col) if c not in ticks.columns]
     if missing:
         raise ValueError(f"ticks is missing required columns: {missing}")
+    if tick_size <= 0:
+        raise ValueError(f"tick_size must be positive, got {tick_size}")
+    if n_consecutive < 1:
+        raise ValueError(f"n_consecutive must be >= 1, got {n_consecutive}")
+    if ticks[bar_id_col].null_count() > 0:
+        raise ValueError(f"{bar_id_col} must not contain nulls")
 
     bar_ids = ticks[bar_id_col].to_numpy()
     session_codes = ticks["SessionType"].cast(pl.Categorical).to_physical().to_numpy()
@@ -274,6 +291,8 @@ def find_stacked_imbalances(
             "stack_high_price": pl.Series(hi_px, dtype=pl.Float64),
             "diagonal_volume": pl.Series(vols, dtype=pl.Float64),
             "bar_id": pl.Series(bars, dtype=pl.Int64),
-            "Datetime": pl.Series([datetimes[r] for r in rows]),
+            "Datetime": pl.Series(
+                [datetimes[r] for r in rows], dtype=ticks["Datetime"].dtype
+            ),
         }
     ).sort("entry_index")

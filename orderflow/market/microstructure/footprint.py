@@ -133,7 +133,7 @@ def filter_big_prints_on_bid(
 _REQUIRED_COLUMNS = ("Index", "Datetime", "Price", "Volume", "TradeType", "SessionType")
 
 
-def _detect_python(
+def _detect(
     prices, volumes, trade_types, bar_ids, session_ids, indices,
     tick_size, ratio, n_consecutive, min_diagonal_volume, eps, ladder_width,
 ):
@@ -261,7 +261,7 @@ def find_stacked_imbalances(
     bar_ids = ticks[bar_id_col].to_numpy()
     session_codes = ticks["SessionType"].cast(pl.Categorical).to_physical().to_numpy()
 
-    (sig, ent, dirs, levels, lo_px, hi_px, vols, bars, rows, overflow) = _detect_python(
+    (sig, ent, dirs, levels, lo_px, hi_px, vols, bars, rows, overflow) = _detect(
         ticks["Price"].to_numpy().astype(np.float64),
         ticks["Volume"].to_numpy().astype(np.float64),
         ticks["TradeType"].to_numpy().astype(np.int64),

@@ -81,14 +81,19 @@ def _winning_volume(ask, bid, p, direction):
 
 def _scan_stack(
     ask, bid, p, direction, ratio, n_consecutive,
-    min_diagonal_volume, min_winning_volume, eps,
+    min_diagonal_volume, min_winning_volume, min_level_diagonal_volume, eps,
 ):
     """Return ``(lo, hi, diagonal_volume, winning_volume)`` for the run at ``p``.
 
     Returns ``(-1, -1, 0.0, 0.0)`` when ``p`` is unflagged, when the run is
-    shorter than ``n_consecutive``, when the summed both-legs diagonal volume
-    is below ``min_diagonal_volume``, or when the summed winning-side volume
-    is below ``min_winning_volume``.  The two floors are independent gates.
+    shorter than ``n_consecutive``, or when any of the three size floors is
+    unmet.  All three are independent gates:
+
+    * ``min_diagonal_volume`` -- both-legs pair volume SUMMED over the stack.
+    * ``min_winning_volume`` -- winning-leg volume summed over the stack.
+    * ``min_level_diagonal_volume`` -- both-legs pair volume at EVERY level
+      individually.  A stack of thin levels can clear the summed floor; this
+      one disqualifies the whole stack on a single thin level.
     """
     n = ask.shape[0]
     if p < 1 or p >= n - 1:
@@ -109,7 +114,10 @@ def _scan_stack(
     total = 0.0
     winning = 0.0
     for lvl in range(lo, hi + 1):
-        total += _pair_volume(ask, bid, lvl, direction)
+        pair = _pair_volume(ask, bid, lvl, direction)
+        if pair < min_level_diagonal_volume:
+            return -1, -1, 0.0, 0.0
+        total += pair
         winning += _winning_volume(ask, bid, lvl, direction)
 
     if total < min_diagonal_volume:
@@ -161,7 +169,7 @@ _REQUIRED_COLUMNS = ("Index", "Datetime", "Price", "Volume", "TradeType", "Sessi
 def _detect(
     prices, volumes, trade_types, bar_ids, session_ids, indices,
     tick_size, ratio, n_consecutive, min_diagonal_volume, min_winning_volume,
-    eps, ladder_width,
+    min_level_diagonal_volume, eps, ladder_width,
 ):
     n = prices.shape[0]
     half = ladder_width // 2
@@ -211,7 +219,8 @@ def _detect(
             for cand in candidates:
                 lo, hi, vol, win = _scan_stack(
                     ask, bid, cand, direction, ratio, n_consecutive,
-                    min_diagonal_volume, min_winning_volume, eps,
+                    min_diagonal_volume, min_winning_volume,
+                    min_level_diagonal_volume, eps,
                 )
                 if lo < 0:
                     continue
@@ -246,6 +255,7 @@ def find_stacked_imbalances(
     n_consecutive: int = 3,
     min_diagonal_volume: float = 0.0,
     min_winning_volume: float = 0.0,
+    min_level_diagonal_volume: float = 0.0,
     bar_id_col: str = "volume_bar_id",
     eps: float = 1e-6,
     ladder_width: int = 512,
@@ -305,6 +315,11 @@ def find_stacked_imbalances(
         raise ValueError(
             f"min_winning_volume must be >= 0, got {min_winning_volume}"
         )
+    if min_level_diagonal_volume < 0:
+        raise ValueError(
+            "min_level_diagonal_volume must be >= 0, got "
+            f"{min_level_diagonal_volume}"
+        )
     if ticks[bar_id_col].null_count() > 0:
         raise ValueError(f"{bar_id_col} must not contain nulls")
 
@@ -320,7 +335,7 @@ def find_stacked_imbalances(
         ticks["Index"].to_numpy().astype(np.int64),
         float(tick_size), float(imbalance_ratio), int(n_consecutive),
         float(min_diagonal_volume), float(min_winning_volume),
-        float(eps), int(ladder_width),
+        float(min_level_diagonal_volume), float(eps), int(ladder_width),
     )
 
     if overflow:

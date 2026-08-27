@@ -62,18 +62,39 @@ def _pair_volume(ask, bid, p, direction):
     return bid[p] + ask[p + 1]
 
 
-def _scan_stack(ask, bid, p, direction, ratio, n_consecutive, min_diagonal_volume, eps):
-    """Return ``(lo, hi, diagonal_volume)`` for the qualifying run containing ``p``.
+def _winning_volume(ask, bid, p, direction):
+    """The dominant leg only at level ``p`` -- the side that won the imbalance.
 
-    Returns ``(-1, -1, 0.0)`` when ``p`` is unflagged, when the run is shorter
-    than ``n_consecutive``, or when the summed diagonal volume is below
-    ``min_diagonal_volume``.
+    ``_pair_volume`` sums both legs, so it is inflated by the losing leg it is
+    measured against; a 3:1 stack carries a third of its pair volume in size
+    that was, by construction, overwhelmed. This returns just the aggressive
+    side: ask (``TradeType 2``, buy aggression) for ``direction == 1``, bid
+    (``TradeType 1``, sell aggression) for ``direction == -1``.
+
+    The dominant leg sits at ``p`` itself in both directions -- only the
+    denominator is diagonal.
+    """
+    if direction == 1:
+        return ask[p]
+    return bid[p]
+
+
+def _scan_stack(
+    ask, bid, p, direction, ratio, n_consecutive,
+    min_diagonal_volume, min_winning_volume, eps,
+):
+    """Return ``(lo, hi, diagonal_volume, winning_volume)`` for the run at ``p``.
+
+    Returns ``(-1, -1, 0.0, 0.0)`` when ``p`` is unflagged, when the run is
+    shorter than ``n_consecutive``, when the summed both-legs diagonal volume
+    is below ``min_diagonal_volume``, or when the summed winning-side volume
+    is below ``min_winning_volume``.  The two floors are independent gates.
     """
     n = ask.shape[0]
     if p < 1 or p >= n - 1:
-        return -1, -1, 0.0
+        return -1, -1, 0.0, 0.0
     if not _flag_at(ask, bid, p, direction, ratio, eps):
-        return -1, -1, 0.0
+        return -1, -1, 0.0, 0.0
 
     lo = p
     while lo - 1 >= 1 and _flag_at(ask, bid, lo - 1, direction, ratio, eps):
@@ -83,15 +104,19 @@ def _scan_stack(ask, bid, p, direction, ratio, n_consecutive, min_diagonal_volum
         hi += 1
 
     if (hi - lo + 1) < n_consecutive:
-        return -1, -1, 0.0
+        return -1, -1, 0.0, 0.0
 
     total = 0.0
+    winning = 0.0
     for lvl in range(lo, hi + 1):
         total += _pair_volume(ask, bid, lvl, direction)
+        winning += _winning_volume(ask, bid, lvl, direction)
 
     if total < min_diagonal_volume:
-        return -1, -1, 0.0
-    return lo, hi, total
+        return -1, -1, 0.0, 0.0
+    if winning < min_winning_volume:
+        return -1, -1, 0.0, 0.0
+    return lo, hi, total, winning
 
 
 def filter_big_prints_on_ask(
@@ -135,7 +160,8 @@ _REQUIRED_COLUMNS = ("Index", "Datetime", "Price", "Volume", "TradeType", "Sessi
 
 def _detect(
     prices, volumes, trade_types, bar_ids, session_ids, indices,
-    tick_size, ratio, n_consecutive, min_diagonal_volume, eps, ladder_width,
+    tick_size, ratio, n_consecutive, min_diagonal_volume, min_winning_volume,
+    eps, ladder_width,
 ):
     n = prices.shape[0]
     half = ladder_width // 2
@@ -144,7 +170,7 @@ def _detect(
 
     out_signal_idx, out_entry_idx, out_dir = [], [], []
     out_levels, out_lo_px, out_hi_px, out_vol, out_bar = [], [], [], [], []
-    out_row = []
+    out_win, out_row = [], []
 
     origin = 0.0
     armed = {1: [], -1: []}   # direction -> list of fired (lo, hi) ranges, concurrently active
@@ -183,8 +209,9 @@ def _detect(
             ]
 
             for cand in candidates:
-                lo, hi, vol = _scan_stack(
-                    ask, bid, cand, direction, ratio, n_consecutive, min_diagonal_volume, eps
+                lo, hi, vol, win = _scan_stack(
+                    ask, bid, cand, direction, ratio, n_consecutive,
+                    min_diagonal_volume, min_winning_volume, eps,
                 )
                 if lo < 0:
                     continue
@@ -202,12 +229,13 @@ def _detect(
                 out_lo_px.append(origin + (lo - half) * tick_size)
                 out_hi_px.append(origin + (hi - half) * tick_size)
                 out_vol.append(vol)
+                out_win.append(win)
                 out_bar.append(bar_ids[i])
                 out_row.append(i)
 
     return (
         out_signal_idx, out_entry_idx, out_dir, out_levels,
-        out_lo_px, out_hi_px, out_vol, out_bar, out_row, overflow,
+        out_lo_px, out_hi_px, out_vol, out_win, out_bar, out_row, overflow,
     )
 
 
@@ -217,6 +245,7 @@ def find_stacked_imbalances(
     imbalance_ratio: float = 3.0,
     n_consecutive: int = 3,
     min_diagonal_volume: float = 0.0,
+    min_winning_volume: float = 0.0,
     bar_id_col: str = "volume_bar_id",
     eps: float = 1e-6,
     ladder_width: int = 512,
@@ -227,6 +256,19 @@ def find_stacked_imbalances(
     side dominates its diagonal counterpart by at least ``imbalance_ratio``,
     and where the summed volume of both legs of every diagonal pair reaches
     ``min_diagonal_volume``.
+
+    ``min_winning_volume`` is a second, independent size floor applied to the
+    winning side alone -- the summed ask across a buy stack, the summed bid
+    across a sell stack.  ``min_diagonal_volume`` includes the losing leg it
+    was measured against, so at a 3:1 ratio up to a third of it is size that
+    lost; this floor filters on the aggressive size only.  Both default to
+    ``0.0`` (inert).
+
+    Both floors gate *arming*, not just reporting: a stack rejected by either
+    never arms, so its price range stays free and the run can fire later,
+    deeper, once volume accumulates.  Raising a floor therefore changes which
+    stacks fire, not merely which are kept -- results cannot be reproduced by
+    filtering the output of a lower-floor run.
 
     Buy stacks yield ``direction = +1`` (LONG, ``TradeType 2``); sell stacks
     yield ``direction = -1`` (SHORT, ``TradeType 1``).  Detection is
@@ -255,13 +297,21 @@ def find_stacked_imbalances(
         raise ValueError(f"tick_size must be positive, got {tick_size}")
     if n_consecutive < 1:
         raise ValueError(f"n_consecutive must be >= 1, got {n_consecutive}")
+    if min_diagonal_volume < 0:
+        raise ValueError(
+            f"min_diagonal_volume must be >= 0, got {min_diagonal_volume}"
+        )
+    if min_winning_volume < 0:
+        raise ValueError(
+            f"min_winning_volume must be >= 0, got {min_winning_volume}"
+        )
     if ticks[bar_id_col].null_count() > 0:
         raise ValueError(f"{bar_id_col} must not contain nulls")
 
     bar_ids = ticks[bar_id_col].to_numpy()
     session_codes = ticks["SessionType"].cast(pl.Categorical).to_physical().to_numpy()
 
-    (sig, ent, dirs, levels, lo_px, hi_px, vols, bars, rows, overflow) = _detect(
+    (sig, ent, dirs, levels, lo_px, hi_px, vols, wins, bars, rows, overflow) = _detect(
         ticks["Price"].to_numpy().astype(np.float64),
         ticks["Volume"].to_numpy().astype(np.float64),
         ticks["TradeType"].to_numpy().astype(np.int64),
@@ -269,7 +319,8 @@ def find_stacked_imbalances(
         session_codes.astype(np.int64),
         ticks["Index"].to_numpy().astype(np.int64),
         float(tick_size), float(imbalance_ratio), int(n_consecutive),
-        float(min_diagonal_volume), float(eps), int(ladder_width),
+        float(min_diagonal_volume), float(min_winning_volume),
+        float(eps), int(ladder_width),
     )
 
     if overflow:
@@ -290,6 +341,7 @@ def find_stacked_imbalances(
             "stack_low_price": pl.Series(lo_px, dtype=pl.Float64),
             "stack_high_price": pl.Series(hi_px, dtype=pl.Float64),
             "diagonal_volume": pl.Series(vols, dtype=pl.Float64),
+            "winning_volume": pl.Series(wins, dtype=pl.Float64),
             "bar_id": pl.Series(bars, dtype=pl.Int64),
             "Datetime": pl.Series(
                 [datetimes[r] for r in rows], dtype=ticks["Datetime"].dtype

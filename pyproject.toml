@@ -47,6 +47,9 @@ dependencies = [
 [project.optional-dependencies]
 storage = ["psycopg2-binary>=2.9"]
 
+[project.scripts]
+orderflow-gc-acceptance = "orderflow.analysis.strategies.gc_runner:main"
+
 [project.urls]
 Homepage = "https://github.com/andreaferrante/orderflow"
 Repository = "https://github.com/andreaferrante/orderflow.git"

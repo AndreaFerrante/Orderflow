@@ -49,6 +49,8 @@ from .returns import (
     rolling_volatility,
     ewma_volatility,
     underwater_duration,
+    max_drawdown_absolute,
+    trade_sharpe,
 )
 
 # ── Hypothesis testing ───────────────────────────────────────────────────────
@@ -130,6 +132,8 @@ __all__ = [
     "rolling_volatility",
     "ewma_volatility",
     "underwater_duration",
+    "max_drawdown_absolute",
+    "trade_sharpe",
     # hypothesis.py
     "TestResult",
     "adf_test",

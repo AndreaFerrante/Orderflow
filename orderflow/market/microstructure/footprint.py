@@ -169,7 +169,7 @@ _REQUIRED_COLUMNS = ("Index", "Datetime", "Price", "Volume", "TradeType", "Sessi
 def _detect(
     prices, volumes, trade_types, bar_ids, session_ids, indices,
     tick_size, ratio, n_consecutive, min_diagonal_volume, min_winning_volume,
-    min_level_diagonal_volume, eps, ladder_width,
+    min_level_diagonal_volume, require_breakout, eps, ladder_width,
 ):
     n = prices.shape[0]
     half = ladder_width // 2
@@ -182,7 +182,23 @@ def _detect(
 
     origin = 0.0
     armed = {1: [], -1: []}   # direction -> list of fired (lo, hi) ranges, concurrently active
+    # Stacks awaiting breakout confirmation: direction -> list of
+    # (lo, hi, vol, win). Only used when require_breakout is set. Cleared on
+    # every bar roll, because the ladder they refer to is cleared too.
+    pending = {1: [], -1: []}
     overflow = 0
+
+    def _emit(i_, direction_, lo_, hi_, vol_, win_):
+        out_signal_idx.append(indices[i_])
+        out_entry_idx.append(indices[i_ + 1])
+        out_dir.append(direction_)
+        out_levels.append(hi_ - lo_ + 1)
+        out_lo_px.append(origin + (lo_ - half) * tick_size)
+        out_hi_px.append(origin + (hi_ - half) * tick_size)
+        out_vol.append(vol_)
+        out_win.append(win_)
+        out_bar.append(bar_ids[i_])
+        out_row.append(i_)
 
     for i in range(n):
         new_bar = (i == 0) or (bar_ids[i] != bar_ids[i - 1]) or (session_ids[i] != session_ids[i - 1])
@@ -191,6 +207,7 @@ def _detect(
             ask[:] = 0.0
             origin = prices[i]
             armed = {1: [], -1: []}
+            pending = {1: [], -1: []}
 
         p = int(round((prices[i] - origin) / tick_size)) + half
         if p < 1 or p >= ladder_width - 1:
@@ -201,6 +218,22 @@ def _detect(
             ask[p] += volumes[i]
         elif trade_types[i] == 1:
             bid[p] += volumes[i]
+
+        # Breakout confirmation. A buy stack is confirmed by a print strictly
+        # above its top level, a sell stack by one strictly below its bottom.
+        # Touching the boundary is not breaking it.
+        if require_breakout and i + 1 < n:
+            for direction in (1, -1):
+                if not pending[direction]:
+                    continue
+                still_pending = []
+                for (lo_p, hi_p, vol_p, win_p) in pending[direction]:
+                    broke = (p > hi_p) if direction == 1 else (p < lo_p)
+                    if broke:
+                        _emit(i, direction, lo_p, hi_p, vol_p, win_p)
+                    else:
+                        still_pending.append((lo_p, hi_p, vol_p, win_p))
+                pending[direction] = still_pending
 
         # A tick at p can only move four flags: buy at p and p+1, sell at p and p-1.
         for direction, candidates in ((1, (p, p + 1)), (-1, (p, p - 1))):
@@ -231,16 +264,12 @@ def _detect(
                 if i + 1 >= n:
                     continue                    # no entry tick exists
                 armed[direction].append((lo, hi))
-                out_signal_idx.append(indices[i])
-                out_entry_idx.append(indices[i + 1])
-                out_dir.append(direction)
-                out_levels.append(hi - lo + 1)
-                out_lo_px.append(origin + (lo - half) * tick_size)
-                out_hi_px.append(origin + (hi - half) * tick_size)
-                out_vol.append(vol)
-                out_win.append(win)
-                out_bar.append(bar_ids[i])
-                out_row.append(i)
+                if require_breakout:
+                    # Hold it back: the stack has formed, but nothing has yet
+                    # traded through it. It signals only once price does.
+                    pending[direction].append((lo, hi, vol, win))
+                else:
+                    _emit(i, direction, lo, hi, vol, win)
 
     return (
         out_signal_idx, out_entry_idx, out_dir, out_levels,
@@ -256,6 +285,7 @@ def find_stacked_imbalances(
     min_diagonal_volume: float = 0.0,
     min_winning_volume: float = 0.0,
     min_level_diagonal_volume: float = 0.0,
+    require_breakout: bool = False,
     bar_id_col: str = "volume_bar_id",
     eps: float = 1e-6,
     ladder_width: int = 512,
@@ -273,6 +303,15 @@ def find_stacked_imbalances(
     was measured against, so at a 3:1 ratio up to a third of it is size that
     lost; this floor filters on the aggressive size only.  Both default to
     ``0.0`` (inert).
+
+    ``require_breakout`` withholds a completed stack until price trades
+    strictly beyond it -- above the top level for a buy stack, below the
+    bottom level for a sell stack.  A stack that is never broken through never
+    signals: the dominant side's aggression was absorbed rather than achieving
+    anything, so the imbalance marks trapped participants, not initiative.
+    When set, ``signal_index`` is the confirming tick, not the tick that
+    completed the stack, and ``entry_index`` is the tick after it.  A pending
+    stack expires when the bar rolls, since the ladder it refers to resets.
 
     Both floors gate *arming*, not just reporting: a stack rejected by either
     never arms, so its price range stays free and the run can fire later,
@@ -335,7 +374,8 @@ def find_stacked_imbalances(
         ticks["Index"].to_numpy().astype(np.int64),
         float(tick_size), float(imbalance_ratio), int(n_consecutive),
         float(min_diagonal_volume), float(min_winning_volume),
-        float(min_level_diagonal_volume), float(eps), int(ladder_width),
+        float(min_level_diagonal_volume), bool(require_breakout),
+        float(eps), int(ladder_width),
     )
 
     if overflow:

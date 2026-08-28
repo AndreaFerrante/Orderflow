@@ -125,6 +125,11 @@ _BREAKOUT_SCHEMA = {
 #: every break, the control.
 _FLOW_GATES = ("confirming", "divergent", "off")
 
+#: What a low-volume-node trigger means.  ``skip`` moves the signal to the
+#: next clean tick and keeps the session; ``drop`` disqualifies the whole
+#: extension because it *began* through a vacuum.  See ``find_ib_breakouts``.
+_LVN_POLICIES = ("off", "skip", "drop")
+
 _BREAKOUT_REQUIRED_COLUMNS = (
     "Index", "Datetime", "Date", "Price", "SessionType", "CD_Ask", "CD_Bid",
 )
@@ -138,6 +143,7 @@ def find_ib_breakouts(
     entry_cutoff_hour: int = 14,
     flow_gate: str = "confirming",
     tick_size: float = 0.25,
+    lvn_policy: str = "off",
 ) -> pl.DataFrame:
     """First initial-balance break per direction per session, gated on flow.
 
@@ -163,6 +169,22 @@ def find_ib_breakouts(
     tick_size
         Instrument minimum price increment, used only to express
         ``mid_distance_ticks``.
+    lvn_policy
+        What to do about breaks triggering on a low volume node.  Requires
+        the enriched ``LVN`` column unless ``"off"``.  A break through a low
+        volume node is price moving across a vacuum: there is nothing at
+        that level to reject it, so it tends to continue.  Those are the
+        breaks a *reversion* strategy must not fade.
+
+        ``"off"`` ignores the node flag.  ``"skip"`` takes the first
+        qualifying tick that is not on a node, keeping the session.
+        ``"drop"`` consults only the FIRST tick beyond the edge: if the
+        break began through a vacuum the whole extension is disqualified and
+        no later tick rehabilitates it.
+
+        The two are different strategies, not two spellings of one.
+        ``"skip"`` changes the price you enter at; ``"drop"`` changes which
+        sessions you trade at all.
 
     Returns
     -------
@@ -199,11 +221,16 @@ def find_ib_breakouts(
         raise ValueError(
             f"flow_gate must be one of {list(_FLOW_GATES)} -- got {flow_gate!r}"
         )
-    missing = [c for c in _BREAKOUT_REQUIRED_COLUMNS if c not in ticks.columns]
+    if lvn_policy not in _LVN_POLICIES:
+        raise ValueError(
+            f"lvn_policy must be one of {list(_LVN_POLICIES)} -- got {lvn_policy!r}"
+        )
+    required = _BREAKOUT_REQUIRED_COLUMNS + (("LVN",) if lvn_policy != "off" else ())
+    missing = [c for c in required if c not in ticks.columns]
     if missing:
         raise ValueError(
             f"ticks is missing {missing}; find_ib_breakouts requires "
-            f"{list(_BREAKOUT_REQUIRED_COLUMNS)}"
+            f"{list(required)}"
         )
     if ib.height == 0:
         return pl.DataFrame(schema=_BREAKOUT_SCHEMA)
@@ -255,6 +282,34 @@ def find_ib_breakouts(
         )
         .filter(pl.col("direction") != 0)
     )
+
+    if lvn_policy == "skip":
+        # Gates on the trigger tick, not the entry tick: the setup is "the
+        # break happened at a level with volume behind it", and the entry
+        # tick is merely the next print. Dropping a trigger does not forfeit
+        # the session -- the first *qualifying* tick becomes the signal,
+        # exactly as with the flow gate.
+        qualified = qualified.filter(pl.col("LVN") != 1)
+    elif lvn_policy == "drop":
+        # Consult only the first tick beyond the edge, node or not. The
+        # verdict is on the extension, so it is read where the extension
+        # began -- before the flow gate has had a chance to move the signal
+        # somewhere cleaner.
+        first_touch = (
+            post_ib
+            .with_columns(
+                pl.when(pl.col("Price") > pl.col("ib_high")).then(1)
+                .when(pl.col("Price") < pl.col("ib_low")).then(-1)
+                .otherwise(0).cast(pl.Int64).alias("direction")
+            )
+            .filter(pl.col("direction") != 0)
+            .sort("Index")
+            .group_by(["Date", "direction"], maintain_order=True)
+            .first()
+            .filter(pl.col("LVN") != 1)
+            .select("Date", "direction")
+        )
+        qualified = qualified.join(first_touch, on=["Date", "direction"], how="semi")
 
     with_flow = pl.col("direction") * pl.col("cvd_delta") > cvd_min_delta
     if flow_gate == "confirming":

@@ -23,12 +23,14 @@ equity_curve              Build cumulative equity curve from returns.
 rolling_volatility        Rolling annualised volatility (causal).
 drawdown_series           Full drawdown time-series (not just max).
 underwater_duration       Consecutive bars spent below prior peak.
+max_drawdown_absolute     Deepest peak-to-trough of a cumulative P&L curve, in currency.
+trade_sharpe              Per-trade Sharpe (mean/stdev * sqrt(n)), not annualised.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -352,6 +354,77 @@ def rolling_volatility(
     return roll_vol.to_numpy()
 
 
+def ewma_volatility(
+    returns: Union[pd.Series, np.ndarray],
+    halflife: float,
+    min_periods: int = 2,
+    annualise: bool = False,
+    periods_per_year: int = 252,
+) -> Union[pd.Series, np.ndarray]:
+    """
+    Exponentially-weighted volatility (strictly causal — no lookahead).
+
+    The exponentially-weighted sibling of :func:`rolling_volatility`. Volatility
+    clusters, so weighting recent observations more heavily adapts faster to a
+    regime change than a simple window of the same span — a simple window gives
+    a shock arriving today exactly the same weight as one from twenty bars ago,
+    and then drops it off a cliff when it leaves the window.
+
+    Prefer this wherever a position's size or barriers scale with volatility:
+    reacting late means sizing yesterday's regime.
+
+    Parameters
+    ----------
+    returns : pd.Series | np.ndarray
+        Per-period return series.
+    halflife : float
+        Periods over which an observation's weight decays by half. Short values
+        adapt quickly and are noisier; three to five periods is typical for
+        intraday sizing.
+    min_periods : int, default=2
+        Minimum observations required to produce a non-NaN value. Two is the
+        floor, since a single observation has no dispersion.
+    annualise : bool, default=False
+        Scale by ``sqrt(periods_per_year)``. Defaults to ``False`` because the
+        common use is sizing in the return series' own units;
+        :func:`rolling_volatility` annualises unconditionally.
+    periods_per_year : int, default=252
+        Used only when ``annualise`` is ``True``.
+
+    Returns
+    -------
+    pd.Series | np.ndarray
+        Volatility in the same units as ``returns`` unless ``annualise`` is set.
+        Early positions are NaN while fewer than ``min_periods`` observations are
+        available. The input type is preserved, and a Series keeps its index.
+
+    Notes
+    -----
+    Causal by construction: each value uses only observations at or before its
+    own position, so appending later data never revises an earlier one. That
+    matters for backtests — an estimator that peeks re-sizes past trades with
+    information they did not have, and flatters the result.
+    """
+    if not isinstance(halflife, (int, float)) or halflife <= 0:
+        raise ValueError(f"halflife must be a positive number, got {halflife!r}")
+    if isinstance(min_periods, bool) or not isinstance(min_periods, (int, np.integer)) \
+            or min_periods < 1:
+        raise ValueError(f"min_periods must be a positive integer, got {min_periods!r}")
+
+    is_series = isinstance(returns, pd.Series)
+    if not is_series:
+        returns = pd.Series(np.asarray(returns, dtype=np.float64))
+
+    ewma_vol = returns.ewm(halflife=halflife, min_periods=min_periods).std(bias=False)
+
+    if annualise:
+        ewma_vol = ewma_vol * np.sqrt(periods_per_year)
+
+    if is_series:
+        return ewma_vol
+    return ewma_vol.to_numpy()
+
+
 def underwater_duration(
     returns: Union[pd.Series, np.ndarray],
     log_returns: bool = False,
@@ -380,3 +453,68 @@ def underwater_duration(
         else:
             durations[i] = 0
     return durations
+
+
+# ---------------------------------------------------------------------------
+# Absolute (currency) P&L metrics
+#
+# The functions above take *fractional* return series and compound them, which
+# needs an account equity base.  A trade blotter has no such base -- it is a
+# sequence of realised P&L amounts in currency.  These two work directly on
+# that sequence, summing rather than compounding.
+# ---------------------------------------------------------------------------
+
+
+def max_drawdown_absolute(pnl: Union[pd.Series, np.ndarray, Sequence[float]]) -> float:
+    """
+    Deepest peak-to-trough decline of a cumulative P&L curve, in currency.
+
+    Unlike :func:`max_drawdown`, which compounds fractional returns, this sums
+    per-trade currency amounts -- the right metric for a trade blotter, where
+    no account equity base is defined.
+
+    Parameters
+    ----------
+    pnl : pd.Series | np.ndarray | Sequence[float]
+        Per-trade realised P&L in currency, in chronological order.
+
+    Returns
+    -------
+    float
+        Non-negative magnitude of the deepest drawdown.  0.0 for an empty
+        input or a curve that never retraces.
+    """
+    arr = np.asarray(pnl, dtype=np.float64).ravel()
+    if arr.size == 0:
+        return 0.0
+    equity = np.cumsum(arr)
+    running_peak = np.maximum.accumulate(equity)
+    return float(np.max(running_peak - equity))
+
+
+def trade_sharpe(pnl: Union[pd.Series, np.ndarray, Sequence[float]]) -> float:
+    """
+    Per-trade Sharpe ratio: mean / stdev of trade P&L, scaled by sqrt(n).
+
+    This is a *trade-count* Sharpe, not an annualised one -- it says nothing
+    about calendar time and must not be compared against an annualised figure
+    without rescaling by the trades-per-year rate.
+
+    Parameters
+    ----------
+    pnl : pd.Series | np.ndarray | Sequence[float]
+        Per-trade realised P&L in currency.
+
+    Returns
+    -------
+    float
+        0.0 when fewer than two trades or when every trade is identical
+        (zero variance), rather than nan or inf.
+    """
+    arr = np.asarray(pnl, dtype=np.float64).ravel()
+    if arr.size < 2:
+        return 0.0
+    stdev = float(np.std(arr, ddof=1))
+    if stdev == 0.0:
+        return 0.0
+    return float(np.mean(arr) / stdev * np.sqrt(arr.size))

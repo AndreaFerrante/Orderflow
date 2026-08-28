@@ -47,7 +47,10 @@ from .returns import (
     equity_curve,
     drawdown_series,
     rolling_volatility,
+    ewma_volatility,
     underwater_duration,
+    max_drawdown_absolute,
+    trade_sharpe,
 )
 
 # ── Hypothesis testing ───────────────────────────────────────────────────────
@@ -127,7 +130,10 @@ __all__ = [
     "equity_curve",
     "drawdown_series",
     "rolling_volatility",
+    "ewma_volatility",
     "underwater_duration",
+    "max_drawdown_absolute",
+    "trade_sharpe",
     # hypothesis.py
     "TestResult",
     "adf_test",

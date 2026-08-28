@@ -230,4 +230,6 @@ marimo/_lsp/
 __marimo__/
 
 # Streamlit
-.streamlit/secrets.tomlbash.exe.stackdump
+.streamlit/secrets.toml
+orderflow/_version.py
+bash.exe.stackdump

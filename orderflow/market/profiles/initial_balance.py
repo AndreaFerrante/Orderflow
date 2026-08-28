@@ -18,6 +18,7 @@ _IB_SCHEMA = {
     "Date": pl.Utf8,
     "ib_high": pl.Float64,
     "ib_low": pl.Float64,
+    "ib_mid": pl.Float64,
     "ib_range_ticks": pl.Float64,
     "ib_end_index": pl.Int64,
 }
@@ -47,8 +48,13 @@ def compute_initial_balance(
     Returns
     -------
     pl.DataFrame
-        ``Date``, ``ib_high``, ``ib_low``, ``ib_range_ticks``,
-        ``ib_end_index``, sorted by ``Date``.
+        ``Date``, ``ib_high``, ``ib_low``, ``ib_mid``,
+        ``ib_range_ticks``, ``ib_end_index``, sorted by ``Date``.
+
+        ``ib_mid`` is ``(ib_high + ib_low) / 2`` -- the geometric centre of
+        the balance area, which is what a reversion trade targets.  It is
+        deliberately not a volume-weighted centre: that is the point of
+        control, a different object with its own function.
 
     Notes
     -----
@@ -90,7 +96,8 @@ def compute_initial_balance(
             pl.col("Index").max().alias("ib_end_index"),
         )
         .with_columns(
-            ((pl.col("ib_high") - pl.col("ib_low")) / tick_size).alias("ib_range_ticks")
+            ((pl.col("ib_high") + pl.col("ib_low")) / 2.0).alias("ib_mid"),
+            ((pl.col("ib_high") - pl.col("ib_low")) / tick_size).alias("ib_range_ticks"),
         )
         .select(list(_IB_SCHEMA))
         .sort("Date")
@@ -103,10 +110,20 @@ _BREAKOUT_SCHEMA = {
     "entry_index": pl.Int64,
     "direction": pl.Int64,
     "cvd_delta": pl.Float64,
+    "entry_price": pl.Float64,
     "ib_high": pl.Float64,
     "ib_low": pl.Float64,
+    "ib_mid": pl.Float64,
     "ib_range_ticks": pl.Float64,
+    "mid_distance_ticks": pl.Float64,
 }
+
+#: How ``cvd_delta`` must relate to the break for a signal to survive.
+#: ``confirming`` -- flow pushes the way price broke; the continuation
+#: thesis.  ``divergent`` -- price broke *against* the flow, so nothing is
+#: participating in the extension; the reversion thesis.  ``off`` -- take
+#: every break, the control.
+_FLOW_GATES = ("confirming", "divergent", "off")
 
 _BREAKOUT_REQUIRED_COLUMNS = (
     "Index", "Datetime", "Date", "Price", "SessionType", "CD_Ask", "CD_Bid",
@@ -119,6 +136,8 @@ def find_ib_breakouts(
     cvd_lookback_ticks: int = 2000,
     cvd_min_delta: float = 0.0,
     entry_cutoff_hour: int = 14,
+    flow_gate: str = "confirming",
+    tick_size: float = 0.25,
 ) -> pl.DataFrame:
     """First initial-balance break per direction per session, gated on flow.
 
@@ -136,13 +155,28 @@ def find_ib_breakouts(
         sign alone.
     entry_cutoff_hour
         Breaks at or after this hour are dropped.
+    flow_gate
+        ``"confirming"`` keeps breaks the flow pushed (the continuation
+        thesis); ``"divergent"`` keeps breaks that ran *against* the flow
+        (the reversion thesis: an extension nobody is participating in);
+        ``"off"`` keeps every break.
+    tick_size
+        Instrument minimum price increment, used only to express
+        ``mid_distance_ticks``.
 
     Returns
     -------
     pl.DataFrame
         ``Date``, ``signal_index``, ``entry_index``, ``direction``,
-        ``cvd_delta``, ``ib_high``, ``ib_low``, ``ib_range_ticks``.
-        ``direction`` is ``+1`` above the initial balance, ``-1`` below.
+        ``cvd_delta``, ``entry_price``, ``ib_high``, ``ib_low``, ``ib_mid``,
+        ``ib_range_ticks``, ``mid_distance_ticks``.
+        ``direction`` is ``+1`` above the initial balance, ``-1`` below --
+        it describes where price went, not which way to trade.  A breakout
+        strategy buys ``+1``; a reversion strategy sells it.
+
+        ``mid_distance_ticks`` is ``|entry_price - ib_mid| / tick_size``: how
+        far a fill would have to travel to reach the centre of the balance
+        area.  It is a magnitude, positive on both sides.
 
     Notes
     -----
@@ -161,6 +195,10 @@ def find_ib_breakouts(
     ``entry_index`` is the next tick.  Reading it is the single permitted
     forward look: a fill cannot happen on the signal tick itself.
     """
+    if flow_gate not in _FLOW_GATES:
+        raise ValueError(
+            f"flow_gate must be one of {list(_FLOW_GATES)} -- got {flow_gate!r}"
+        )
     missing = [c for c in _BREAKOUT_REQUIRED_COLUMNS if c not in ticks.columns]
     if missing:
         raise ValueError(
@@ -179,6 +217,7 @@ def find_ib_breakouts(
         (pl.col("_cvd") - pl.col("_cvd").shift(cvd_lookback_ticks).over("Date"))
         .alias("cvd_delta"),
         pl.col("Index").shift(-1).over("Date").alias("entry_index"),
+        pl.col("Price").shift(-1).over("Date").alias("entry_price"),
     )
 
     post_ib = rth.join(ib, on="Date", how="inner").filter(
@@ -215,10 +254,22 @@ def find_ib_breakouts(
             .alias("direction")
         )
         .filter(pl.col("direction") != 0)
-        .filter(
-            ((pl.col("direction") == 1) & (pl.col("cvd_delta") > cvd_min_delta))
-            | ((pl.col("direction") == -1) & (pl.col("cvd_delta") < -cvd_min_delta))
+    )
+
+    with_flow = pl.col("direction") * pl.col("cvd_delta") > cvd_min_delta
+    if flow_gate == "confirming":
+        qualified = qualified.filter(with_flow)
+    elif flow_gate == "divergent":
+        # Not ``~with_flow``: that would also admit a break whose flow is
+        # merely small. The extension has to run against the tape by at
+        # least cvd_min_delta to count as unparticipated.
+        qualified = qualified.filter(
+            pl.col("direction") * pl.col("cvd_delta") < -cvd_min_delta
         )
+
+    qualified = qualified.with_columns(
+        ((pl.col("entry_price") - pl.col("ib_mid")).abs() / tick_size)
+        .alias("mid_distance_ticks")
     )
 
     if qualified.height == 0:

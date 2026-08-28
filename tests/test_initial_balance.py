@@ -110,5 +110,6 @@ def test_empty_input_returns_an_empty_frame_with_the_right_schema():
 
     assert ib.height == 0
     assert set(ib.columns) == {
-        "Date", "ib_high", "ib_low", "ib_range_ticks", "ib_end_index"
+        "Date", "ib_high", "ib_low", "ib_mid", "ib_range_ticks",
+        "ib_end_index",
     }

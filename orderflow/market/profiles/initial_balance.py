@@ -10,6 +10,8 @@ the one it labels.
 
 from __future__ import annotations
 
+import warnings
+
 import polars as pl
 
 _IB_SCHEMA = {
@@ -179,9 +181,27 @@ def find_ib_breakouts(
         pl.col("Index").shift(-1).over("Date").alias("entry_index"),
     )
 
+    post_ib = rth.join(ib, on="Date", how="inner").filter(
+        pl.col("Index") > pl.col("ib_end_index")
+    )
+
+    n_missing = (
+        post_ib.group_by("Date")
+        .agg(pl.col("cvd_delta").is_not_null().any().alias("has_cvd_delta"))
+        .filter(~pl.col("has_cvd_delta"))
+        .height
+    )
+    if n_missing > 0:
+        warnings.warn(
+            f"{n_missing} session(s) produced no cvd_delta before their "
+            f"first initial-balance break: fewer than "
+            f"cvd_lookback_ticks={cvd_lookback_ticks} ticks of session "
+            f"history were available, so any break in those sessions was "
+            f"dropped. Lower cvd_lookback_ticks to include them."
+        )
+
     qualified = (
-        rth.join(ib, on="Date", how="inner")
-        .filter(pl.col("Index") > pl.col("ib_end_index"))
+        post_ib
         .filter(pl.col("Datetime").dt.hour() < entry_cutoff_hour)
         .filter(pl.col("cvd_delta").is_not_null())
         .filter(pl.col("entry_index").is_not_null())

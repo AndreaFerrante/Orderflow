@@ -220,3 +220,25 @@ def test_empty_ib_returns_an_empty_frame():
 
     assert out.height == 0
     assert "direction" in out.columns
+
+
+def test_short_session_warns_and_drops_the_break_silently_otherwise():
+    """Fewer than cvd_lookback_ticks of session history -> no cvd_delta.
+
+    The break is genuine (price clears ib_high with buy aggression) but the
+    session doesn't have enough ticks for the lookback to produce a value,
+    so cvd_delta is null for the whole session and the break is dropped.
+    That drop must be observable, not silent.
+    """
+    ticks = build_day(
+        ib_prices=[5000.0] * 3,
+        after_prices=[5000.0] * 5 + [5001.0] * 5,
+        after_cvd_step=+1.0,
+    )
+    # Whole session is 3 + 10 + 1 = 14 ticks, well under the lookback.
+    assert ticks.height < 50
+
+    with pytest.warns(UserWarning, match="cvd_lookback_ticks"):
+        out = run(ticks, cvd_lookback_ticks=50)
+
+    assert out.height == 0

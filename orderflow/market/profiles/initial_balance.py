@@ -93,3 +93,122 @@ def compute_initial_balance(
         .select(list(_IB_SCHEMA))
         .sort("Date")
     )
+
+
+_BREAKOUT_SCHEMA = {
+    "Date": pl.Utf8,
+    "signal_index": pl.Int64,
+    "entry_index": pl.Int64,
+    "direction": pl.Int64,
+    "cvd_delta": pl.Float64,
+    "ib_high": pl.Float64,
+    "ib_low": pl.Float64,
+    "ib_range_ticks": pl.Float64,
+}
+
+_BREAKOUT_REQUIRED_COLUMNS = (
+    "Index", "Datetime", "Date", "Price", "SessionType", "CD_Ask", "CD_Bid",
+)
+
+
+def find_ib_breakouts(
+    ticks: pl.DataFrame,
+    ib: pl.DataFrame,
+    cvd_lookback_ticks: int = 2000,
+    cvd_min_delta: float = 0.0,
+    entry_cutoff_hour: int = 14,
+) -> pl.DataFrame:
+    """First initial-balance break per direction per session, gated on flow.
+
+    Parameters
+    ----------
+    ticks
+        Enriched tick frame.  Requires the columns in
+        ``_BREAKOUT_REQUIRED_COLUMNS``.
+    ib
+        Output of :func:`compute_initial_balance`.
+    cvd_lookback_ticks
+        How many ticks back the cumulative-delta difference is measured.
+    cvd_min_delta
+        Magnitude the difference must exceed, in contracts.  ``0.0`` gates on
+        sign alone.
+    entry_cutoff_hour
+        Breaks at or after this hour are dropped.
+
+    Returns
+    -------
+    pl.DataFrame
+        ``Date``, ``signal_index``, ``entry_index``, ``direction``,
+        ``cvd_delta``, ``ib_high``, ``ib_low``, ``ib_range_ticks``.
+        ``direction`` is ``+1`` above the initial balance, ``-1`` below.
+
+    Notes
+    -----
+    **The gate is a difference, never a level.**  ``CD_Ask``/``CD_Bid`` in the
+    enriched files accumulate across the whole file and do *not* reset at the
+    RTH boundary, so their absolute value at a break carries no information
+    about that session.  ``cvd_delta`` is
+    ``(CD_Ask - CD_Bid)`` now minus its value ``cvd_lookback_ticks`` rows ago,
+    computed within the session (``.over("Date")``), and is buy-positive by
+    construction.
+
+    The signal is the first tick that *both* breaks the edge and passes the
+    gate -- a break that fails the gate does not consume the session's one
+    signal for that direction.
+
+    ``entry_index`` is the next tick.  Reading it is the single permitted
+    forward look: a fill cannot happen on the signal tick itself.
+    """
+    missing = [c for c in _BREAKOUT_REQUIRED_COLUMNS if c not in ticks.columns]
+    if missing:
+        raise ValueError(
+            f"ticks is missing {missing}; find_ib_breakouts requires "
+            f"{list(_BREAKOUT_REQUIRED_COLUMNS)}"
+        )
+    if ib.height == 0:
+        return pl.DataFrame(schema=_BREAKOUT_SCHEMA)
+
+    rth = (
+        ticks.filter(pl.col("SessionType") == "RTH")
+        .sort("Index")
+        .with_columns((pl.col("CD_Ask") - pl.col("CD_Bid")).alias("_cvd"))
+    )
+    rth = rth.with_columns(
+        (pl.col("_cvd") - pl.col("_cvd").shift(cvd_lookback_ticks).over("Date"))
+        .alias("cvd_delta"),
+        pl.col("Index").shift(-1).over("Date").alias("entry_index"),
+    )
+
+    qualified = (
+        rth.join(ib, on="Date", how="inner")
+        .filter(pl.col("Index") > pl.col("ib_end_index"))
+        .filter(pl.col("Datetime").dt.hour() < entry_cutoff_hour)
+        .filter(pl.col("cvd_delta").is_not_null())
+        .filter(pl.col("entry_index").is_not_null())
+        .with_columns(
+            pl.when(pl.col("Price") > pl.col("ib_high"))
+            .then(1)
+            .when(pl.col("Price") < pl.col("ib_low"))
+            .then(-1)
+            .otherwise(0)
+            .cast(pl.Int64)
+            .alias("direction")
+        )
+        .filter(pl.col("direction") != 0)
+        .filter(
+            ((pl.col("direction") == 1) & (pl.col("cvd_delta") > cvd_min_delta))
+            | ((pl.col("direction") == -1) & (pl.col("cvd_delta") < -cvd_min_delta))
+        )
+    )
+
+    if qualified.height == 0:
+        return pl.DataFrame(schema=_BREAKOUT_SCHEMA)
+
+    return (
+        qualified.sort("Index")
+        .group_by(["Date", "direction"], maintain_order=True)
+        .first()
+        .with_columns(pl.col("Index").alias("signal_index"))
+        .select(list(_BREAKOUT_SCHEMA))
+        .sort("signal_index")
+    )

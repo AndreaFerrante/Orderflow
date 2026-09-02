@@ -127,8 +127,9 @@ _FLOW_GATES = ("confirming", "divergent", "off")
 
 #: What a low-volume-node trigger means.  ``skip`` moves the signal to the
 #: next clean tick and keeps the session; ``drop`` disqualifies the whole
-#: extension because it *began* through a vacuum.  See ``find_ib_breakouts``.
-_LVN_POLICIES = ("off", "skip", "drop")
+#: extension because it *began* through a vacuum; ``require`` keeps only
+#: those, for a continuation book.  See ``find_ib_breakouts``.
+_LVN_POLICIES = ("off", "skip", "drop", "require")
 
 _BREAKOUT_REQUIRED_COLUMNS = (
     "Index", "Datetime", "Date", "Price", "SessionType", "CD_Ask", "CD_Bid",
@@ -181,6 +182,11 @@ def find_ib_breakouts(
         ``"drop"`` consults only the FIRST tick beyond the edge: if the
         break began through a vacuum the whole extension is disqualified and
         no later tick rehabilitates it.
+
+        ``"require"`` is ``"drop"`` inverted: it keeps *only* the breaks that
+        began through a vacuum.  A reversion book must not fade those; a
+        continuation book trades nothing else.  The two policies partition
+        the session's breaks between them.
 
         The two are different strategies, not two spellings of one.
         ``"skip"`` changes the price you enter at; ``"drop"`` changes which
@@ -290,11 +296,19 @@ def find_ib_breakouts(
         # the session -- the first *qualifying* tick becomes the signal,
         # exactly as with the flow gate.
         qualified = qualified.filter(pl.col("LVN") != 1)
-    elif lvn_policy == "drop":
-        # Consult only the first tick beyond the edge, node or not. The
+    elif lvn_policy in ("drop", "require"):
+        # Both consult only the first tick beyond the edge, node or not, and
+        # differ solely in which verdict disqualifies the extension. The
         # verdict is on the extension, so it is read where the extension
         # began -- before the flow gate has had a chance to move the signal
         # somewhere cleaner.
+        #
+        # ``drop`` is the reversion book refusing to fade a break that ran
+        # through a vacuum. ``require`` is its complement: the continuation
+        # book taking only those. On any one session they never both fire
+        # and never both abstain.
+        began_through_vacuum = pl.col("LVN") == 1
+        keep = ~began_through_vacuum if lvn_policy == "drop" else began_through_vacuum
         first_touch = (
             post_ib
             .with_columns(
@@ -306,7 +320,7 @@ def find_ib_breakouts(
             .sort("Index")
             .group_by(["Date", "direction"], maintain_order=True)
             .first()
-            .filter(pl.col("LVN") != 1)
+            .filter(keep)
             .select("Date", "direction")
         )
         qualified = qualified.join(first_touch, on=["Date", "direction"], how="semi")

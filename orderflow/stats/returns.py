@@ -23,12 +23,14 @@ equity_curve              Build cumulative equity curve from returns.
 rolling_volatility        Rolling annualised volatility (causal).
 drawdown_series           Full drawdown time-series (not just max).
 underwater_duration       Consecutive bars spent below prior peak.
+max_drawdown_absolute     Deepest peak-to-trough of a cumulative P&L curve, in currency.
+trade_sharpe              Per-trade Sharpe (mean/stdev * sqrt(n)), not annualised.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Optional, Union
+from typing import Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -451,3 +453,68 @@ def underwater_duration(
         else:
             durations[i] = 0
     return durations
+
+
+# ---------------------------------------------------------------------------
+# Absolute (currency) P&L metrics
+#
+# The functions above take *fractional* return series and compound them, which
+# needs an account equity base.  A trade blotter has no such base -- it is a
+# sequence of realised P&L amounts in currency.  These two work directly on
+# that sequence, summing rather than compounding.
+# ---------------------------------------------------------------------------
+
+
+def max_drawdown_absolute(pnl: Union[pd.Series, np.ndarray, Sequence[float]]) -> float:
+    """
+    Deepest peak-to-trough decline of a cumulative P&L curve, in currency.
+
+    Unlike :func:`max_drawdown`, which compounds fractional returns, this sums
+    per-trade currency amounts -- the right metric for a trade blotter, where
+    no account equity base is defined.
+
+    Parameters
+    ----------
+    pnl : pd.Series | np.ndarray | Sequence[float]
+        Per-trade realised P&L in currency, in chronological order.
+
+    Returns
+    -------
+    float
+        Non-negative magnitude of the deepest drawdown.  0.0 for an empty
+        input or a curve that never retraces.
+    """
+    arr = np.asarray(pnl, dtype=np.float64).ravel()
+    if arr.size == 0:
+        return 0.0
+    equity = np.cumsum(arr)
+    running_peak = np.maximum.accumulate(equity)
+    return float(np.max(running_peak - equity))
+
+
+def trade_sharpe(pnl: Union[pd.Series, np.ndarray, Sequence[float]]) -> float:
+    """
+    Per-trade Sharpe ratio: mean / stdev of trade P&L, scaled by sqrt(n).
+
+    This is a *trade-count* Sharpe, not an annualised one -- it says nothing
+    about calendar time and must not be compared against an annualised figure
+    without rescaling by the trades-per-year rate.
+
+    Parameters
+    ----------
+    pnl : pd.Series | np.ndarray | Sequence[float]
+        Per-trade realised P&L in currency.
+
+    Returns
+    -------
+    float
+        0.0 when fewer than two trades or when every trade is identical
+        (zero variance), rather than nan or inf.
+    """
+    arr = np.asarray(pnl, dtype=np.float64).ravel()
+    if arr.size < 2:
+        return 0.0
+    stdev = float(np.std(arr, ddof=1))
+    if stdev == 0.0:
+        return 0.0
+    return float(np.mean(arr) / stdev * np.sqrt(arr.size))

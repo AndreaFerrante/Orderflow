@@ -429,8 +429,8 @@ class DynamicTPSLExit(BaseExitStrategy):
 
     def on_entry(self, tick: Tick, position: PositionState) -> None:
         """Called when position opens — retrieve TP/SL for this signal."""
-        if tick.index in self._signal_lookup:
-            self._current_tp, self._current_sl = self._signal_lookup[tick.index]
+        if tick.timestamp in self._signal_lookup:
+            self._current_tp, self._current_sl = self._signal_lookup[tick.timestamp]
 
     def on_tick(
         self,
@@ -459,6 +459,110 @@ class DynamicTPSLExit(BaseExitStrategy):
                 return ExitSignal(should_exit=True, reason=ExitReason.TAKE_PROFIT)
             if price - entry >= sl_distance:
                 return ExitSignal(should_exit=True, reason=ExitReason.STOP_LOSS)
+
+        return ExitSignal(should_exit=False)
+
+
+# ---------------------------------------------------------------------------
+# Per-signal break-even
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DynamicBreakEvenExit(BaseExitStrategy):
+    """
+    Move the stop to break-even once price has run a *per-signal* distance.
+
+    ``BreakEvenExit`` arms at a scalar ``activation_ticks``.  That is only
+    meaningful when every trade is sized alike.  Strategies that size from
+    something the session decides -- an initial balance range, an ATR, a
+    distance to a level -- produce targets that differ by an order of
+    magnitude between trades, and one activation distance is then most of a
+    small trade and nothing at all in a large one.
+
+    This exit reads its activation per signal, exactly the way
+    ``DynamicTPSLExit`` reads TP and SL.
+
+    Parameters
+    ----------
+    signals_df : pd.DataFrame
+        Must carry ``Index`` (the entry tick) and ``BE_Ticks`` (the distance
+        in ticks that arms the break-even for that signal).
+    tick_size : float
+        Minimum price increment.
+    offset_ticks : float
+        How far beyond entry the stop is placed once armed.  A break-even at
+        exactly entry still books the round trip as a loss; the offset is
+        what makes a scratch actually flat.
+
+    Notes
+    -----
+    ``BE_Ticks <= 0`` disables the break-even for that signal -- it does not
+    arm at zero distance and close the trade at entry.  This is what lets a
+    runner switch the mechanism off by writing a column of zeros rather than
+    by composing a different exit stack.
+
+    An entry tick absent from ``signals_df`` also disables it.  The exit
+    never inherits the previous trade's activation: silently carrying stale
+    state across trades is the failure mode this class is most likely to
+    have, so it is the one it is written to make impossible.
+    """
+    signals_df: pd.DataFrame
+    tick_size: float = 0.25
+    offset_ticks: float = 0.0
+    _signal_lookup: Dict[int, float] = field(default_factory=dict, init=False, repr=False)
+    _activation_ticks: Optional[float] = field(default=None, init=False, repr=False)
+    _triggered: bool = field(default=False, init=False, repr=False)
+    _be_stop: float = field(default=0.0, init=False, repr=False)
+
+    def __post_init__(self):
+        for _, row in self.signals_df.iterrows():
+            self._signal_lookup[int(row["Index"])] = float(row["BE_Ticks"])
+
+    def on_entry(self, tick: Tick, position: PositionState) -> None:
+        # Reset unconditionally, then look up. Assigning only on a hit would
+        # leave the previous trade's activation in place for an entry this
+        # frame does not describe.
+        self._triggered = False
+        self._be_stop = 0.0
+        self._activation_ticks = self._signal_lookup.get(tick.timestamp)
+
+    def on_tick(
+        self,
+        tick: Tick,
+        position: PositionState,
+        price_history: np.ndarray,
+        indicators: Dict[str, Any],
+    ) -> ExitSignal:
+        if not self._activation_ticks or self._activation_ticks <= 0:
+            return ExitSignal(should_exit=False)
+
+        price = tick.price
+        act_dist = self._activation_ticks * self.tick_size
+        offset = self.offset_ticks * self.tick_size
+
+        if not self._triggered:
+            if position.side == Side.LONG and price >= position.entry_price + act_dist:
+                self._triggered = True
+                self._be_stop = position.entry_price + offset
+            elif position.side == Side.SHORT and price <= position.entry_price - act_dist:
+                self._triggered = True
+                self._be_stop = position.entry_price - offset
+            # Arming and firing are never the same tick: the price that armed
+            # is by construction beyond the stop it just set.
+            return ExitSignal(should_exit=False)
+
+        if position.side == Side.LONG and price <= self._be_stop:
+            return ExitSignal(
+                should_exit=True,
+                reason=ExitReason.BREAK_EVEN,
+                exit_price=self._be_stop,
+            )
+        if position.side == Side.SHORT and price >= self._be_stop:
+            return ExitSignal(
+                should_exit=True,
+                reason=ExitReason.BREAK_EVEN,
+                exit_price=self._be_stop,
+            )
 
         return ExitSignal(should_exit=False)
 

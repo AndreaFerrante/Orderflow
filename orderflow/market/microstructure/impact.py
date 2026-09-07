@@ -42,7 +42,7 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
-__all__ = ["compute_realized_lambda"]
+__all__ = ["compute_realized_lambda", "compute_absorption_ratio"]
 
 
 _REQUIRED_COLUMNS = ("Datetime", "AskPrice", "BidPrice", "Volume", "TradeType")
@@ -160,4 +160,126 @@ def compute_realized_lambda(
         pl.Series("mid", mid, dtype=pl.Float64),
         pl.Series("signed_volume_window", signed_window, dtype=pl.Float64),
         pl.Series("realized_lambda", realized, dtype=pl.Float64).fill_nan(None),
+    )
+
+
+_ABSORPTION_COLUMNS = (
+    "aggressor_size",
+    "aggressor_price_start",
+    "aggressor_price_end",
+)
+
+
+def compute_absorption_ratio(
+    orders: pl.DataFrame,
+    *,
+    sigma: pl.Series,
+    session_volume_to_date: pl.Series,
+    impact_constant: float,
+) -> pl.DataFrame:
+    """Compare how far price moved against how far the square-root law says it should.
+
+    Price impact scales roughly with the square root of order size relative to
+    the volume already traded -- the most robust empirical regularity in market
+    microstructure. That turns absorption from a judgement call into a
+    measurement::
+
+        expected_move    = impact_constant * sigma * sqrt(size / session_volume)
+        realized_move    = |price_end - price_start|
+        absorption_ratio = realized_move / expected_move
+
+    A ratio well below 1 means price moved materially less than the volume
+    justifies: something took the other side without repricing. A ratio above 1
+    means the move ran past what the size explains, which is the opposite
+    situation and must not be faded.
+
+    The advantage over a percentile threshold is that the scale is
+    interpretable. "Price moved a quarter of what this much volume normally
+    moves it" survives a change of instrument, session length or volatility
+    regime; "bottom decile of refresh ratio" does not.
+
+    Parameters
+    ----------
+    orders : pl.DataFrame
+        Aggressor orders from :func:`build_aggressor_orders`, carrying
+        ``aggressor_size``, ``aggressor_price_start`` and
+        ``aggressor_price_end``.
+    sigma : pl.Series
+        Causal volatility estimate, one value per order, in price units.
+    session_volume_to_date : pl.Series
+        Cumulative volume traded this session **up to** each order. Never the
+        session total -- that is lookahead, and it biases every early-session
+        order toward looking absorbed.
+    impact_constant : float
+        The law's scale factor. Fit it once on a held-out calibration period and
+        then freeze it: it sets where "materially below 1" falls, so refitting
+        it per run turns the threshold into a free parameter.
+
+    Returns
+    -------
+    pl.DataFrame
+        The input with ``expected_move``, ``realized_move`` and
+        ``absorption_ratio`` appended. ``absorption_ratio`` is **null** wherever
+        ``expected_move`` is not strictly positive -- zero or null ``sigma``,
+        zero size, or no session volume yet. Those are undecidable rather than
+        infinitely absorbed, and per the module note the sentinel is null and
+        not NaN so they drop out of comparisons instead of passing them.
+    """
+    if not isinstance(impact_constant, (int, float)) or impact_constant <= 0:
+        raise ValueError(
+            f"impact_constant must be a positive number, got {impact_constant!r}"
+        )
+
+    missing = [c for c in _ABSORPTION_COLUMNS if c not in orders.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    # A misaligned series would pair each order with another order's volatility,
+    # which produces plausible numbers and no error at all.
+    for name, series in (("sigma", sigma),
+                         ("session_volume_to_date", session_volume_to_date)):
+        if len(series) != orders.height:
+            raise ValueError(
+                f"{name} length {len(series)} does not match orders height "
+                f"{orders.height}"
+            )
+
+    sigma_values = pl.Series(sigma, dtype=pl.Float64).to_numpy(allow_copy=True)
+    volume_values = pl.Series(session_volume_to_date, dtype=pl.Float64).to_numpy(
+        allow_copy=True
+    )
+    size_values = orders["aggressor_size"].cast(pl.Float64).to_numpy()
+
+    # Guard the inputs, not the result. Polars divides by zero to `inf` rather
+    # than NaN, and `inf > 0` is True -- so a result-side guard lets a
+    # zero-volume row through with expected_move = inf, whereupon
+    # realized_move / inf is 0.0 and the order reads as *maximally absorbed*.
+    # For an absorption measure that is the most dangerous wrong answer there is.
+    decidable = (
+        np.isfinite(sigma_values)
+        & (sigma_values > 0)
+        & (size_values > 0)
+        & (volume_values > 0)
+    )
+
+    expected = np.full(orders.height, np.nan, dtype=np.float64)
+    expected[decidable] = (
+        impact_constant
+        * sigma_values[decidable]
+        * np.sqrt(size_values[decidable] / volume_values[decidable])
+    )
+
+    realized = np.abs(
+        orders["aggressor_price_end"].cast(pl.Float64).to_numpy()
+        - orders["aggressor_price_start"].cast(pl.Float64).to_numpy()
+    )
+
+    ratio = np.full(orders.height, np.nan, dtype=np.float64)
+    np.divide(realized, expected, out=ratio, where=decidable)
+
+    return orders.with_columns(
+        pl.Series("expected_move", expected, dtype=pl.Float64).fill_nan(None),
+        pl.Series("realized_move", realized, dtype=pl.Float64),
+        # null, not NaN -- see the module note
+        pl.Series("absorption_ratio", ratio, dtype=pl.Float64).fill_nan(None),
     )

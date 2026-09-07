@@ -151,3 +151,58 @@ def test_unknown_lvn_policy_raises():
 
     with pytest.raises(ValueError, match="lvn_policy"):
         run(ticks, lvn_policy="exclude")
+
+
+# --------------------------------------------------------------------------
+# policy: require -- the continuation book's mirror of `drop`
+# --------------------------------------------------------------------------
+
+def test_require_policy_takes_only_a_break_that_began_through_a_vacuum():
+    """`require` is `drop` inverted: the node trigger is the qualification,
+    not the disqualification."""
+    ticks = build_day(BREAK, lvn_at=(20,))
+
+    assert run(ticks, lvn_policy="require")["signal_index"].to_list() == [len(IB_PRICES) + 20]
+
+
+def test_require_policy_abandons_a_break_that_began_off_a_node():
+    """The control: only the FIRST tick beyond the edge is consulted, so
+    later nodes cannot rehabilitate a break that began on volume."""
+    ticks = build_day(BREAK, lvn_at=(21, 22, 23))
+
+    assert run(ticks, lvn_policy="require").height == 0
+
+
+def test_require_ignores_a_node_that_appears_after_the_first_touch():
+    ticks = build_day(BREAK, lvn_at=(25,))
+
+    assert run(ticks, lvn_policy="require").height == 0
+
+
+def test_require_is_the_exact_complement_of_drop():
+    """Every session that `drop` keeps, `require` refuses, and vice versa.
+    If they ever both fired or both abstained, one of them is reading a
+    different tick than the other."""
+    for lvn_at in ((), (20,), (21, 22, 23), (25,)):
+        ticks = build_day(BREAK, lvn_at=lvn_at)
+
+        kept = run(ticks, lvn_policy="drop").height + run(ticks, lvn_policy="require").height
+        assert kept == 1, f"lvn_at={lvn_at} produced {kept} signals across both policies"
+
+
+def test_require_composes_with_the_flow_gate_switched_off():
+    """The continuation book runs with no flow gate at all, so `require`
+    has to survive `flow_gate='off'` -- the combination the runner ships."""
+    ticks = build_day(BREAK, lvn_at=(20,))
+
+    out = run(ticks, lvn_policy="require", flow_gate="off")
+
+    assert out["direction"].to_list() == [1]
+    assert out["signal_index"].to_list() == [len(IB_PRICES) + 20]
+
+
+def test_require_needs_the_lvn_column():
+    ticks = build_day(BREAK).drop("LVN")
+
+    with pytest.raises(ValueError, match="LVN"):
+        run(ticks, lvn_policy="require")

@@ -1,5 +1,6 @@
 # Cartelle private
 orderflow/storage/configuration.py
+orderflow/storage/README.md
 docs/
 .claude/
 orderflow/test/

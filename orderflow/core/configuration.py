@@ -26,7 +26,18 @@ SESSION_START_TIME     = pd.to_datetime('08:30:00', format='%H:%M:%S').time() # 
 SESSION_END_TIME       = pd.to_datetime('15:14:59', format='%H:%M:%S').time() # Chicago timezone
 EVENING_START_TIME     = pd.to_datetime('15:15:00', format='%H:%M:%S').time() # Chicago timezone
 EVENING_END_TIME       = pd.to_datetime('08:29:59', format='%H:%M:%S').time() # Chicago timezone
-KDE_VARIANCE_VALUE     = 0.8
+KDE_VARIANCE_VALUE     = 0.8   # fallback KDE bandwidth (price units), ES-tuned
+# Per-instrument KDE bandwidth. A fixed price-unit bandwidth over-smooths
+# small-tick instruments (ZN/ZB collapse to a single peak) and under-smooths
+# large-tick ones. Keyed by FUTURE_VALUES['Ticker']; ES/MES keep the legacy value.
+KDE_VARIANCE_BY_TICKER = {
+    'ES':   0.8,
+    'MES':  0.8,
+    'ZN':   0.03,
+    'ZB':   0.08,
+    'FESX': 0.8,
+    'FGBL': 0.8,
+}
 VALUE_AREA             = 0.68
 VWAP_BAND_OFFSET_1     = 1
 VWAP_BAND_OFFSET_2     = 2

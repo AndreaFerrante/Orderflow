@@ -474,7 +474,12 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
     return value_area
 
 
-def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25, fast: bool = False) -> np.array:
+def get_volume_profile_peaks_valleys(
+    data: pd.DataFrame,
+    tick_size: float = 0.25,
+    fast: bool = False,
+    kde_bandwidth: float = KDE_VARIANCE_VALUE,
+) -> np.array:
 
     """
     Given the canonical dataframe recorded, this function returns an array with info if the price is in a
@@ -482,6 +487,9 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
     :param df: canonical dataframe recorded
     :param tick_size: tick size of the instrument, used to compute the distance between peaks and valleys
     :param fast: if True, it uses a faster but less accurate method to compute the KDE (gaussian_kde_numba_parallel instead of gaussian_kde). Efficient only if the number of price levels is greater than 200, otherwise the overhead of the parallelization might outweigh the benefits.
+    :param kde_bandwidth: Gaussian kernel bandwidth (price units) for the KDE smoothing. Defaults to the
+        module-level ``KDE_VARIANCE_VALUE``; pass a per-instrument value since a fixed price-unit bandwidth
+        over- or under-smooths instruments whose tick size differs from ES.
     :return: numpy array with values: High Peak = 2, High Peak Area = 1, Valley Peak = -2, Valley Peak Area = -1
     """
     
@@ -506,7 +514,7 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
     # ── cache source e weight ──────────────────────────────────────────
     source = np.array(sorted(volume_profile.keys()))
     weight = np.array([volume_profile[k] for k in source])
-    g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (len(source) * KDE_VARIANCE_VALUE)
+    g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (len(source) * kde_bandwidth)
 
     for i in tqdm(range(1, len_ - 1)):
 
@@ -524,14 +532,14 @@ def get_volume_profile_peaks_valleys(data: pd.DataFrame, tick_size: float = 0.25
             volume_profile[price[i]] = volume[i]
             source = np.array(sorted(volume_profile.keys()))
             weight = np.array([volume_profile[k] for k in source])
-            g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (len(source) * KDE_VARIANCE_VALUE)
+            g_const = 1.0 / (np.sqrt(2.0 * np.pi)) / (len(source) * kde_bandwidth)
 
         KDE_SWITCH_THRESHOLD = 200
         
         if fast and len(source) > KDE_SWITCH_THRESHOLD:
-            kde = gaussian_kde_sliding_window(source=source, weight=weight, h=KDE_VARIANCE_VALUE, g_const=g_const)
+            kde = gaussian_kde_sliding_window(source=source, weight=weight, h=kde_bandwidth, g_const=g_const)
         else:
-            kde = gaussian_kde_numba_parallel(source=source, weight=weight, h=KDE_VARIANCE_VALUE, g_const=g_const)
+            kde = gaussian_kde_numba_parallel(source=source, weight=weight, h=kde_bandwidth, g_const=g_const)
         
         peaks_indexes = get_kde_high_low_price_peaks(kde)
 

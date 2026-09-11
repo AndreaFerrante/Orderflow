@@ -8,6 +8,7 @@ import pytest
 
 from orderflow.market.large_order_flow import _count_vwap_crosses, _running_vwap_crosses
 from orderflow.market.session_context import prior_rth_levels
+from orderflow.market.session_context import running_session_state
 
 TICK = 0.25
 
@@ -88,3 +89,62 @@ def test_running_crosses_prefix_invariant():
         part = _running_vwap_crosses(price[:k], vwap[:k], confirm_distance=1.0)
         assert part.tolist() == full[:k].tolist()
     assert _count_vwap_crosses(price, vwap, confirm_distance=1.0) == int(full[-1])
+
+
+def state_ticks(day2_prices, *, vwap=None, poc=None, prior=(100, 101, 99, 100)):
+    """Session 1 sets prior levels; session 2 is the one under test (08:30 open, 1-minute ticks)."""
+    n = len(day2_prices)
+    vwap = vwap or [100.0] * n
+    poc = poc or [100.0] * n
+    s1 = session("2025-09-15", list(prior), step_s=60, vwap=[100.0] * len(prior),
+                 vwap_sd1_top=[101.0] * len(prior), POC=[100.0] * len(prior))
+    s2 = session("2025-09-16", day2_prices, step_s=60, vwap=vwap,
+                 vwap_sd1_top=[v + 1.0 for v in vwap], POC=poc)
+    return stack(s1, s2)
+
+
+def day2(ticks, levels):
+    return (running_session_state(ticks, levels, tick_size=TICK)
+            .filter(pl.col("Date") == "2025-09-16"))
+
+
+def test_state_running_extremes_and_minutes_since_open():
+    ticks = state_ticks([100, 101, 99, 100])
+    out = day2(ticks, prior_rth_levels(ticks, tick_size=TICK))
+    assert out["run_high"].to_list() == [100, 101, 101, 101]
+    assert out["run_low"].to_list() == [100, 100, 99, 99]
+    assert out["minutes_since_open"].to_list() == [0.0, 1.0, 2.0, 3.0]
+
+
+def test_state_is_causal():
+    base = state_ticks([100, 101, 99, 100, 102])
+    levels = prior_rth_levels(base, tick_size=TICK)
+    before = day2(base, levels).head(3)
+    altered = base.with_columns(
+        pl.when(pl.col("Index") > before["Index"][2]).then(pl.lit(150.0))
+        .otherwise(pl.col("Price")).alias("Price"))
+    after = day2(altered, levels).head(3)
+    assert before.equals(after)
+
+
+@pytest.mark.parametrize("open_px,expected", [(100.0, "inside"), (102.0, "above"), (97.0, "below")])
+def test_state_open_location_inside_above_below(open_px, expected):
+    # prior session 100,101,99,100 at volume 1 -> value area spans 100..101
+    ticks = state_ticks([open_px, open_px])
+    out = day2(ticks, prior_rth_levels(ticks, tick_size=TICK))
+    assert out["open_location"].to_list() == [expected, expected]
+
+
+def test_state_returned_to_value_latches():
+    ticks = state_ticks([102, 100.5, 103])
+    out = day2(ticks, prior_rth_levels(ticks, tick_size=TICK))
+    assert out["returned_to_value"].to_list() == [False, True, True]
+
+
+def test_state_vwap_crosses_match_running_helper():
+    prices = [100, 101, 99, 101, 100.1, 98]
+    ticks = state_ticks(prices)
+    out = day2(ticks, prior_rth_levels(ticks, tick_size=TICK))
+    expected = _running_vwap_crosses(np.array(prices, float), np.full(6, 100.0),
+                                     confirm_distance=2 * TICK)
+    assert out["vwap_crosses"].to_list() == expected.tolist()

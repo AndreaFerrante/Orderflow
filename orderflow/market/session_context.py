@@ -86,3 +86,54 @@ def prior_rth_levels(ticks: pl.DataFrame, *, tick_size: float,
         pl.col("val").shift(1).alias("prev_val"),
     )
     return shifted.select(list(_LEVEL_SCHEMA.keys()))
+
+
+_STATE_SCHEMA = {
+    "Index": pl.Int64, "Date": pl.String, "minutes_since_open": pl.Float64,
+    "run_high": pl.Float64, "run_low": pl.Float64, "open_price": pl.Float64,
+    "open_vwap": pl.Float64, "open_poc": pl.Float64, "vwap": pl.Float64,
+    "vwap_sd1_top": pl.Float64, "POC": pl.Float64, "vwap_crosses": pl.Int64,
+    "open_location": pl.String, "returned_to_value": pl.Boolean,
+}
+
+
+def running_session_state(ticks: pl.DataFrame, levels: pl.DataFrame, *, tick_size: float,
+                          cross_confirm_ticks: int = 2) -> pl.DataFrame:
+    rth = ticks.filter(pl.col("SessionType") == "RTH")
+    open_time = pl.col("Date").str.to_datetime("%Y-%m-%d").dt.offset_by("8h30m")
+    out = rth.with_columns(
+        pl.col("Price").cum_max().over("Date").alias("run_high"),
+        pl.col("Price").cum_min().over("Date").alias("run_low"),
+        ((pl.col("Datetime") - open_time).dt.total_microseconds() / 60_000_000.0)
+        .alias("minutes_since_open"),
+        pl.col("Price").first().over("Date").alias("open_price"),
+        pl.col("vwap").first().over("Date").alias("open_vwap"),
+        pl.col("POC").first().over("Date").alias("open_poc"),
+    )
+    confirm_distance = cross_confirm_ticks * tick_size
+    out = out.sort("Index").with_columns(
+        pl.map_batches(
+            ["Price", "vwap"],
+            lambda cols: pl.Series(
+                _running_vwap_crosses(cols[0].to_numpy(), cols[1].to_numpy(),
+                                      confirm_distance=confirm_distance),
+                dtype=pl.Int64,
+            ),
+        ).over("Date").alias("vwap_crosses"),
+    )
+    out = out.join(levels, on="Date", how="left").with_columns(
+        pl.when(pl.col("prev_val").is_null() | pl.col("prev_vah").is_null())
+        .then(pl.lit("unknown"))
+        .when(pl.col("open_price") < pl.col("prev_val")).then(pl.lit("below"))
+        .when(pl.col("open_price") > pl.col("prev_vah")).then(pl.lit("above"))
+        .otherwise(pl.lit("inside"))
+        .alias("open_location"),
+    )
+    out = out.sort("Index").with_columns(
+        pl.col("prev_val").is_not_null()
+        .and_(pl.col("Price") >= pl.col("prev_val"))
+        .and_(pl.col("Price") <= pl.col("prev_vah"))
+        .cum_max().over("Date").fill_null(False)
+        .alias("returned_to_value"),
+    )
+    return out.select(list(_STATE_SCHEMA.keys()))

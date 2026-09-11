@@ -2,6 +2,15 @@
 
 Every output row uses only ticks at or before that row. RTH is 08:30-15:59:59.999999 CT;
 sessions are keyed by ``Date`` on RTH ticks.
+
+Anchor
+------
+``open_vwap``/``open_poc`` in :func:`running_session_state` are the enriched ``vwap``/``POC``
+columns read at the first RTH tick of the day. Those columns reset at the RTH->ETH transition
+(previous evening's Globex open), not at 08:30 -- so at RTH open they already carry the
+overnight ETH session, not a fresh start. This is causal (still only ticks at or before that
+row) and deliberate: ``band_z``, VWAP crosses and slope/drift all measure against this
+Globex-anchored VWAP/POC, not an 08:30-anchored one.
 """
 
 from __future__ import annotations

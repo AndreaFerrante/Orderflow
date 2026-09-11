@@ -319,9 +319,12 @@ def _compute_absorption_ratio(clusters: pl.DataFrame, ticks: pl.DataFrame, *,
         window_start_us = first_datetime_us - 30 * _MINUTE_US
         bucket_us = arrs["minute_bucket_us"]
         lo = int(np.searchsorted(bucket_us, window_start_us, side="left"))
-        hi = int(np.searchsorted(bucket_us, first_datetime_us, side="left"))
+        # Exclude the minute bucket containing the first print itself: its close is the last
+        # tick of that minute, which can fall after the first print (and even after the trigger
+        # tick) -- including it would be lookahead. Only minutes closed strictly before count.
+        hi = int(np.searchsorted(bucket_us, first_datetime_us - _MINUTE_US, side="right"))
         window = arrs["minute_close"][lo:hi]
-        sigma_vals.append(float(np.std(np.diff(window), ddof=1)) if window.size >= 2 else None)
+        sigma_vals.append(float(np.std(np.diff(window), ddof=1)) if window.size >= 3 else None)
 
     orders = pl.DataFrame({
         "aggressor_size": clusters["gross_volume"].to_list(),

@@ -1,5 +1,6 @@
 """Tests for big-print clusters: side sign first, then dedup, chaining, hold, context, books."""
 
+import warnings
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -216,6 +217,64 @@ def test_absorption_ratio_uses_prior_sigma_and_volume():
     volume_before = 10.0 * 34
     expected = abs(prices[35] - prices[34]) / (1.0 * sigma * np.sqrt(120.0 / volume_before))
     assert out["absorption_ratio"][0] == pytest.approx(expected)
+
+
+def test_absorption_ratio_ignores_ticks_later_in_first_print_minute():
+    """Sigma must use only minutes closed strictly before the first print's minute.
+
+    First print at 10:05:10 (Index 211), qualify at 10:05:20 (Index 212). Changing only the
+    price of the 10:05:50 tick (Index 215) -- later in the same minute as the first print, but
+    itself after the first print -- must not move absorption_ratio: that tick sets the minute
+    close for the bucket containing the first print, which the causal window must exclude.
+    """
+    date = "2025-09-16"
+    t0 = datetime(2025, 9, 16, 9, 30)
+    n_minutes, tpm = 40, 6
+    datetimes, prices = [], []
+    for m in range(n_minutes):
+        for k in range(tpm):
+            datetimes.append(t0 + timedelta(minutes=m, seconds=k * 10))
+            prices.append(100.0 + 0.25 * ((m * tpm + k) % 2))
+    n = len(datetimes)
+    ticks = pl.DataFrame({
+        "Index": list(range(n)), "Datetime": datetimes, "Date": [date] * n,
+        "Price": prices, "Volume": [10] * n, "SessionType": ["RTH"] * n,
+        **{f"BidDOM_{i}": [10.0] * n for i in range(5)},
+        **{f"AskDOM_{i}": [30.0] * n for i in range(5)},
+    }).with_columns(pl.col("Index").cast(pl.Int64))
+    state = pl.DataFrame({
+        "Index": list(range(n)), "Date": [date] * n,
+        "minutes_since_open": [float(i) for i in range(n)],
+        "run_high": [101.0] * n, "run_low": [99.0] * n,
+        "open_price": [100.0] * n, "open_vwap": [100.0] * n, "open_poc": [100.0] * n,
+        "vwap": [100.0] * n, "vwap_sd1_top": [101.0] * n, "POC": [100.0] * n,
+        "vwap_crosses": [3] * n, "open_location": ["inside"] * n,
+        "returned_to_value": [True] * n,
+    })
+    levels = pl.DataFrame({"Date": [date], "prev_high": [110.0], "prev_low": [90.0],
+                           "prev_close": [100.0], "prev_poc": [100.0],
+                           "prev_vah": [108.0], "prev_val": [92.0]})
+    row = one_cluster(216, qualify_index=212, first_index=211)  # first 10:05:10, qualify 10:05:20
+    kw = dict(tick_size=TICK, directional_slope_min=1.0, rotational_slope_max=0.5)
+
+    before = cluster_context_asof(pl.DataFrame([row]), state, levels, ticks, **kw)
+
+    changed = ticks.with_columns(  # Index 215 = 10:05:50, inside the first print's own minute
+        pl.when(pl.col("Index") == 215).then(pl.col("Price") + 5.0)
+        .otherwise(pl.col("Price")).alias("Price"))
+    after = cluster_context_asof(pl.DataFrame([row]), state, levels, changed, **kw)
+
+    assert before["absorption_ratio"][0] == after["absorption_ratio"][0]
+
+
+def test_absorption_ratio_null_when_fewer_than_three_prior_closed_minutes():
+    state, ticks, levels = ctx_inputs(n=6)
+    row = one_cluster(4, qualify_index=3, first_index=2)
+    kw = dict(tick_size=TICK, directional_slope_min=1.0, rotational_slope_max=0.5)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        out = cluster_context_asof(pl.DataFrame([row]), state, levels, ticks, **kw)
+    assert out["absorption_ratio"][0] is None
 
 
 def test_location_bucket_priority():

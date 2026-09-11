@@ -157,3 +157,19 @@ def test_state_independent_of_input_row_order():
     shuffled = running_session_state(
         ticks.sample(fraction=1.0, shuffle=True, seed=7), levels, tick_size=TICK)
     assert ordered.equals(shuffled)
+
+
+from orderflow.market.session_context import calibrate_slope_thresholds, vwap_slope_at
+
+
+def test_vwap_slope_at_linear_vwap():
+    vwap = [100.0 + 2.0 * i / 90 for i in range(121)]      # +2 points over 90 minutes
+    ticks = stack(session("2025-09-16", [100.0] * 121, step_s=60, vwap=vwap))
+    out = vwap_slope_at(ticks, at_ct="10:00")
+    assert out["vwap_slope"][0] == pytest.approx(2.0 / 1.5)
+
+
+def test_calibrate_uses_abs_quantiles():
+    slopes = pl.Series([-4, -3, -2, -1, 0, 1, 2, 3, 4, 5], dtype=pl.Float64)
+    directional, rotational = calibrate_slope_thresholds(slopes)
+    assert (directional, rotational) == pytest.approx((3.3, 2.0))

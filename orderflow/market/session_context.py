@@ -137,3 +137,109 @@ def running_session_state(ticks: pl.DataFrame, levels: pl.DataFrame, *, tick_siz
         .alias("returned_to_value"),
     )
     return out.select(list(_STATE_SCHEMA.keys()))
+
+
+def vwap_slope_at(ticks: pl.DataFrame, *, at_ct: str = "10:00") -> pl.DataFrame:
+    """VWAP drift in points/hour from RTH open to a clock time (at_ct).
+
+    Per session (Date), compute the slope of VWAP from the first RTH tick to the
+    last RTH tick at or before `at_ct`. Drops sessions with no tick at/before at_ct
+    or duration == 0.
+    """
+    rth = ticks.filter(pl.col("SessionType") == "RTH").sort("Datetime")
+
+    # Parse the target time (HH:MM) into time-of-day for comparison
+    # Extract hour and minute from at_ct string like "10:00"
+    h_str, m_str = at_ct.split(":")
+    target_sod = int(h_str) * 3600 + int(m_str) * 60  # seconds-of-day
+
+    # Group by Date and process each session
+    rows = []
+    for date in rth["Date"].unique():
+        session_ticks = rth.filter(pl.col("Date") == date).sort("Datetime")
+        if session_ticks.height == 0:
+            continue
+
+        # First tick's vwap (at RTH open, 08:30)
+        first_tick = session_ticks.row(0, named=True)
+        vwap_open = first_tick["vwap"]
+        first_dt = first_tick["Datetime"]
+
+        # Find last tick at or before at_ct
+        at_tick = None
+        for i in range(session_ticks.height - 1, -1, -1):
+            tick = session_ticks.row(i, named=True)
+            tick_dt = tick["Datetime"]
+            # Extract time-of-day (hour, minute, second) from naive datetime
+            h = tick_dt.hour
+            m = tick_dt.minute
+            s = tick_dt.second
+            tick_sod = h * 3600 + m * 60 + s
+            if tick_sod <= target_sod:
+                at_tick = tick
+                break
+
+        if at_tick is None:
+            continue
+
+        # Calculate hours elapsed
+        at_dt = at_tick["Datetime"]
+        micros_elapsed = (at_dt - first_dt).total_seconds() * 1_000_000
+        if micros_elapsed == 0:
+            continue
+        hours = micros_elapsed / (3600 * 1_000_000)
+
+        # Calculate slope
+        vwap_at = at_tick["vwap"]
+        slope = (vwap_at - vwap_open) / hours
+
+        rows.append({"Date": date, "vwap_slope": slope})
+
+    if not rows:
+        return pl.DataFrame(schema={"Date": pl.String, "vwap_slope": pl.Float64})
+
+    return pl.DataFrame(rows, schema={"Date": pl.String, "vwap_slope": pl.Float64}).sort("Date")
+
+
+def calibrate_slope_thresholds(slopes, *, directional_q: float = 0.70,
+                               rotational_q: float = 0.40) -> tuple[float, float]:
+    """Quantiles of |VWAP slope| that freeze trend/range thresholds.
+
+    Parameters
+    ----------
+    slopes : polars.Series or array-like
+        VWAP slope values (points/hour), from vwap_slope_at.
+    directional_q : float
+        Quantile for directional threshold (default 0.70).
+    rotational_q : float
+        Quantile for rotational threshold (default 0.40).
+
+    Returns
+    -------
+    tuple[float, float]
+        (directional_threshold, rotational_threshold), computed from quantiles of |slopes|.
+
+    Raises
+    ------
+    ValueError
+        If no finite values remain after dropping NaN/null.
+    """
+    # Convert to numpy, handling Polars Series
+    if isinstance(slopes, pl.Series):
+        values = slopes.to_numpy()
+    else:
+        values = np.asarray(slopes, dtype=float)
+
+    # Drop NaN values
+    finite_mask = np.isfinite(values)
+    finite_values = values[finite_mask]
+
+    if len(finite_values) == 0:
+        raise ValueError("No finite values in slopes")
+
+    # Absolute values and compute quantiles
+    abs_values = np.abs(finite_values)
+    directional = float(np.quantile(abs_values, directional_q))
+    rotational = float(np.quantile(abs_values, rotational_q))
+
+    return directional, rotational

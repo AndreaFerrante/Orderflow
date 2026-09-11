@@ -173,3 +173,23 @@ def test_calibrate_uses_abs_quantiles():
     slopes = pl.Series([-4, -3, -2, -1, 0, 1, 2, 3, 4, 5], dtype=pl.Float64)
     directional, rotational = calibrate_slope_thresholds(slopes)
     assert (directional, rotational) == pytest.approx((3.3, 2.0))
+
+
+def test_vwap_slope_at_excludes_ticks_after_cutoff_within_the_second():
+    # One session with three ticks: 08:30:00 (vwap 100), 10:00:00.000000 (vwap 101.5),
+    # 10:00:00.500000 (vwap 200). The 10:00:00.5 tick is after 10:00, so must be excluded.
+    # Correct slope: (101.5 - 100) / 1.5 hours = 1.0.
+    frame = pl.DataFrame({
+        "Datetime": [
+            datetime(2025, 9, 16, 8, 30, 0, 0),
+            datetime(2025, 9, 16, 10, 0, 0, 0),
+            datetime(2025, 9, 16, 10, 0, 0, 500000),
+        ],
+        "Date": ["2025-09-16"] * 3,
+        "Price": [100.0] * 3,
+        "Volume": [1] * 3,
+        "SessionType": ["RTH"] * 3,
+        "vwap": [100.0, 101.5, 200.0],
+    }).with_row_index("Index").with_columns(pl.col("Index").cast(pl.Int64))
+    out = vwap_slope_at(frame, at_ct="10:00")
+    assert out["vwap_slope"][0] == pytest.approx(1.5 / 1.5)

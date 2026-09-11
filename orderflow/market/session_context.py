@@ -143,62 +143,64 @@ def vwap_slope_at(ticks: pl.DataFrame, *, at_ct: str = "10:00") -> pl.DataFrame:
     """VWAP drift in points/hour from RTH open to a clock time (at_ct).
 
     Per session (Date), compute the slope of VWAP from the first RTH tick to the
-    last RTH tick at or before `at_ct`. Drops sessions with no tick at/before at_ct
-    or duration == 0.
+    last RTH tick at or before `at_ct` (microsecond-precise). Drops sessions with
+    no tick at/before at_ct or duration == 0.
     """
     rth = ticks.filter(pl.col("SessionType") == "RTH").sort("Datetime")
 
-    # Parse the target time (HH:MM) into time-of-day for comparison
-    # Extract hour and minute from at_ct string like "10:00"
-    h_str, m_str = at_ct.split(":")
-    target_sod = int(h_str) * 3600 + int(m_str) * 60  # seconds-of-day
-
-    # Group by Date and process each session
-    rows = []
-    for date in rth["Date"].unique():
-        session_ticks = rth.filter(pl.col("Date") == date).sort("Datetime")
-        if session_ticks.height == 0:
-            continue
-
-        # First tick's vwap (at RTH open, 08:30)
-        first_tick = session_ticks.row(0, named=True)
-        vwap_open = first_tick["vwap"]
-        first_dt = first_tick["Datetime"]
-
-        # Find last tick at or before at_ct
-        at_tick = None
-        for i in range(session_ticks.height - 1, -1, -1):
-            tick = session_ticks.row(i, named=True)
-            tick_dt = tick["Datetime"]
-            # Extract time-of-day (hour, minute, second) from naive datetime
-            h = tick_dt.hour
-            m = tick_dt.minute
-            s = tick_dt.second
-            tick_sod = h * 3600 + m * 60 + s
-            if tick_sod <= target_sod:
-                at_tick = tick
-                break
-
-        if at_tick is None:
-            continue
-
-        # Calculate hours elapsed
-        at_dt = at_tick["Datetime"]
-        micros_elapsed = (at_dt - first_dt).total_seconds() * 1_000_000
-        if micros_elapsed == 0:
-            continue
-        hours = micros_elapsed / (3600 * 1_000_000)
-
-        # Calculate slope
-        vwap_at = at_tick["vwap"]
-        slope = (vwap_at - vwap_open) / hours
-
-        rows.append({"Date": date, "vwap_slope": slope})
-
-    if not rows:
+    if rth.height == 0:
         return pl.DataFrame(schema={"Date": pl.String, "vwap_slope": pl.Float64})
 
-    return pl.DataFrame(rows, schema={"Date": pl.String, "vwap_slope": pl.Float64}).sort("Date")
+    # Parse at_ct (HH:MM) to hours and minutes
+    h_str, m_str = at_ct.split(":")
+    hours_offset = int(h_str)
+    minutes_offset = int(m_str)
+
+    # Create cutoff datetime per Date: Date at 00:00 + offset (microsecond-aware)
+    # This ensures 10:00:00.000000 passes the filter, but 10:00:00.500000 does not
+    cutoff_expr = (
+        pl.col("Date").str.to_datetime("%Y-%m-%d")
+        + pl.duration(hours=hours_offset, minutes=minutes_offset)
+    )
+
+    # Get first tick per Date (RTH open reference)
+    first_ticks = (
+        rth.group_by("Date", maintain_order=True)
+        .agg([
+            pl.col("Datetime").first().alias("first_dt"),
+            pl.col("vwap").first().alias("vwap_open"),
+        ])
+    )
+
+    # Get last tick at or before cutoff per Date
+    at_ticks = (
+        rth.filter(pl.col("Datetime") <= cutoff_expr)
+        .group_by("Date", maintain_order=True)
+        .agg([
+            pl.col("Datetime").last().alias("at_dt"),
+            pl.col("vwap").last().alias("vwap_at"),
+        ])
+    )
+
+    # Join, compute slope, drop invalid rows
+    result = (
+        first_ticks.join(at_ticks, on="Date", how="inner")
+        .with_columns([
+            (
+                (pl.col("at_dt") - pl.col("first_dt"))
+                .dt.total_microseconds() / 3.6e9
+            ).alias("hours"),
+        ])
+        .filter(pl.col("hours") > 0)
+        .with_columns([
+            ((pl.col("vwap_at") - pl.col("vwap_open")) / pl.col("hours"))
+            .alias("vwap_slope"),
+        ])
+        .select(["Date", "vwap_slope"])
+        .sort("Date")
+    )
+
+    return result if result.height > 0 else pl.DataFrame(schema={"Date": pl.String, "vwap_slope": pl.Float64})
 
 
 def calibrate_slope_thresholds(slopes, *, directional_q: float = 0.70,

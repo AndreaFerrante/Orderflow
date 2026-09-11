@@ -35,6 +35,21 @@ import re
 import numpy as np
 import polars as pl
 
+# Optional Numba import — graceful degradation
+try:
+    from numba import njit  # type: ignore[import-untyped]
+    HAS_NUMBA = True
+except ImportError:  # pragma: no cover
+    HAS_NUMBA = False
+
+    def njit(*args, **kwargs):  # type: ignore[misc]
+        """No-op decorator when Numba is not installed."""
+        def _wrapper(fn):  # type: ignore[return]
+            return fn
+        if args and callable(args[0]):
+            return args[0]
+        return _wrapper
+
 __all__ = [
     "apply_session_gates",
     "classify_session_regime",
@@ -79,20 +94,38 @@ def _count_vwap_crosses(
             f"confirm_distance must be positive, got {confirm_distance!r}"
         )
 
-    distance = price - vwap
-    crosses = 0
-    side = 0
-    for value in distance:
+    running = _running_vwap_crosses(price, vwap, confirm_distance=confirm_distance)
+    return int(running[-1]) if running.size else 0
+
+
+@njit(cache=True)
+def _running_vwap_crosses_core(
+    distance: np.ndarray, confirm_distance: float
+) -> np.ndarray:
+    out = np.zeros(distance.size, dtype=np.int64)
+    crosses, side = 0, 0
+    for i in range(distance.size):
+        value = distance[i]
         if value > confirm_distance:
             new_side = 1
         elif value < -confirm_distance:
             new_side = -1
         else:
+            out[i] = crosses
             continue
         if side != 0 and new_side != side:
             crosses += 1
         side = new_side
-    return crosses
+        out[i] = crosses
+    return out
+
+
+def _running_vwap_crosses(
+    price: np.ndarray, vwap: np.ndarray, *, confirm_distance: float
+) -> np.ndarray:
+    """Cumulative confirmed VWAP crosses at every tick (see _count_vwap_crosses)."""
+    distance = np.asarray(price, dtype=np.float64) - np.asarray(vwap, dtype=np.float64)
+    return _running_vwap_crosses_core(distance, confirm_distance)
 
 
 def classify_session_regime(

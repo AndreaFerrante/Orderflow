@@ -245,3 +245,67 @@ def calibrate_slope_thresholds(slopes, *, directional_q: float = 0.70,
     rotational = float(np.quantile(abs_values, rotational_q))
 
     return directional, rotational
+
+
+def classify_trend_state(state: pl.DataFrame, *, directional_slope_min: float,
+                         rotational_slope_max: float, min_minutes: float = 30) -> pl.Series:
+    """Label each running-state row TREND_UP / TREND_DOWN / RANGE / UNKNOWN, as of that tick.
+
+    slope = (vwap - open_vwap) / (minutes_since_open / 60); drift = POC - open_poc.
+    c1: open_location in (above, below) and not returned_to_value, direction +1 above / -1 below.
+    c2: |slope| >= directional_slope_min, direction sign(slope).
+    c3: vwap_crosses <= 1 (no direction).
+    c4: sign(drift) == sign(slope) != 0, direction sign(slope).
+    TREND if >=3 of c1..c4 hold and every held directional condition (c1, c2, c4) agrees in sign.
+    Else RANGE if vwap_crosses >= 2 and |slope| <= rotational_slope_max and
+    (open_location == inside or returned_to_value). Else UNKNOWN.
+    """
+    slope = (pl.col("vwap") - pl.col("open_vwap")) / (pl.col("minutes_since_open") / 60.0)
+    drift = pl.col("POC") - pl.col("open_poc")
+    slope_sign = pl.when(slope > 0).then(1).when(slope < 0).then(-1).otherwise(0)
+    drift_sign = pl.when(drift > 0).then(1).when(drift < 0).then(-1).otherwise(0)
+
+    c1_holds = pl.col("open_location").is_in(["above", "below"]) & ~pl.col("returned_to_value")
+    c1_dir = pl.when(pl.col("open_location") == "above").then(1).otherwise(-1)
+
+    c2_holds = slope.abs() >= directional_slope_min
+    c2_dir = slope_sign
+
+    c3_holds = pl.col("vwap_crosses") <= 1
+
+    c4_holds = (drift_sign == slope_sign) & (slope_sign != 0)
+    c4_dir = slope_sign
+
+    holds_count = (
+        c1_holds.cast(pl.Int32) + c2_holds.cast(pl.Int32)
+        + c3_holds.cast(pl.Int32) + c4_holds.cast(pl.Int32)
+    )
+
+    # Sum of held directional signs vs. count of held directional conditions: equal in
+    # magnitude only when every held directional condition agrees.
+    dir_sum = (
+        pl.when(c1_holds).then(c1_dir).otherwise(0)
+        + pl.when(c2_holds).then(c2_dir).otherwise(0)
+        + pl.when(c4_holds).then(c4_dir).otherwise(0)
+    )
+    dir_count = c1_holds.cast(pl.Int32) + c2_holds.cast(pl.Int32) + c4_holds.cast(pl.Int32)
+
+    is_trend = (holds_count >= 3) & (dir_sum.abs() == dir_count) & (dir_count > 0)
+    trend_dir = pl.when(dir_sum > 0).then(1).otherwise(-1)
+
+    is_range = (
+        (pl.col("vwap_crosses") >= 2) & (slope.abs() <= rotational_slope_max)
+        & ((pl.col("open_location") == "inside") | pl.col("returned_to_value"))
+    )
+
+    guard_unknown = (pl.col("minutes_since_open") < min_minutes) | (
+        pl.col("open_location").is_null() | (pl.col("open_location") == "unknown")
+    )
+
+    result = (
+        pl.when(guard_unknown).then(pl.lit("UNKNOWN"))
+        .when(is_trend).then(pl.when(trend_dir > 0).then(pl.lit("TREND_UP")).otherwise(pl.lit("TREND_DOWN")))
+        .when(is_range).then(pl.lit("RANGE"))
+        .otherwise(pl.lit("UNKNOWN"))
+    )
+    return state.select(result.alias("trend_state")).to_series()

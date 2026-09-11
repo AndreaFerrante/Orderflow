@@ -193,3 +193,48 @@ def test_vwap_slope_at_excludes_ticks_after_cutoff_within_the_second():
     }).with_row_index("Index").with_columns(pl.col("Index").cast(pl.Int64))
     out = vwap_slope_at(frame, at_ct="10:00")
     assert out["vwap_slope"][0] == pytest.approx(1.5 / 1.5)
+
+
+from orderflow.market.session_context import classify_trend_state
+
+UP = dict(minutes_since_open=60.0, vwap=102.0, open_vwap=100.0, POC=101.5, open_poc=100.0,
+          vwap_crosses=0, open_location="above", returned_to_value=False)
+
+
+def trend(**overrides):
+    row = pl.DataFrame([{**UP, **overrides}])
+    return classify_trend_state(row, directional_slope_min=1.0, rotational_slope_max=0.5)[0]
+
+
+def test_trend_up_when_vwap_rises_and_poc_agrees():
+    assert trend() == "TREND_UP"
+
+
+def test_trend_down_mirror():
+    assert trend(vwap=98.0, POC=98.5, open_location="below") == "TREND_DOWN"
+
+
+def test_range_when_crosses_flat_slope_inside_value():
+    assert trend(vwap=100.2, POC=100.0, vwap_crosses=3, open_location="inside") == "RANGE"
+
+
+def test_unknown_before_min_minutes():
+    assert trend(minutes_since_open=20.0) == "UNKNOWN"
+
+
+def test_unknown_when_prior_levels_null():
+    assert trend(open_location="unknown") == "UNKNOWN"
+
+
+# c1 off (returned to value) leaves exactly three conditions; removing any one must lose the trend.
+@pytest.mark.parametrize("broken", [dict(vwap=100.6),        # c2: slope 0.6 < 1.0
+                                    dict(vwap_crosses=2),    # c3
+                                    dict(POC=100.0)])        # c4: no POC drift
+def test_each_trend_condition_removed_flips_state(broken):
+    assert trend(returned_to_value=True) == "TREND_UP"
+    assert trend(returned_to_value=True, **broken) != "TREND_UP"
+
+
+def test_disagreeing_direction_is_not_trend():
+    # c1 says down (opened below, never returned), c2/c4 say up: not a trend.
+    assert trend(open_location="below") not in ("TREND_UP", "TREND_DOWN")

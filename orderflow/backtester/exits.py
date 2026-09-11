@@ -319,6 +319,34 @@ class TimeBasedExit(BaseExitStrategy):
 
 
 # ---------------------------------------------------------------------------
+# Elapsed-time exit (wall-clock minutes since entry)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ElapsedTimeExit(BaseExitStrategy):
+    """Close the position once ``max_minutes`` of wall-clock time have passed since entry."""
+    max_minutes: float = 60.0
+
+    def on_tick(self, tick, position, price_history, indicators) -> ExitSignal:
+        if position.entry_datetime is None:
+            return ExitSignal(should_exit=False)
+
+        tick_dt = np.datetime64(tick.datetime, "us")
+        entry_dt = np.datetime64(position.entry_datetime, "us")
+        elapsed = tick_dt - entry_dt
+        threshold = np.timedelta64(int(round(self.max_minutes * 60 * 1_000_000)), "us")
+
+        if elapsed >= threshold:
+            elapsed_minutes = float(elapsed / np.timedelta64(1, 'm'))
+            return ExitSignal(
+                should_exit=True,
+                reason=ExitReason.TIME_EXIT,
+                metadata={"elapsed_minutes": elapsed_minutes}
+            )
+        return ExitSignal(should_exit=False)
+
+
+# ---------------------------------------------------------------------------
 # Volatility-based exit
 # ---------------------------------------------------------------------------
 

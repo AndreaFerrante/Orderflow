@@ -247,3 +247,163 @@ def post_cluster_hold(ticks: pl.DataFrame, clusters: pl.DataFrame, *, hold_s: fl
         pl.Series("entry_index", entry_index, dtype=pl.Int64),
         pl.Series("entry_price", entry_price, dtype=pl.Float64))
     return out.filter(pl.col("trigger_index").is_not_null() & pl.col("entry_index").is_not_null())
+
+
+_CONTEXT_COLUMNS = {
+    "minutes_since_open": pl.Float64, "dist_to_side_extreme_ticks": pl.Float64,
+    "band_z": pl.Float64, "prior_level_touch": pl.Boolean, "trend_state": pl.String,
+    "absorption_ratio": pl.Float64, "book_imbalance_l5": pl.Float64, "location_bucket": pl.String,
+}
+
+
+_MINUTE_US = 60_000_000
+
+
+def _compute_absorption_ratio(clusters: pl.DataFrame, ticks: pl.DataFrame, *,
+                              impact_constant: float) -> pl.Series:
+    """Per-cluster square-root-law absorption ratio, causal as of the qualifying print.
+
+    Builds per-Date numpy arrays once (RTH ticks' Index/Price/Datetime, cumulative
+    volume, and minute-close prices), then loops over clusters using
+    ``np.searchsorted`` for the sigma window and the volume-to-date lookup --
+    no per-cluster filter of the whole tick frame.
+    """
+    from orderflow.market.microstructure.impact import compute_absorption_ratio
+
+    rth = ticks.filter(pl.col("SessionType") == "RTH").sort("Index")
+    by_date: dict[str, dict[str, np.ndarray]] = {}
+    for date, grp in rth.group_by("Date", maintain_order=True):
+        d = date if isinstance(date, str) else date[0]
+        grp = grp.sort("Index")
+        minute = (grp.with_columns(pl.col("Datetime").dt.truncate("1m").alias("_bucket"))
+                  .group_by("_bucket", maintain_order=True)
+                  .agg(pl.col("Price").last().alias("close"))
+                  .sort("_bucket"))
+        by_date[d] = {
+            "index": grp["Index"].to_numpy(),
+            "price": grp["Price"].to_numpy(),
+            "datetime_us": grp["Datetime"].cast(pl.Int64).to_numpy(),
+            "cum_volume": np.concatenate(
+                [[0.0], np.cumsum(grp["Volume"].to_numpy().astype(np.float64))]),
+            "minute_bucket_us": minute["_bucket"].cast(pl.Int64).to_numpy(),
+            "minute_close": minute["close"].to_numpy(),
+        }
+
+    sigma_vals, volume_vals, price_start, price_end = [], [], [], []
+    for row in clusters.iter_rows(named=True):
+        arrs = by_date.get(row["Date"])
+        first_idx, qualify_idx = row["first_index"], row["qualify_index"]
+        if arrs is None or first_idx is None or qualify_idx is None:
+            sigma_vals.append(None)
+            volume_vals.append(None)
+            price_start.append(None)
+            price_end.append(None)
+            continue
+
+        idx_arr = arrs["index"]
+        pos_first = int(np.searchsorted(idx_arr, first_idx, side="left"))
+        pos_qualify = int(np.searchsorted(idx_arr, qualify_idx, side="left"))
+        if (pos_first >= len(idx_arr) or idx_arr[pos_first] != first_idx
+                or pos_qualify >= len(idx_arr) or idx_arr[pos_qualify] != qualify_idx):
+            sigma_vals.append(None)
+            volume_vals.append(None)
+            price_start.append(None)
+            price_end.append(None)
+            continue
+
+        volume_vals.append(float(arrs["cum_volume"][pos_first]))
+        price_start.append(float(arrs["price"][pos_first]))
+        price_end.append(float(arrs["price"][pos_qualify]))
+
+        first_datetime_us = int(arrs["datetime_us"][pos_first])
+        window_start_us = first_datetime_us - 30 * _MINUTE_US
+        bucket_us = arrs["minute_bucket_us"]
+        lo = int(np.searchsorted(bucket_us, window_start_us, side="left"))
+        hi = int(np.searchsorted(bucket_us, first_datetime_us, side="left"))
+        window = arrs["minute_close"][lo:hi]
+        sigma_vals.append(float(np.std(np.diff(window), ddof=1)) if window.size >= 2 else None)
+
+    orders = pl.DataFrame({
+        "aggressor_size": clusters["gross_volume"].to_list(),
+        "aggressor_price_start": pl.Series(price_start, dtype=pl.Float64),
+        "aggressor_price_end": pl.Series(price_end, dtype=pl.Float64),
+    })
+    result = compute_absorption_ratio(
+        orders,
+        sigma=pl.Series(sigma_vals, dtype=pl.Float64),
+        session_volume_to_date=pl.Series(volume_vals, dtype=pl.Float64),
+        impact_constant=impact_constant,
+    )
+    return result["absorption_ratio"].alias("absorption_ratio")
+
+
+def cluster_context_asof(clusters: pl.DataFrame, state: pl.DataFrame, levels: pl.DataFrame,
+                         ticks: pl.DataFrame, *, tick_size: float, directional_slope_min: float,
+                         rotational_slope_max: float, impact_constant: float = 1.0) -> pl.DataFrame:
+    """Attach as-of context to each cluster's trigger tick. Strictly causal."""
+    if clusters.height == 0:
+        return clusters.with_columns([pl.lit(None, dtype=t).alias(c)
+                                      for c, t in _CONTEXT_COLUMNS.items()])
+
+    cluster_cols = clusters.columns
+
+    state_cols = ["Index", "minutes_since_open", "run_high", "run_low", "vwap", "vwap_sd1_top",
+                  "POC", "open_vwap", "open_poc", "vwap_crosses", "open_location", "returned_to_value"]
+    joined = clusters.join(state.select(state_cols), left_on="trigger_index", right_on="Index",
+                           how="left")
+
+    side = pl.col("side")
+    cvwap = pl.col("cluster_vwap")
+    dist_to_side_extreme_ticks = (
+        pl.when(side == 1).then((pl.col("run_high") - cvwap) / tick_size)
+        .otherwise((cvwap - pl.col("run_low")) / tick_size)
+    )
+    band_denom = pl.col("vwap_sd1_top") - pl.col("vwap")
+    band_z = pl.when(band_denom > 0).then((cvwap - pl.col("vwap")) / band_denom).otherwise(None)
+    joined = joined.with_columns(
+        dist_to_side_extreme_ticks.alias("dist_to_side_extreme_ticks"),
+        band_z.alias("band_z"),
+    )
+
+    level_cols = ["Date", "prev_high", "prev_low", "prev_vah", "prev_val"]
+    joined = joined.join(levels.select(level_cols), on="Date", how="left")
+
+    def _level_touch(level_col: str) -> pl.Expr:
+        level = pl.col(level_col)
+        buy = (level - cvwap >= 0) & (level - cvwap <= 4 * tick_size)
+        sell = (cvwap - level >= 0) & (cvwap - level <= 4 * tick_size)
+        return pl.when(level.is_null()).then(False).when(side == 1).then(buy).otherwise(sell)
+
+    prior_level_touch = (
+        _level_touch("prev_high") | _level_touch("prev_low")
+        | _level_touch("prev_vah") | _level_touch("prev_val")
+    )
+    joined = joined.with_columns(prior_level_touch.fill_null(False).alias("prior_level_touch"))
+
+    dom_cols = ["Index"] + [f"BidDOM_{k}" for k in range(5)] + [f"AskDOM_{k}" for k in range(5)]
+    joined = joined.join(ticks.select(dom_cols), left_on="qualify_index", right_on="Index",
+                         how="left")
+    bid_sum = sum(pl.col(f"BidDOM_{k}") for k in range(5))
+    ask_sum = sum(pl.col(f"AskDOM_{k}") for k in range(5))
+    book_total = bid_sum + ask_sum
+    book_imbalance_l5 = pl.when(book_total == 0).then(None).otherwise((bid_sum - ask_sum) / book_total)
+    joined = joined.with_columns(book_imbalance_l5.alias("book_imbalance_l5"))
+
+    joined = joined.with_columns(_compute_absorption_ratio(joined, ticks, impact_constant=impact_constant))
+
+    from orderflow.market.session_context import classify_trend_state
+    trend_state = classify_trend_state(joined, directional_slope_min=directional_slope_min,
+                                       rotational_slope_max=rotational_slope_max)
+    joined = joined.with_columns(trend_state)
+
+    location_bucket = (
+        pl.when(pl.col("prior_level_touch")).then(pl.lit("prior_level"))
+        .when(pl.col("dist_to_side_extreme_ticks") <= 4).then(pl.lit("side_extreme"))
+        .when(pl.col("band_z").abs() > 1).then(pl.lit("beyond_1sd"))
+        .otherwise(pl.lit("inside_1sd"))
+    )
+    joined = joined.with_columns(location_bucket.alias("location_bucket"))
+
+    out_cols = cluster_cols + list(_CONTEXT_COLUMNS.keys())
+    joined = joined.sort("trigger_index")
+    return joined.select(out_cols)

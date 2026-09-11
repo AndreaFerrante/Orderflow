@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from orderflow.market.big_print_clusters import find_big_print_clusters, post_cluster_hold
+from orderflow.market.big_print_clusters import cluster_context_asof
 
 TICK = 0.25
 
@@ -130,3 +131,111 @@ def test_entry_is_first_tick_of_next_minute_bar():
     assert out["entry_index"][0] == ticks.filter(
         pl.col("current_bar_datetime") == trig["next_bar_datetime"][0])["Index"].min()
     assert out["entry_price"][0] == trig["next_bar_open"][0]
+
+
+def ctx_inputs(n=40, side=1, cvwap=100.0, run_high=101.0, run_low=99.0, vwap=100.0,
+               sd1=101.0, levels=None, bid=10.0, ask=30.0):
+    """Hand-built state/ticks for session 2025-09-16: one row per Index 0..n-1."""
+    idx = list(range(n))
+    state = pl.DataFrame({
+        "Index": idx, "Date": ["2025-09-16"] * n,
+        "minutes_since_open": [60.0 + i for i in idx],
+        "run_high": [run_high] * n, "run_low": [run_low] * n,
+        "open_price": [100.0] * n, "open_vwap": [100.0] * n, "open_poc": [100.0] * n,
+        "vwap": [vwap] * n, "vwap_sd1_top": [sd1] * n, "POC": [100.0] * n,
+        "vwap_crosses": [3] * n, "open_location": ["inside"] * n,
+        "returned_to_value": [True] * n,
+    })
+    t0 = datetime(2025, 9, 16, 9, 0)
+    ticks = pl.DataFrame({
+        "Index": idx, "Datetime": [t0 + timedelta(minutes=i) for i in idx],
+        "Date": ["2025-09-16"] * n, "Price": [100.0] * n, "Volume": [10] * n,
+        "SessionType": ["RTH"] * n,
+        **{f"BidDOM_{k}": [bid] * n for k in range(5)},
+        **{f"AskDOM_{k}": [ask] * n for k in range(5)},
+    })
+    levels = pl.DataFrame({"Date": ["2025-09-16"], "prev_high": [110.0],
+                           "prev_low": [90.0], "prev_close": [100.0], "prev_poc": [100.0],
+                           "prev_vah": [108.0], "prev_val": [92.0]}) if levels is None else levels
+    return state, ticks, levels
+
+
+def one_cluster(trigger_index, *, side=1, cvwap=100.0, qualify_index=None, first_index=None):
+    q = trigger_index - 1 if qualify_index is None else qualify_index
+    return {"cluster_id": trigger_index, "first_index": q - 1 if first_index is None else first_index,
+            "qualify_index": q, "trigger_index": trigger_index, "side": side,
+            "cluster_vwap": cvwap, "gross_volume": 120.0, "Date": "2025-09-16"}
+
+
+def context(rows, **kw):
+    state, ticks, levels = ctx_inputs(**kw)
+    return cluster_context_asof(pl.DataFrame(rows), state, levels, ticks, tick_size=TICK,
+                                directional_slope_min=1.0, rotational_slope_max=0.5)
+
+
+def test_context_joins_state_at_trigger_and_keeps_order():
+    out = context([one_cluster(35), one_cluster(10)])
+    assert out["trigger_index"].to_list() == [10, 35]
+    assert out["minutes_since_open"].to_list() == [70.0, 95.0]
+
+
+def test_side_extreme_distance_and_band_z():
+    out = context([one_cluster(10, side=1), one_cluster(20, side=-1)],
+                  run_high=101.0, run_low=99.5, vwap=100.0, sd1=100.5)
+    assert out["dist_to_side_extreme_ticks"].to_list() == [4.0, 2.0]
+    assert out["band_z"].to_list() == [0.0, 0.0]
+
+
+def test_prior_level_touch_within_4_ticks_on_side():
+    near = pl.DataFrame({"Date": ["2025-09-16"], "prev_high": [110.0], "prev_low": [90.0],
+                         "prev_close": [100.0], "prev_poc": [100.0],
+                         "prev_vah": [100.75], "prev_val": [92.0]})
+    touch = context([one_cluster(10, side=1)], levels=near)
+    far = context([one_cluster(10, side=1)])
+    wrong_side = context([one_cluster(10, side=-1)], levels=near)
+    assert (touch["prior_level_touch"][0], far["prior_level_touch"][0],
+            wrong_side["prior_level_touch"][0]) == (True, False, False)
+
+
+def test_book_imbalance_l5():
+    out = context([one_cluster(10)], bid=10.0, ask=30.0)
+    assert out["book_imbalance_l5"][0] == pytest.approx((50 - 150) / 200)
+
+
+def test_absorption_ratio_uses_prior_sigma_and_volume():
+    state, ticks, levels = ctx_inputs(n=40)
+    prices = [100.0 + (0.25 if i % 2 else 0.0) for i in range(40)]   # 1-minute changes +-0.25
+    ticks = ticks.with_columns(pl.Series("Price", prices))
+    row = one_cluster(36, qualify_index=35, first_index=34)
+    out = cluster_context_asof(pl.DataFrame([row]), state, levels, ticks, tick_size=TICK,
+                               directional_slope_min=1.0, rotational_slope_max=0.5)
+    window = np.array(prices[4:34])                                   # 30 minutes before first print
+    sigma = np.std(np.diff(window), ddof=1)
+    volume_before = 10.0 * 34
+    expected = abs(prices[35] - prices[34]) / (1.0 * sigma * np.sqrt(120.0 / volume_before))
+    assert out["absorption_ratio"][0] == pytest.approx(expected)
+
+
+def test_location_bucket_priority():
+    near = pl.DataFrame({"Date": ["2025-09-16"], "prev_high": [110.0], "prev_low": [90.0],
+                         "prev_close": [100.0], "prev_poc": [100.0],
+                         "prev_vah": [100.5], "prev_val": [92.0]})
+    prior = context([one_cluster(10)], levels=near, run_high=100.5)      # touch and extreme
+    extreme = context([one_cluster(10)], run_high=100.5)                 # extreme only
+    beyond = context([one_cluster(10, cvwap=101.5)], run_high=110.0)     # band_z 1.5
+    inside = context([one_cluster(10)], run_high=110.0)
+    assert [f["location_bucket"][0] for f in (prior, extreme, beyond, inside)] == [
+        "prior_level", "side_extreme", "beyond_1sd", "inside_1sd"]
+
+
+def test_context_is_causal():
+    state, ticks, levels = ctx_inputs(n=40)
+    rows = pl.DataFrame([one_cluster(20)])
+    kw = dict(tick_size=TICK, directional_slope_min=1.0, rotational_slope_max=0.5)
+    before = cluster_context_asof(rows, state, levels, ticks, **kw)
+    later_ticks = ticks.with_columns(pl.when(pl.col("Index") > 20).then(999.0)
+                                     .otherwise(pl.col("Price")).alias("Price"))
+    later_state = state.with_columns(pl.when(pl.col("Index") > 20).then(999.0)
+                                     .otherwise(pl.col("run_high")).alias("run_high"))
+    after = cluster_context_asof(rows, later_state, levels, later_ticks, **kw)
+    assert before.equals(after)

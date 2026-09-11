@@ -407,3 +407,60 @@ def cluster_context_asof(clusters: pl.DataFrame, state: pl.DataFrame, levels: pl
     out_cols = cluster_cols + list(_CONTEXT_COLUMNS.keys())
     joined = joined.sort("trigger_index")
     return joined.select(out_cols)
+
+
+def select_join_signals(ctx: pl.DataFrame, *, band_z_max: float = 1.0, min_extreme_ticks: float = 8,
+                        window_ct: tuple = ("09:00", "15:00")) -> pl.DataFrame:
+    start_h, start_m = (int(x) for x in window_ct[0].split(":"))
+    end_h, end_m = (int(x) for x in window_ct[1].split(":"))
+    t = pl.col("trigger_datetime").dt.time()
+    in_window = (t >= pl.time(start_h, start_m)) & (t <= pl.time(end_h, end_m))
+    mask = (
+        (((pl.col("trend_state") == "TREND_UP") & (pl.col("side") == 1))
+         | ((pl.col("trend_state") == "TREND_DOWN") & (pl.col("side") == -1)))
+        & (pl.col("band_z").abs() <= band_z_max)
+        & (pl.col("dist_to_side_extreme_ticks") >= min_extreme_ticks)
+        & pl.col("hold_passed")
+        & in_window
+    )
+    return (ctx.filter(mask)
+            .with_columns(pl.col("side").cast(pl.Int64).alias("direction"),
+                         pl.lit("join").alias("book")))
+
+
+def select_fade_signals(ctx: pl.DataFrame, *, extreme_ticks: float = 4,
+                        window_ct: tuple = ("09:00", "15:00")) -> pl.DataFrame:
+    start_h, start_m = (int(x) for x in window_ct[0].split(":"))
+    end_h, end_m = (int(x) for x in window_ct[1].split(":"))
+    t = pl.col("trigger_datetime").dt.time()
+    in_window = (t >= pl.time(start_h, start_m)) & (t <= pl.time(end_h, end_m))
+    prior_touch = pl.col("prior_level_touch").fill_null(False)
+    absorption_low = (pl.col("absorption_ratio") < 1).fill_null(False)
+    mask = (
+        (pl.col("trend_state") == "RANGE")
+        & ((pl.col("dist_to_side_extreme_ticks") <= extreme_ticks) | prior_touch)
+        & (pl.col("hold_failed") | absorption_low)
+        & in_window
+    )
+    return (ctx.filter(mask)
+            .with_columns((-pl.col("side")).cast(pl.Int64).alias("direction"),
+                         pl.lit("fade").alias("book")))
+
+
+def attach_structural_exits(signals: pl.DataFrame, *, tick_size: float, buffer_ticks: float = 2,
+                            min_sl_ticks: float = 4, max_sl_ticks: float = 40,
+                            rr: float = 2.0) -> pl.DataFrame:
+    # ponytail: abs() sizes the stop distance only; a structural level on the profit
+    # side of entry still yields a loss-side stop at that distance -- drop such rows
+    # if it shows up in the trades.
+    stop = (
+        pl.when(pl.col("book") == "join")
+        .then(pl.col("origin_price") - pl.col("direction") * buffer_ticks * tick_size)
+        .otherwise(pl.col("far_price") + pl.col("side") * buffer_ticks * tick_size)
+    )
+    sl_ticks = ((pl.col("entry_price") - stop).abs() / tick_size).round(0)
+    out = signals.with_columns(sl_ticks.alias("SL_Ticks"))
+    out = out.filter(pl.col("SL_Ticks") <= max_sl_ticks)
+    out = out.with_columns(pl.col("SL_Ticks").clip(lower_bound=min_sl_ticks).alias("SL_Ticks"))
+    out = out.with_columns((rr * pl.col("SL_Ticks")).alias("TP_Ticks"))
+    return out

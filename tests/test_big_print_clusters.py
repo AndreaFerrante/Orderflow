@@ -8,6 +8,8 @@ import pytest
 
 from orderflow.market.big_print_clusters import find_big_print_clusters, post_cluster_hold
 from orderflow.market.big_print_clusters import cluster_context_asof
+from orderflow.market.big_print_clusters import (
+    attach_structural_exits, select_fade_signals, select_join_signals)
 
 TICK = 0.25
 
@@ -239,3 +241,60 @@ def test_context_is_causal():
                                      .otherwise(pl.col("run_high")).alias("run_high"))
     after = cluster_context_asof(rows, later_state, levels, later_ticks, **kw)
     assert before.equals(after)
+
+
+JOIN = dict(trend_state="TREND_UP", side=1, band_z=0.5, dist_to_side_extreme_ticks=12.0,
+            hold_passed=True, hold_failed=False, absorption_ratio=1.5, prior_level_touch=False,
+            trigger_datetime=datetime(2025, 9, 16, 10, 0), entry_price=100.0,
+            far_price=100.5, origin_price=99.0)
+FADE = dict(JOIN, trend_state="RANGE", dist_to_side_extreme_ticks=2.0, hold_passed=False,
+            hold_failed=True)
+
+
+def rows(base, **overrides):
+    return pl.DataFrame([{**base, **overrides}])
+
+
+def test_join_direction_equals_cluster_side():
+    assert select_join_signals(rows(JOIN))["direction"].to_list() == [1]
+    down = rows(JOIN, trend_state="TREND_DOWN", side=-1)
+    assert select_join_signals(down)["direction"].to_list() == [-1]
+
+
+@pytest.mark.parametrize("broken", [dict(trend_state="RANGE"), dict(side=-1), dict(band_z=1.5),
+                                    dict(dist_to_side_extreme_ticks=4.0), dict(hold_passed=False),
+                                    dict(trigger_datetime=datetime(2025, 9, 16, 8, 45))])
+def test_join_each_condition_removed_drops_signal(broken):
+    assert select_join_signals(rows(JOIN, **broken)).height == 0
+
+
+def test_fade_direction_opposes_cluster_side():
+    assert select_fade_signals(rows(FADE))["direction"].to_list() == [-1]
+    assert select_fade_signals(rows(FADE, side=-1))["direction"].to_list() == [1]
+
+
+@pytest.mark.parametrize("broken", [dict(trend_state="TREND_UP"),
+                                    dict(dist_to_side_extreme_ticks=10.0),
+                                    dict(hold_failed=False, absorption_ratio=1.5),
+                                    dict(trigger_datetime=datetime(2025, 9, 16, 15, 30))])
+def test_fade_each_condition_removed_drops_signal(broken):
+    assert select_fade_signals(rows(FADE, **broken)).height == 0
+
+
+def test_exits_stop_beyond_origin_for_join_far_for_fade():
+    join = attach_structural_exits(select_join_signals(rows(JOIN)), tick_size=TICK)
+    fade = attach_structural_exits(select_fade_signals(rows(FADE, far_price=100.75)),
+                                   tick_size=TICK)
+    # join LONG: stop 99.0 - 0.5 = 98.5 -> (100.0 - 98.5) / 0.25 = 6
+    assert (join["SL_Ticks"][0], join["TP_Ticks"][0]) == (6.0, 12.0)
+    # fade SHORT after a buy push: stop 100.75 + 0.5 = 101.25 -> 5
+    assert (fade["SL_Ticks"][0], fade["TP_Ticks"][0]) == (5.0, 10.0)
+
+
+def test_exits_drop_sl_above_40_clip_below_4():
+    wide = attach_structural_exits(select_join_signals(rows(JOIN, origin_price=88.0)),
+                                   tick_size=TICK)
+    tight = attach_structural_exits(select_join_signals(rows(JOIN, origin_price=100.0)),
+                                    tick_size=TICK)
+    assert wide.height == 0                                  # 48 ticks -> dropped
+    assert (tight["SL_Ticks"][0], tight["TP_Ticks"][0]) == (4.0, 8.0)   # 2 -> clipped to 4

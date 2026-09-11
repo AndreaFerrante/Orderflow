@@ -7,6 +7,70 @@ import polars as pl
 import pytest
 
 from orderflow.market.large_order_flow import _count_vwap_crosses, _running_vwap_crosses
+from orderflow.market.session_context import prior_rth_levels
+
+TICK = 0.25
+
+
+def session(date, prices, volumes=None, *, start="08:30:00", step_s=10, session_type="RTH",
+            **extra):
+    """One session of ticks, ``step_s`` seconds apart. ``extra`` holds per-tick column lists."""
+    volumes = volumes or [1] * len(prices)
+    t0 = datetime.fromisoformat(f"{date}T{start}")
+    frame = pl.DataFrame({
+        "Datetime": [t0 + timedelta(seconds=step_s * i) for i in range(len(prices))],
+        "Date": [date] * len(prices),
+        "Price": [float(p) for p in prices],
+        "Volume": [int(v) for v in volumes],
+        "SessionType": [session_type] * len(prices),
+        **{k: [float(x) for x in v] for k, v in extra.items()},
+    })
+    return frame
+
+
+def stack(*frames):
+    return (pl.concat(frames, how="diagonal").sort("Datetime")
+            .with_row_index("Index").with_columns(pl.col("Index").cast(pl.Int64)))
+
+
+def test_prior_levels_first_session_null():
+    ticks = stack(session("2025-09-15", [100, 101, 102]), session("2025-09-16", [103, 104]))
+    levels = prior_rth_levels(ticks, tick_size=TICK)
+    assert levels.height == 2
+    first = levels.filter(pl.col("Date") == "2025-09-15")
+    assert first.select(pl.all().exclude("Date").is_null().all()).row(0) == (True,) * 6
+
+
+def test_prior_levels_carry_previous_session_high_low_close():
+    ticks = stack(session("2025-09-15", [100, 102, 101]), session("2025-09-16", [110, 111]))
+    row = prior_rth_levels(ticks, tick_size=TICK).filter(pl.col("Date") == "2025-09-16")
+    assert row.select("prev_high", "prev_low", "prev_close").row(0) == (102.0, 100.0, 101.0)
+
+
+def test_prior_poc_is_max_volume_price():
+    ticks = stack(session("2025-09-15", [100, 100.25, 100.5], [5, 20, 3]),
+                  session("2025-09-16", [101]))
+    row = prior_rth_levels(ticks, tick_size=TICK).filter(pl.col("Date") == "2025-09-16")
+    assert row["prev_poc"][0] == 100.25
+
+
+def test_prior_value_area_exact_on_hand_profile():
+    # volume by price 100.00:10  100.25:25  100.50:40  100.75:15  101.00:10, total 100.
+    # POC 100.50 (40) -> below 25 > above 15, add 100.25 (65) -> above 15 > below 10,
+    # add 100.75 (80 >= 70) -> VAL 100.25, VAH 100.75.
+    prices = [100.0, 100.25, 100.5, 100.75, 101.0]
+    ticks = stack(session("2025-09-15", prices, [10, 25, 40, 15, 10]),
+                  session("2025-09-16", [101]))
+    row = prior_rth_levels(ticks, tick_size=TICK).filter(pl.col("Date") == "2025-09-16")
+    assert row.select("prev_vah", "prev_val").row(0) == (100.75, 100.25)
+
+
+def test_prior_levels_ignore_eth_ticks():
+    ticks = stack(session("2025-09-15", [100, 102]),
+                  session("2025-09-15", [200], start="17:00:00", session_type="ETH"),
+                  session("2025-09-16", [101]))
+    row = prior_rth_levels(ticks, tick_size=TICK).filter(pl.col("Date") == "2025-09-16")
+    assert row["prev_high"][0] == 102.0
 
 
 def test_running_crosses_counts_confirmed_flips():

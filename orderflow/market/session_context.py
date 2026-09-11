@@ -99,7 +99,7 @@ _STATE_SCHEMA = {
 
 def running_session_state(ticks: pl.DataFrame, levels: pl.DataFrame, *, tick_size: float,
                           cross_confirm_ticks: int = 2) -> pl.DataFrame:
-    rth = ticks.filter(pl.col("SessionType") == "RTH")
+    rth = ticks.filter(pl.col("SessionType") == "RTH").sort("Index")
     open_time = pl.col("Date").str.to_datetime("%Y-%m-%d").dt.offset_by("8h30m")
     out = rth.with_columns(
         pl.col("Price").cum_max().over("Date").alias("run_high"),

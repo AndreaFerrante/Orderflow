@@ -148,3 +148,12 @@ def test_state_vwap_crosses_match_running_helper():
     expected = _running_vwap_crosses(np.array(prices, float), np.full(6, 100.0),
                                      confirm_distance=2 * TICK)
     assert out["vwap_crosses"].to_list() == expected.tolist()
+
+
+def test_state_independent_of_input_row_order():
+    ticks = state_ticks([100, 101, 99, 100, 102])
+    levels = prior_rth_levels(ticks, tick_size=TICK)
+    ordered = running_session_state(ticks, levels, tick_size=TICK)
+    shuffled = running_session_state(
+        ticks.sample(fraction=1.0, shuffle=True, seed=7), levels, tick_size=TICK)
+    assert ordered.equals(shuffled)

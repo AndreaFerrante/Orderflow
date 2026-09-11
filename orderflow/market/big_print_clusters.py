@@ -145,3 +145,105 @@ def find_big_print_clusters(ticks: pl.DataFrame, *, min_print_size: int, window_
         return pl.DataFrame(schema=_CLUSTER_SCHEMA)
 
     return pl.DataFrame(rows, schema=_CLUSTER_SCHEMA)
+
+
+def post_cluster_hold(ticks: pl.DataFrame, clusters: pl.DataFrame, *, hold_s: float = 30.0,
+                      tick_size: float) -> pl.DataFrame:
+    """Test the 30 s post-cluster hold and map each cluster to its trigger and entry tick.
+
+    RTH ticks only, matched to a cluster's own ``Date``. For each cluster, the
+    hold window is ``(qualify_datetime, qualify_datetime + hold_s]``:
+    ``hold_passed`` if price never traded ``tol`` against the cluster side and
+    ended on-side; ``hold_failed`` if it ended more than ``tol`` against it. The
+    trigger is the first RTH tick after the window closes; the entry is the
+    first tick of the trigger's next minute bar, priced at ``next_bar_open``.
+    Clusters with no trigger or no entry tick in the same session are dropped.
+    """
+    if clusters.height == 0:
+        return clusters.with_columns(
+            [pl.lit(None, dtype=pl.Boolean).alias(c) for c in ("hold_passed", "hold_failed")]
+            + [pl.lit(None, dtype=pl.Int64).alias("trigger_index"),
+               pl.lit(None, dtype=pl.Datetime("us")).alias("trigger_datetime"),
+               pl.lit(None, dtype=pl.Float64).alias("trigger_price"),
+               pl.lit(None, dtype=pl.Int64).alias("entry_index"),
+               pl.lit(None, dtype=pl.Float64).alias("entry_price")])
+
+    rth = ticks.filter(pl.col("SessionType") == "RTH").sort("Index")
+
+    by_date: dict[str, dict[str, np.ndarray]] = {}
+    for date, grp in rth.group_by("Date", maintain_order=True):
+        d = date if isinstance(date, str) else date[0]
+        grp = grp.sort("Index")
+        by_date[d] = {
+            "datetime": grp["Datetime"].to_numpy(),
+            "datetime_us": grp["Datetime"].cast(pl.Int64).to_numpy(),
+            "price": grp["Price"].to_numpy(),
+            "index": grp["Index"].to_numpy(),
+            "current_bar_us": grp["current_bar_datetime"].cast(pl.Int64).to_numpy(),
+            "next_bar_us": grp["next_bar_datetime"].cast(pl.Int64).to_numpy(),
+            "next_bar_open": grp["next_bar_open"].to_numpy(),
+        }
+
+    hold_passed, hold_failed = [], []
+    trigger_index, trigger_datetime, trigger_price = [], [], []
+    entry_index, entry_price = [], []
+    for row in clusters.iter_rows(named=True):
+        arrs = by_date.get(row["Date"])
+        if arrs is None:
+            hold_passed.append(False)
+            hold_failed.append(False)
+            trigger_index.append(None)
+            trigger_datetime.append(None)
+            trigger_price.append(None)
+            entry_index.append(None)
+            entry_price.append(None)
+            continue
+
+        dt = arrs["datetime_us"]
+        qdt_us = np.datetime64(row["qualify_datetime"], "us").astype(np.int64)
+        window_end_us = qdt_us + np.int64(hold_s * 1_000_000)
+        lo = int(np.searchsorted(dt, qdt_us, side="right"))
+        hi = int(np.searchsorted(dt, window_end_us, side="right"))
+
+        if hi > lo:
+            s = row["side"]
+            cvwap = row["cluster_vwap"]
+            tol = tick_size
+            diffs = s * (arrs["price"][lo:hi] - cvwap)
+            hold_passed.append(bool(diffs.min() >= -tol and diffs[-1] > 0))
+            hold_failed.append(bool(diffs[-1] < -tol))
+        else:
+            hold_passed.append(False)
+            hold_failed.append(False)
+
+        if hi >= len(dt):
+            trigger_index.append(None)
+            trigger_datetime.append(None)
+            trigger_price.append(None)
+            entry_index.append(None)
+            entry_price.append(None)
+            continue
+
+        trigger_index.append(int(arrs["index"][hi]))
+        trigger_datetime.append(arrs["datetime"][hi].item())
+        trigger_price.append(float(arrs["price"][hi]))
+
+        next_bar_us = arrs["next_bar_us"][hi]
+        cbd = arrs["current_bar_us"]
+        epos = int(np.searchsorted(cbd, next_bar_us, side="left"))
+        if epos < len(cbd) and cbd[epos] == next_bar_us:
+            entry_index.append(int(arrs["index"][epos]))
+            entry_price.append(float(arrs["next_bar_open"][hi]))
+        else:
+            entry_index.append(None)
+            entry_price.append(None)
+
+    out = clusters.with_columns(
+        pl.Series("hold_passed", hold_passed, dtype=pl.Boolean),
+        pl.Series("hold_failed", hold_failed, dtype=pl.Boolean),
+        pl.Series("trigger_index", trigger_index, dtype=pl.Int64),
+        pl.Series("trigger_datetime", trigger_datetime, dtype=pl.Datetime("us")),
+        pl.Series("trigger_price", trigger_price, dtype=pl.Float64),
+        pl.Series("entry_index", entry_index, dtype=pl.Int64),
+        pl.Series("entry_price", entry_price, dtype=pl.Float64))
+    return out.filter(pl.col("trigger_index").is_not_null() & pl.col("entry_index").is_not_null())

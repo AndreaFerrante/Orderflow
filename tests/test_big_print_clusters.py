@@ -6,7 +6,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from orderflow.market.big_print_clusters import find_big_print_clusters
+from orderflow.market.big_print_clusters import find_big_print_clusters, post_cluster_hold
 
 TICK = 0.25
 
@@ -81,3 +81,52 @@ def test_qualify_datetime_matches_qualify_index_fill():
     out = clusters(ticks, n=2)
     assert out["qualify_index"][0] == ticks["Index"][2]
     assert out["qualify_datetime"][0] == ticks["Datetime"][2]
+
+
+def with_bars(ticks):
+    """Add current/next minute-bar columns and next_bar_open, as the enrichment does."""
+    bars = ticks.with_columns(
+        pl.col("Datetime").dt.truncate("1m").alias("current_bar_datetime"))
+    bars = bars.with_columns(
+        (pl.col("current_bar_datetime") + pl.duration(minutes=1)).alias("next_bar_datetime"))
+    opens = (bars.group_by("current_bar_datetime").agg(pl.col("Price").first().alias("next_bar_open"))
+             .rename({"current_bar_datetime": "next_bar_datetime"}))
+    return bars.join(opens, on="next_bar_datetime", how="left").sort("Index")
+
+
+def cluster_then(path_price, seconds=120):
+    """Buy cluster at 100.0 (t=0, t=5), then one 1-lot tick per second at ``path_price``."""
+    rows = [(0, 100.0, 60, 2), (5, 100.0, 60, 2)]
+    rows += [(6 + i, path_price, 1, 2) for i in range(seconds)]
+    return with_bars(stack(prints(rows)))
+
+
+def hold(ticks):
+    return post_cluster_hold(ticks, clusters(ticks), hold_s=30.0, tick_size=TICK)
+
+
+def test_hold_matched_pair():
+    held, failed = hold(cluster_then(100.25)), hold(cluster_then(99.5))
+    assert (held["hold_passed"][0], held["hold_failed"][0]) == (True, False)
+    assert (failed["hold_passed"][0], failed["hold_failed"][0]) == (False, True)
+
+
+def test_hold_neither_flag_at_vwap():
+    at = hold(cluster_then(100.0))
+    assert (at["hold_passed"][0], at["hold_failed"][0]) == (False, False)
+
+
+def test_trigger_after_hold_window():
+    out = hold(cluster_then(100.25))
+    assert out["trigger_datetime"][0] > out["qualify_datetime"][0] + timedelta(seconds=30)
+
+
+def test_entry_is_first_tick_of_next_minute_bar():
+    ticks = cluster_then(100.25)
+    out = hold(ticks)
+    trig = ticks.filter(pl.col("Index") == out["trigger_index"][0])
+    entry = ticks.filter(pl.col("Index") == out["entry_index"][0])
+    assert entry["current_bar_datetime"][0] == trig["next_bar_datetime"][0]
+    assert out["entry_index"][0] == ticks.filter(
+        pl.col("current_bar_datetime") == trig["next_bar_datetime"][0])["Index"].min()
+    assert out["entry_price"][0] == trig["next_bar_open"][0]

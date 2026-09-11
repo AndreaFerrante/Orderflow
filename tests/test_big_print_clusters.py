@@ -73,3 +73,11 @@ def test_far_and_origin_price_follow_the_push():
     assert (buy["far_price"][0], buy["origin_price"][0]) == (100.5, 100.0)
     assert (sell["far_price"][0], sell["origin_price"][0]) == (100.0, 100.5)
     assert buy["cluster_vwap"][0] == pytest.approx((100.0 * 60 + 100.5 * 100) / 160)
+
+
+def test_qualify_datetime_matches_qualify_index_fill():
+    us = 1e-6
+    ticks = stack(prints([(0, 100.0, 60, 2), (5, 100.0, 60, 2), (5 + us, 100.25, 60, 2)]))
+    out = clusters(ticks, n=2)
+    assert out["qualify_index"][0] == ticks["Index"][2]
+    assert out["qualify_datetime"][0] == ticks["Datetime"][2]

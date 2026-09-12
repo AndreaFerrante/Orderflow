@@ -41,18 +41,29 @@ def test_autumn_switch_inside_one_frame():
     assert out["Datetime"].to_list() == [datetime(2025, 11, 2, 1, 0), datetime(2025, 11, 2, 2, 0)]
 
 
-def test_autumn_switch_keeps_source_order():
-    """Local time repeats 01:00-02:00; the rows must not be reordered into it."""
-    out = apply_offset_given_dataframe(
-        frame(
+def test_autumn_switch_sorts_on_the_source_instant_not_local_time():
+    """Rows fed out of source order are the only way to tell the two sorts apart.
+
+    06:30 and 07:30 UTC both land on 01:30 local, so the Datetime column alone cannot
+    discriminate. The payload column is what shows which row came first.
+    """
+    df = pl.DataFrame({
+        "Datetime": [
+            datetime(2025, 11, 2, 7, 30),   # 01:30 CST, the later instant, fed first
             datetime(2025, 11, 2, 5, 30),   # 00:30 CDT
-            datetime(2025, 11, 2, 6, 30),   # 01:30 CDT, first pass through the repeated hour
-            datetime(2025, 11, 2, 7, 30),   # 01:30 CST, second pass through the same local hour
-        ),
-        market="CME",
-    )
-    got = out["Datetime"].to_list()
-    assert got == [datetime(2025, 11, 2, 0, 30), datetime(2025, 11, 2, 1, 30), datetime(2025, 11, 2, 1, 30)]
+            datetime(2025, 11, 2, 6, 30),   # 01:30 CDT, the earlier of the two 01:30 rows
+        ],
+        "Price": [3.0, 1.0, 2.0],
+    })
+    out = apply_offset_given_dataframe(df, market="CME")
+    assert out["Datetime"].to_list() == [
+        datetime(2025, 11, 2, 0, 30),
+        datetime(2025, 11, 2, 1, 30),
+        datetime(2025, 11, 2, 1, 30),
+    ]
+    # Sorting on the converted column would leave Price 3.0 ahead of 2.0: both rows are
+    # 01:30 local, and a stable sort keeps whatever order they were fed in.
+    assert out["Price"].to_list() == [1.0, 2.0, 3.0]
 
 
 def test_eurex_maps_to_berlin():

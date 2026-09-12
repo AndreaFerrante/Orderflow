@@ -79,129 +79,47 @@ def correct_time_nanoseconds(ticker_to_correct: polars.DataFrame = None):
     return ticker_to_correct
 
 
-def apply_offset_given_dataframe(pl_df:polars.DataFrame, market:str=None):
+_MARKET_TIMEZONES = {
+    "CME": "America/Chicago",
+    "CBOT": "America/Chicago",
+    "EUREX": "Europe/Berlin",
+}
 
+
+def apply_offset_given_dataframe(pl_df: polars.DataFrame, market: str = None,
+                                 source_timezone: str = "UTC") -> polars.DataFrame:
     """
-    Adjusts the 'Datetime' column in the provided Polars DataFrame by applying a time offset. The offset amount
-    is determined by the 'market' parameter and the last hour recorded in the 'Hour' column of the DataFrame.
+    Convert a naive source-time 'Datetime' column into naive exchange local time.
 
-    The offset is computed to align the 'Datetime' values with a standard trading closing time, depending on the
-    specified market ('CBOT' or 'CME'). For instance, if the last hour is 23, and the market is 'CBOT', 8 hours
-    are subtracted; if 'CME', 7 hours are subtracted. This adjustment is aimed at standardizing the time to a
-    reference market close time, providing a uniform time series data irrespective of the actual closing times
-    recorded in the data.
+    The source files are recorded in `source_timezone` (UTC for every CME drop seen so far). The exchange zone
+    comes from `market`, and the conversion goes through the timezone database, so daylight saving is applied per
+    instant rather than per batch.
 
-    Args:
-        pl_df (polars.DataFrame): A DataFrame with at least 'Datetime' and 'Hour' columns. 'Datetime' should be
-                                  in datetime format, and 'Hour' should be extracted from 'Datetime' if not present.
-        market (str, optional): Market identifier, should be either 'CBOT' or 'CME'. This is required to determine
-                                the correct offset to apply. Defaults to an empty string.
-
-    Returns:
-        polars.DataFrame: A DataFrame with the 'Datetime' column adjusted according to the specified market's
-                          standard closing time.
-
-    Raises:
-        ValueError: If 'Datetime' column is not present in the DataFrame.
-        ValueError: If 'market' is not 'CBOT' or 'CME'.
-        Exception: If the DataFrame cannot be processed due to incorrect or missing market information.
-
-    Examples:
-        data = {
-                "Datetime": pl.date_range(low=pl.datetime(2023, 1, 1), high=pl.datetime(2023, 1, 1, 23), every='1h'),
-                "Hour": list(range(24))
-            }
-        df = pl.DataFrame(data)
-        modified_df = apply_offset_given_dataframe(df, market='CBOT')
-        print(modified_df)
-
-    Notes:
-        - The function requires that 'market' be specified accurately to ensure correct time adjustments.
-        - It is assumed that the input DataFrame is properly formatted with the necessary columns.
-        - The function includes error handling to ensure robust processing against common data issues.
-
+    Rows are sorted on the source instant, never on the converted column: local time repeats an hour at the autumn
+    switch, and sorting on it would interleave two different hours.
     """
 
     if market is None:
         raise Exception("To offset datetime you must pass the market from which the ticker has been extracted from.")
 
-    ####################################################################################################################
-    '''
-    1. Extract hour from datetime columns
-    2. Select the very last hour as reference !
-    '''
-    # Add ISO_WEEK Column and Weekday
-    pl_df_gb = pl_df.with_columns([
-        pl_df['Datetime'].dt.week().alias("ISO_Week"),
-        pl_df['Datetime'].dt.weekday().alias("Weekday")  # (1 = Monday, 7 = Sunday)
-    ])
+    key = str(market).upper()
+    if key not in _MARKET_TIMEZONES:
+        raise Exception(
+            f"Unknown market '{market}': expected one of {sorted(_MARKET_TIMEZONES)}"
+        )
 
-    # exclude sundays
-    pl_df_filtered = pl_df_gb.filter(polars.col("Weekday") != 7)
+    if "Datetime" not in pl_df.columns:
+        raise Exception("The input DataFrame must contain a 'Datetime' column with Datetime datatype.")
 
-    pl_df_gb = pl_df_filtered.with_columns([
-        polars.col("Date").str.strptime(polars.Date, "%Y-%m-%d").alias("Date")  # 'Date' in date type
-    ])
-
-    # identify the last day for each week
-    last_day_df = (
-        pl_df_gb
-        .group_by("ISO_Week")
-        .agg([
-            polars.col("Date").max().alias("Last_Date")  # last day of each week
-        ])
-        .join(pl_df_gb, left_on="Last_Date", right_on="Date")  # join with the original df
+    return (
+        pl_df.sort("Datetime")
+        .with_columns(
+            polars.col("Datetime")
+            .dt.replace_time_zone(source_timezone)
+            .dt.convert_time_zone(_MARKET_TIMEZONES[key])
+            .dt.replace_time_zone(None)
+        )
     )
-    # get the latest hour for each last day of week
-    weekly_last_hour = (
-        last_day_df
-        .group_by("ISO_Week")
-        .agg([
-            polars.col("Datetime").dt.hour().last().alias("Last_Hour_Per_Week")
-        ])
-    )
-    # get the max last hour of all the weeks
-    last_hour = int(weekly_last_hour["Last_Hour_Per_Week"].max())
-
-    #pl_df_gb  = pl_df.group_by('Date').agg([polars.col("Datetime").last()])
-    #pl_df_gb  = pl_df_gb.with_columns(Hour=pl_df_gb['Datetime'].dt.hour())
-    #last_hour = pl_df_gb.select(polars.col("Hour").mode())
-    #last_hour = int(last_hour['Hour'][0]) # ---> We take the most frequent LAST HOUR in the dataframe <---
-    ####################################################################################################################
-
-    if 'Datetime' not in pl_df.columns:
-        '''Add Datetime column (datetime datatype, too) inside Polars DataFrame'''
-        return None
-
-    '''CBOT closes at 15:59:59, CME closes at 16:59:59'''
-    # if str(market).lower() == 'cbot':
-    #     offset_addition = 1
-    # elif str(market).lower() == 'cme':
-    #     offset_addition = 0
-    # else:
-    #     raise Exception("Attention ! Pass a market that is CME or CBOT")
-
-    offset_addition = 0
-
-    if last_hour == 23:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(8 + offset_addition) + "h"))
-    elif last_hour == 22:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(7 + offset_addition) + "h"))
-    elif last_hour == 21:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(6 + offset_addition) + "h"))
-    elif last_hour == 20:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(5 + offset_addition) + "h"))
-    elif last_hour == 19:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(4 + offset_addition) + "h"))
-    elif last_hour == 18:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(3 + offset_addition) + "h"))
-    elif last_hour == 17:
-        pl_df = pl_df.with_columns(Datetime=pl_df['Datetime'].dt.offset_by("-" + str(2 + offset_addition) + "h"))
-    else:
-        '''If we had a possible issue in file recorded, better to skip the timestamp correction'''
-        return None
-
-    return pl_df.sort(['Datetime'], descending=False)
 
 
 def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago'):

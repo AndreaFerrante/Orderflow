@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.core.configuration import *
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from dateutil.parser import parse
 from zoneinfo import ZoneInfo
 
@@ -181,11 +181,33 @@ def verify_weekly_reopen_anchor(pl_df: polars.DataFrame, market: str = None,
             )
 
 
+# Dates the daily-halt anchor is known to misfire on, not because the clock is wrong but because
+# CME shortens or skips the session for a holiday. Seeded ONLY from dates that failed on
+# 20250323_to_20250613 and 20250615_to_20250912 - the two MES files independently confirmed on the
+# correct clock by verify_weekly_reopen_anchor and the cash-close-minute check - so a mismatch there
+# cannot be a clock error. A guessed calendar entry would silently swallow a real clock bug that
+# happens to land on the same date; an evidence-only list can't, since anything not already proven
+# clean stays a failure. Extend it only the same way: from a newly confirmed-clean file, never from
+# an assumed federal/exchange holiday calendar.
+_KNOWN_HALT_EXCEPTIONS: frozenset = frozenset({
+    date(2025, 4, 17),   # Maundy Thursday, day before Good Friday - shortened CME session
+    date(2025, 5, 26),   # Memorial Day
+    date(2025, 6, 19),   # Juneteenth
+    date(2025, 7, 3),    # day before Independence Day - early close
+    date(2025, 9, 1),    # Labor Day
+})
+
+
 def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
                                   source_timezone: str = "UTC",
-                                  min_gap_minutes: float = 45.0) -> polars.DataFrame:
+                                  min_gap_minutes: float = 45.0,
+                                  holiday_exceptions: frozenset = _KNOWN_HALT_EXCEPTIONS) -> polars.DataFrame:
     """
     Per-trading-day falsification of `source_timezone`, denser than the weekly reopen anchor.
+
+    `holiday_exceptions` dates are skipped entirely - not marked ok, just not checked - since on
+    those dates there is no schedule fact to falsify against. See `_KNOWN_HALT_EXCEPTIONS` for how
+    entries are allowed in.
 
     CME/CBOT Globex halts trading for roughly an hour before 17:00 exchange-local every Monday
     through Thursday, then resumes - the same published reopen instant `verify_weekly_reopen_anchor`
@@ -262,6 +284,8 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
     for day, gap_minutes, resume_tick in zip(
         biggest["_d"].to_list(), biggest["_gap_minutes"].to_list(), biggest["Datetime"].to_list()
     ):
+        if day in holiday_exceptions:
+            continue
         expected_local = datetime.combine(day, resume_local_time).replace(tzinfo=exchange_tz)
         expected_hour = expected_local.astimezone(source_tz).replace(tzinfo=None).hour
         ok = gap_minutes >= min_gap_minutes and resume_tick.hour == expected_hour
@@ -273,17 +297,25 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
             "ok": ok,
         })
 
-    return polars.DataFrame(rows).sort("date")
+    schema = {
+        "date": polars.Date, "expected_hour": polars.Int64, "resume_hour": polars.Int64,
+        "gap_minutes": polars.Float64, "ok": polars.Boolean,
+    }
+    if not rows:
+        return polars.DataFrame(schema=schema)
+    return polars.DataFrame(rows, schema=schema).sort("date")
 
 
 def verify_daily_maintenance_halt_anchor(pl_df: polars.DataFrame, market: str = None,
                                          source_timezone: str = "UTC",
-                                         min_gap_minutes: float = 45.0) -> None:
+                                         min_gap_minutes: float = 45.0,
+                                         holiday_exceptions: frozenset = _KNOWN_HALT_EXCEPTIONS) -> None:
     """Raise, listing every failing date at once, if the daily-halt anchor disagrees anywhere.
     See `daily_maintenance_halt_report` for what "disagrees" means."""
 
     report = daily_maintenance_halt_report(
-        pl_df, market=market, source_timezone=source_timezone, min_gap_minutes=min_gap_minutes
+        pl_df, market=market, source_timezone=source_timezone, min_gap_minutes=min_gap_minutes,
+        holiday_exceptions=holiday_exceptions,
     )
     bad = report.filter(~polars.col("ok"))
     if bad.height > 0:

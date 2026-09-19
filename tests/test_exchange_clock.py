@@ -200,6 +200,23 @@ def test_daily_halt_anchor_checks_an_already_local_frame_by_identity():
     )  # must not raise
 
 
+def test_daily_halt_anchor_skips_a_known_holiday_exception():
+    """2025-06-19 (Juneteenth) is Thursday - normally checked - but is a seeded exception, so a
+    completely absent halt there must not raise."""
+    ticks = [datetime(2025, 6, 19, h, 0) for h in range(19, 24)]  # flat, no gap at all
+    verify_daily_maintenance_halt_anchor(frame(*ticks), market="CME")  # must not raise
+    report = daily_maintenance_halt_report(frame(*ticks), market="CME")
+    assert report.height == 0  # skipped, not force-passed
+
+
+def test_daily_halt_anchor_exception_does_not_mask_a_different_bad_day():
+    """The exception is exact-date. A genuinely wrong day right next to it must still fail."""
+    holiday = [datetime(2025, 6, 19, h, 0) for h in range(19, 24)]  # no gap, but excepted
+    bad = gapped_day(datetime(2025, 6, 16), resume_hour=21)  # off by one hour for a CDT Monday
+    with pytest.raises(Exception, match="2025-06-16"):
+        verify_daily_maintenance_halt_anchor(frame(*(holiday + bad)), market="CME")
+
+
 def test_daily_halt_report_returns_one_row_per_good_day():
     ticks = gapped_day(datetime(2025, 1, 13), resume_hour=23) + gapped_day(
         datetime(2025, 7, 14), resume_hour=22

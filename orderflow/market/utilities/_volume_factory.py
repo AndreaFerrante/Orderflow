@@ -181,41 +181,34 @@ def verify_weekly_reopen_anchor(pl_df: polars.DataFrame, market: str = None,
             )
 
 
-# Exchange-published daily maintenance halt, local start time. Duration is nominally an hour;
-# `min_gap_minutes` in the functions below tolerates a shorter observed gap without pretending
-# to know the exact close.
-_DAILY_HALT_LOCAL_START = {
-    "CME": time(16, 0),
-    "CBOT": time(16, 0),
-}
-
-
 def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
                                   source_timezone: str = "UTC",
                                   min_gap_minutes: float = 45.0) -> polars.DataFrame:
     """
     Per-trading-day falsification of `source_timezone`, denser than the weekly reopen anchor.
 
-    CME/CBOT Globex halts trading for roughly an hour around 16:00 exchange-local every Monday
-    through Thursday. That gap in tick timestamps is a fixed schedule fact, so the hour it should
-    land on (once `source_timezone` is converted to exchange-local) is predictable for every date -
-    checked once per trading day instead of once per week. Friday is excluded: its next gap is the
-    multi-hour weekend close, not the one-hour halt. So is the date the market reads as "Sunday": it
-    holds only the reopen, not a same-day halt.
+    CME/CBOT Globex halts trading for roughly an hour before 17:00 exchange-local every Monday
+    through Thursday, then resumes - the same published reopen instant `verify_weekly_reopen_anchor`
+    checks on Sundays, recurring daily. The anchor is the RESUMPTION tick, not the last tick before
+    the halt: a live market's last trade before a halt can land anywhere in the preceding seconds,
+    but the first trade after a scheduled reopen lands right on it (seen in real MES data landing at
+    exactly :00:00.000000). That gives one precise falsification point per trading day instead of one
+    per week. Friday is excluded: its next gap is the multi-hour weekend close, not the one-hour halt.
+    So is the date the market reads as "Sunday": it holds only the reopen itself, not a same-day halt.
 
     Returns one row per Monday-Thursday date present: the largest gap found in the 19:00-23:59
-    raw-time window, the hour it started, the hour the conversion predicts, and whether they agree
-    and the gap is long enough to be the halt rather than routine quiet.
+    raw-time window, the hour trading resumed, the hour the conversion predicts, and whether they
+    agree and the gap is long enough to be the halt rather than routine quiet.
     """
 
     if market is None:
         raise Exception("To verify the clock you must pass the market the ticker was extracted from.")
 
     key = str(market).upper()
-    if key not in _DAILY_HALT_LOCAL_START:
+    if key not in _WEEKLY_REOPEN_LOCAL_TIME:
         raise Exception(
             f"No validated daily-halt anchor for market '{market}': "
-            f"expected one of {sorted(_DAILY_HALT_LOCAL_START)}"
+            f"expected one of {sorted(_WEEKLY_REOPEN_LOCAL_TIME)}"
         )
 
     if "Datetime" not in pl_df.columns:
@@ -223,7 +216,7 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
 
     exchange_tz = ZoneInfo(_MARKET_TIMEZONES[key])
     source_tz = ZoneInfo(source_timezone)
-    halt_local_start = _DAILY_HALT_LOCAL_START[key]
+    resume_local_time = _WEEKLY_REOPEN_LOCAL_TIME[key]  # same 17:00 CT fact, recurring daily
 
     window = (
         pl_df.select("Datetime")
@@ -239,7 +232,6 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
                 (polars.col("Datetime") - polars.col("Datetime").shift(1)).over("_d").dt.total_seconds()
                 / 60.0
             ),
-            _gap_start=polars.col("Datetime").shift(1).over("_d"),
         )
         .drop_nulls("_gap_minutes")
     )
@@ -250,16 +242,16 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
     biggest = window.sort("_gap_minutes", descending=True).group_by("_d", maintain_order=True).first()
 
     rows = []
-    for day, gap_minutes, gap_start in zip(
-        biggest["_d"].to_list(), biggest["_gap_minutes"].to_list(), biggest["_gap_start"].to_list()
+    for day, gap_minutes, resume_tick in zip(
+        biggest["_d"].to_list(), biggest["_gap_minutes"].to_list(), biggest["Datetime"].to_list()
     ):
-        expected_local = datetime.combine(day, halt_local_start).replace(tzinfo=exchange_tz)
+        expected_local = datetime.combine(day, resume_local_time).replace(tzinfo=exchange_tz)
         expected_hour = expected_local.astimezone(source_tz).replace(tzinfo=None).hour
-        ok = gap_minutes >= min_gap_minutes and gap_start.hour == expected_hour
+        ok = gap_minutes >= min_gap_minutes and resume_tick.hour == expected_hour
         rows.append({
             "date": day,
             "expected_hour": expected_hour,
-            "gap_start_hour": gap_start.hour,
+            "resume_hour": resume_tick.hour,
             "gap_minutes": round(gap_minutes, 1),
             "ok": ok,
         })
@@ -279,8 +271,8 @@ def verify_daily_maintenance_halt_anchor(pl_df: polars.DataFrame, market: str = 
     bad = report.filter(~polars.col("ok"))
     if bad.height > 0:
         detail = "; ".join(
-            f"{row['date'].isoformat()}: gap started {row['gap_start_hour']:02d}:00 "
-            f"({row['gap_minutes']:.1f} min), expected {row['expected_hour']:02d}:00"
+            f"{row['date'].isoformat()}: trading resumed {row['resume_hour']:02d}:00 "
+            f"after a {row['gap_minutes']:.1f} min gap, expected {row['expected_hour']:02d}:00"
             for row in bad.to_dicts()
         )
         raise Exception(

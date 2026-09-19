@@ -5,7 +5,10 @@ from datetime import datetime
 import polars as pl
 import pytest
 
-from orderflow.market.utilities._volume_factory import apply_offset_given_dataframe
+from orderflow.market.utilities._volume_factory import (
+    apply_offset_given_dataframe,
+    verify_weekly_reopen_anchor,
+)
 
 
 def frame(*naive_utc):
@@ -79,3 +82,46 @@ def test_unknown_market_raises():
 def test_missing_datetime_column_raises():
     with pytest.raises(Exception, match="Datetime"):
         apply_offset_given_dataframe(pl.DataFrame({"Price": [1.0]}), market="CME")
+
+
+def test_weekly_reopen_anchor_passes_across_a_dst_switch():
+    """CME/CBOT Globex reopens Sunday 17:00 CT. In UTC that's 22:00 (CDT) or 23:00 (CST) -
+    two Sundays either side of a switch must both check out."""
+    df = frame(
+        datetime(2024, 12, 22, 23, 0),  # Sunday, CST reopen
+        datetime(2025, 3, 16, 22, 0),   # Sunday, CDT reopen
+    )
+    verify_weekly_reopen_anchor(df, market="CME")  # must not raise
+
+
+def test_weekly_reopen_anchor_fails_on_the_wrong_source_timezone():
+    """Data actually recorded in America/Chicago, mislabeled as UTC: the Sunday reopen row
+    reads 17:00 raw, not 22:00/23:00, and the first anchor alone must catch it."""
+    df = frame(datetime(2024, 12, 22, 17, 0))
+    with pytest.raises(Exception, match="anchor failed"):
+        verify_weekly_reopen_anchor(df, market="CME", source_timezone="UTC")
+
+
+def test_weekly_reopen_anchor_catches_a_bad_last_anchor_even_when_first_is_correct():
+    """The shape of the original bug: correct at one end of a file, wrong at the other."""
+    df = frame(
+        datetime(2024, 12, 22, 23, 0),   # correct CST reopen
+        datetime(2025, 3, 16, 23, 0),    # should be 22:00 (CDT) - off by one hour
+    )
+    with pytest.raises(Exception, match="last Sunday"):
+        verify_weekly_reopen_anchor(df, market="CME")
+
+
+def test_weekly_reopen_anchor_unknown_market_raises():
+    with pytest.raises(Exception, match="No validated weekly-reopen anchor"):
+        verify_weekly_reopen_anchor(frame(datetime(2025, 7, 13, 12, 0)), market="EUREX")
+
+
+def test_weekly_reopen_anchor_no_sunday_rows_raises():
+    with pytest.raises(Exception, match="Sunday"):
+        verify_weekly_reopen_anchor(frame(datetime(2025, 7, 14, 12, 0)), market="CME")  # a Monday
+
+
+def test_weekly_reopen_anchor_missing_datetime_column_raises():
+    with pytest.raises(Exception, match="Datetime"):
+        verify_weekly_reopen_anchor(pl.DataFrame({"Price": [1.0]}), market="CME")

@@ -6,8 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from orderflow.core.configuration import *
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from dateutil.parser import parse
+from zoneinfo import ZoneInfo
 
 
 def half_hour(x) -> str:
@@ -120,6 +121,64 @@ def apply_offset_given_dataframe(pl_df: polars.DataFrame, market: str = None,
             .dt.replace_time_zone(None)
         )
     )
+
+
+# Exchange-published weekly reopen, local time. Only markets we've actually validated this
+# anchor against belong here - guessing one for an untested exchange is worse than refusing.
+_WEEKLY_REOPEN_LOCAL_TIME = {
+    "CME": time(17, 0),
+    "CBOT": time(17, 0),
+}
+
+
+def verify_weekly_reopen_anchor(pl_df: polars.DataFrame, market: str = None,
+                                source_timezone: str = "UTC") -> None:
+    """
+    Falsify the `source_timezone` assumption before `apply_offset_given_dataframe` is trusted with it.
+
+    CME/CBOT Globex reopens every Sunday at 17:00 exchange-local time - a fixed fact of the exchange
+    schedule, not something read from the data. If `pl_df["Datetime"]` really is naive `source_timezone`,
+    that instant lands at a predictable hour once converted; if it doesn't, the predicted and actual hours
+    disagree. Checked at the first AND last Sunday present in the frame independently, because the original
+    clock bug was wrong on only part of a file - a single anchor can pass by coincidence where a two-point
+    check cannot.
+    """
+
+    if market is None:
+        raise Exception("To verify the clock you must pass the market the ticker was extracted from.")
+
+    key = str(market).upper()
+    if key not in _WEEKLY_REOPEN_LOCAL_TIME:
+        raise Exception(
+            f"No validated weekly-reopen anchor for market '{market}': "
+            f"expected one of {sorted(_WEEKLY_REOPEN_LOCAL_TIME)}"
+        )
+
+    if "Datetime" not in pl_df.columns:
+        raise Exception("The input DataFrame must contain a 'Datetime' column with Datetime datatype.")
+
+    exchange_tz = ZoneInfo(_MARKET_TIMEZONES[key])
+    source_tz = ZoneInfo(source_timezone)
+    reopen_local_time = _WEEKLY_REOPEN_LOCAL_TIME[key]
+
+    sundays = pl_df.filter(polars.col("Datetime").dt.weekday() == 7).select("Datetime")
+    if sundays.height == 0:
+        raise Exception("No Sunday rows found in the frame; cannot verify the weekly-reopen anchor.")
+
+    sunday_dates = sorted(sundays["Datetime"].dt.date().unique().to_list())
+
+    for label, day in (("first", sunday_dates[0]), ("last", sunday_dates[-1])):
+        expected_local = datetime.combine(day, reopen_local_time).replace(tzinfo=exchange_tz)
+        expected_source_hour = expected_local.astimezone(source_tz).replace(tzinfo=None).hour
+
+        actual = sundays.filter(polars.col("Datetime").dt.date() == day).head(1)["Datetime"][0]
+        if actual.hour != expected_source_hour:
+            raise Exception(
+                f"Weekly-reopen anchor failed at the {label} Sunday ({day}): raw Datetime hour "
+                f"{actual.hour:02d}:00, expected {expected_source_hour:02d}:00 for market='{market}' "
+                f"under source_timezone='{source_timezone}'. The source_timezone assumption is wrong "
+                f"for this frame - do not trust apply_offset_given_dataframe on it."
+            )
 
 
 def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago'):

@@ -188,6 +188,18 @@ def test_daily_halt_anchor_missing_datetime_column_raises():
         verify_daily_maintenance_halt_anchor(pl.DataFrame({"Price": [1.0]}), market="CME")
 
 
+def test_daily_halt_anchor_checks_an_already_local_frame_by_identity():
+    """source_timezone can equal the exchange zone itself - the case of checking a Datetime column
+    that already claims to be exchange-local. No DST shift applies, so the resumption is always at
+    local hour 17, winter or summer."""
+    ticks = gapped_day(datetime(2025, 1, 13), resume_hour=17, filler_hour=14) + gapped_day(
+        datetime(2025, 7, 14), resume_hour=17, filler_hour=14
+    )
+    verify_daily_maintenance_halt_anchor(
+        frame(*ticks), market="CME", source_timezone="America/Chicago"
+    )  # must not raise
+
+
 def test_daily_halt_report_returns_one_row_per_good_day():
     ticks = gapped_day(datetime(2025, 1, 13), resume_hour=23) + gapped_day(
         datetime(2025, 7, 14), resume_hour=22

@@ -196,9 +196,10 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
     per week. Friday is excluded: its next gap is the multi-hour weekend close, not the one-hour halt.
     So is the date the market reads as "Sunday": it holds only the reopen itself, not a same-day halt.
 
-    Returns one row per Monday-Thursday date present: the largest gap found in the 19:00-23:59
-    raw-time window, the hour trading resumed, the hour the conversion predicts, and whether they
-    agree and the gap is long enough to be the halt rather than routine quiet.
+    Returns one row per Monday-Thursday exchange-local date present: the largest gap found in the
+    14:00-18:59 exchange-local window, the hour trading resumed (in `source_timezone`, so it is
+    comparable across a DST switch), the hour the conversion predicts, and whether they agree and
+    the gap is long enough to be the halt rather than routine quiet.
     """
 
     if market is None:
@@ -218,14 +219,27 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
     source_tz = ZoneInfo(source_timezone)
     resume_local_time = _WEEKLY_REOPEN_LOCAL_TIME[key]  # same 17:00 CT fact, recurring daily
 
+    # The search window has to be expressed in exchange-local hours, not raw source hours: if
+    # `source_timezone` is itself wrong, a raw-hour window picked for one candidate zone can miss
+    # the halt entirely and flag unrelated quiet as the anchor instead. Converting through the
+    # CLAIMED source_timezone to find the window is still a fair test - a correct claim lands the
+    # halt inside 14:00-18:59 local every time; a wrong one either misses it or lands it off 17:00.
     window = (
         pl_df.select("Datetime")
         .with_columns(
-            _wd=polars.col("Datetime").dt.weekday(),
-            _d=polars.col("Datetime").dt.date(),
-            _h=polars.col("Datetime").dt.hour(),
+            _local=(
+                polars.col("Datetime")
+                .dt.replace_time_zone(source_timezone)
+                .dt.convert_time_zone(_MARKET_TIMEZONES[key])
+                .dt.replace_time_zone(None)
+            )
         )
-        .filter(polars.col("_wd").is_in([1, 2, 3, 4]) & polars.col("_h").is_between(19, 23))
+        .with_columns(
+            _wd=polars.col("_local").dt.weekday(),
+            _d=polars.col("_local").dt.date(),
+            _lh=polars.col("_local").dt.hour(),
+        )
+        .filter(polars.col("_wd").is_in([1, 2, 3, 4]) & polars.col("_lh").is_between(14, 18))
         .sort("Datetime")
         .with_columns(
             _gap_minutes=(
@@ -237,7 +251,10 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
     )
 
     if window.height == 0:
-        raise Exception("No Monday-Thursday rows in the 19:00-23:59 window; cannot check the daily halt.")
+        raise Exception(
+            "No Monday-Thursday rows in the 14:00-18:59 exchange-local window; cannot check the "
+            "daily halt."
+        )
 
     biggest = window.sort("_gap_minutes", descending=True).group_by("_d", maintain_order=True).first()
 

@@ -1,12 +1,14 @@
 """The clock: source-time ticks converted to exchange local time, daylight saving included."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import polars as pl
 import pytest
 
 from orderflow.market.utilities._volume_factory import (
     apply_offset_given_dataframe,
+    daily_maintenance_halt_report,
+    verify_daily_maintenance_halt_anchor,
     verify_weekly_reopen_anchor,
 )
 
@@ -125,3 +127,70 @@ def test_weekly_reopen_anchor_no_sunday_rows_raises():
 def test_weekly_reopen_anchor_missing_datetime_column_raises():
     with pytest.raises(Exception, match="Datetime"):
         verify_weekly_reopen_anchor(pl.DataFrame({"Price": [1.0]}), market="CME")
+
+
+def gapped_day(day, gap_start_hour, gap_minutes=61.0, filler_hour=19):
+    """Ticks for one Monday-Thursday date, 5-minute-spaced on both sides of one gap - so the gap
+    under test is unambiguously the largest, the way it is in real tick data."""
+    last_before = datetime(day.year, day.month, day.day, gap_start_hour, 0)
+    first_after = last_before + timedelta(minutes=gap_minutes)
+    end = datetime(day.year, day.month, day.day, 23, 30)
+
+    ticks, t = [], datetime(day.year, day.month, day.day, filler_hour, 0)
+    while t <= last_before:
+        ticks.append(t)
+        t += timedelta(minutes=5)
+    t = first_after
+    while t <= end:
+        ticks.append(t)
+        t += timedelta(minutes=5)
+    return ticks
+
+
+def test_daily_halt_anchor_passes_on_both_sides_of_a_dst_switch():
+    # 2025-01-13 Monday, CST (16:00 CT = 22:00 UTC). 2025-07-14 Monday, CDT (16:00 CT = 21:00 UTC).
+    ticks = gapped_day(datetime(2025, 1, 13), gap_start_hour=22) + gapped_day(
+        datetime(2025, 7, 14), gap_start_hour=21
+    )
+    verify_daily_maintenance_halt_anchor(frame(*ticks), market="CME")  # must not raise
+
+
+def test_daily_halt_anchor_catches_one_bad_day_among_good_ones():
+    good = gapped_day(datetime(2025, 1, 13), gap_start_hour=22)
+    bad = gapped_day(datetime(2025, 1, 20), gap_start_hour=21)  # off by one hour for a CST Monday
+    with pytest.raises(Exception, match="2025-01-20"):
+        verify_daily_maintenance_halt_anchor(frame(*(good + bad)), market="CME")
+
+
+def test_daily_halt_anchor_rejects_a_gap_too_short_to_be_the_halt():
+    ticks = gapped_day(datetime(2025, 1, 13), gap_start_hour=22, gap_minutes=10.0)
+    with pytest.raises(Exception, match="2025-01-13"):
+        verify_daily_maintenance_halt_anchor(frame(*ticks), market="CME")
+
+
+def test_daily_halt_anchor_skips_friday_and_sunday():
+    """Friday's next gap is the weekend close; Sunday has no same-day halt. Neither is scanned,
+    so a frame containing only those two weekdays has no Monday-Thursday rows to check."""
+    with pytest.raises(Exception, match="No Monday-Thursday rows"):
+        verify_daily_maintenance_halt_anchor(
+            frame(datetime(2025, 1, 12, 20, 0), datetime(2025, 1, 17, 20, 0)), market="CME"
+        )
+
+
+def test_daily_halt_anchor_unknown_market_raises():
+    with pytest.raises(Exception, match="No validated daily-halt anchor"):
+        verify_daily_maintenance_halt_anchor(frame(datetime(2025, 1, 13, 22, 0)), market="EUREX")
+
+
+def test_daily_halt_anchor_missing_datetime_column_raises():
+    with pytest.raises(Exception, match="Datetime"):
+        verify_daily_maintenance_halt_anchor(pl.DataFrame({"Price": [1.0]}), market="CME")
+
+
+def test_daily_halt_report_returns_one_row_per_good_day():
+    ticks = gapped_day(datetime(2025, 1, 13), gap_start_hour=22) + gapped_day(
+        datetime(2025, 7, 14), gap_start_hour=21
+    )
+    report = daily_maintenance_halt_report(frame(*ticks), market="CME")
+    assert report.height == 2
+    assert report["ok"].to_list() == [True, True]

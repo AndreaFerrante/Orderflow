@@ -259,3 +259,24 @@ def test_fresh_ingestion_gate_fails_on_wrong_clock(tmp_path):
             path=str(tmp_path), single_file=fixture.name, market="CME",
             cols=["Date", "Time", "Price", "Volume"], ticker="MES",
         )
+
+
+def test_fresh_ingestion_gate_fails_on_wrong_daily_halt_alone(tmp_path):
+    """Correct Sunday reopen (weekday anchor passes), but wrong halt-resumption on Wednesday.
+    This proves the daily-halt anchor is independently load-bearing: a fixture where the
+    Sunday reopen is correctly at 23:00 UTC, but the Monday-Thursday halt-resumption is
+    off by one hour (22:00 instead of 23:00 UTC). The weekly check won't catch this because
+    it only verifies Sunday; only the daily check catches the Wednesday error."""
+    fixture = tmp_path / "MES_fixture.txt"
+    fixture.write_text(
+        "Date;Time;Price;Volume\n"
+        "2025-01-12;23:00:00.000000;5002.0;2\n"   # Sunday reopen, CORRECT CST (17:00 CT)
+        "2025-01-15;14:30:00.000000;5000.0;3\n"   # RTH
+        "2025-01-15;21:00:00.000000;5001.0;4\n"   # pre-halt, 15:00 CT (in daily window)
+        "2025-01-15;22:00:00.000000;5003.0;1\n"   # halt resumption, WRONG: should be 23:00 for CST
+    )
+    with pytest.raises(Exception, match="anchor failed"):
+        get_tickers_in_folder_mem_optim(
+            path=str(tmp_path), single_file=fixture.name, market="CME",
+            cols=["Date", "Time", "Price", "Volume"], ticker="MES",
+        )

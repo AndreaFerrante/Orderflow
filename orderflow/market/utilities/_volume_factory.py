@@ -635,7 +635,10 @@ def get_tickers_in_folder_mem_optim(
         lf = lf.with_columns(
             polars.col('Datetime').str.to_datetime()
         )
-        return apply_offset_given_dataframe(pl_df=lf.collect(), market=market)
+        df = lf.collect()
+        verify_weekly_reopen_anchor(df, market=market, source_timezone="UTC")
+        verify_daily_maintenance_halt_anchor(df, market=market, source_timezone="UTC")
+        return apply_offset_given_dataframe(pl_df=df, market=market, source_timezone="UTC")
 
     # -------------------------------------------------------------------------
     # Single file

@@ -224,3 +224,38 @@ def test_daily_halt_report_returns_one_row_per_good_day():
     report = daily_maintenance_halt_report(frame(*ticks), market="CME")
     assert report.height == 2
     assert report["ok"].to_list() == [True, True]
+
+
+from orderflow.market.utilities._volume_factory import get_tickers_in_folder_mem_optim
+
+
+def test_fresh_ingestion_gate_passes_on_correct_clock(tmp_path):
+    fixture = tmp_path / "MES_fixture.txt"
+    fixture.write_text(
+        "Date;Time;Price;Volume\n"
+        "2025-01-12;23:00:00.000000;5002.0;2\n"   # Sunday reopen, CST
+        "2025-01-15;14:30:00.000000;5000.0;3\n"   # RTH
+        "2025-01-15;22:00:00.000000;5001.0;4\n"   # pre-halt, local 16:00
+        "2025-01-15;23:00:00.000000;5003.0;1\n"   # halt resumption, local 17:00
+    )
+    out = get_tickers_in_folder_mem_optim(
+        path=str(tmp_path), single_file=fixture.name, market="CME",
+        cols=["Date", "Time", "Price", "Volume"], ticker="MES",
+    )
+    assert out.height == 4
+
+
+def test_fresh_ingestion_gate_fails_on_wrong_clock(tmp_path):
+    fixture = tmp_path / "MES_fixture.txt"
+    fixture.write_text(
+        "Date;Time;Price;Volume\n"
+        "2025-01-12;17:00:00.000000;5002.0;2\n"   # wrong: raw 17:00, UTC predicts 23:00
+        "2025-01-15;14:30:00.000000;5000.0;3\n"
+        "2025-01-15;22:00:00.000000;5001.0;4\n"
+        "2025-01-15;23:00:00.000000;5003.0;1\n"
+    )
+    with pytest.raises(Exception, match="anchor failed"):
+        get_tickers_in_folder_mem_optim(
+            path=str(tmp_path), single_file=fixture.name, market="CME",
+            cols=["Date", "Time", "Price", "Volume"], ticker="MES",
+        )

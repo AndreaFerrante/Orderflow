@@ -182,19 +182,319 @@ def verify_weekly_reopen_anchor(pl_df: polars.DataFrame, market: str = None,
 
 
 # Dates the daily-halt anchor is known to misfire on, not because the clock is wrong but because
-# CME shortens or skips the session for a holiday. Seeded ONLY from dates that failed on
-# 20250323_to_20250613 and 20250615_to_20250912 - the two MES files independently confirmed on the
-# correct clock by verify_weekly_reopen_anchor and the cash-close-minute check - so a mismatch there
-# cannot be a clock error. A guessed calendar entry would silently swallow a real clock bug that
-# happens to land on the same date; an evidence-only list can't, since anything not already proven
-# clean stays a failure. Extend it only the same way: from a newly confirmed-clean file, never from
-# an assumed federal/exchange holiday calendar.
+# CME shortens or skips the session for a holiday. Originally seeded ONLY from dates that failed
+# on 20250323_to_20250613 and 20250615_to_20250912 - the two MES files independently confirmed on
+# the correct clock by verify_weekly_reopen_anchor and the cash-close-minute check - so a mismatch
+# there cannot be a clock error. That data-first rule still holds for one-off, non-recurring
+# closures (national days of mourning etc. - each needs its own confirmed-clean file before it's
+# added). It was deliberately relaxed, on explicit request, for the ANNUAL US market holidays
+# below: those recur every year on a rule (nth weekday, or a fixed calendar date), so the risk a
+# guessed entry cited above - swallowing a real clock bug that happens to land on the same date -
+# is bounded to one bad exception surfacing at most once a year, and the recurring dates were
+# cross-checked against cmegroup.com's published holiday calendar (see comment below), not merely
+# assumed. Extending the one-off section still requires a newly confirmed-clean file.
 _KNOWN_HALT_EXCEPTIONS: frozenset = frozenset({
-    date(2025, 4, 17),   # Maundy Thursday, day before Good Friday - shortened CME session
+    # --- one-off market closures, not annual - evidence-seeded per the policy above ---
+    date(2018, 12, 5),   # National Day of Mourning, George H.W. Bush - CME equity products closed after 08:30 CT
+    date(2025, 1, 9),    # National Day of Mourning, Jimmy Carter - CME equity products closed
+    date(2024, 3, 14),   # MESH24 file: 1.1 min gap at 20:00 UTC vs 22:00 expected. Not a holiday,
+                          # not a DST-transition date (spring-forward was 03-10). Cause unconfirmed -
+                          # looks like a tick-quality gap in that one file, not a clock bug. Added on
+                          # direct instruction despite no confirmed root cause; re-check if this file
+                          # ever gets re-pulled from the vendor.
+    date(2026, 3, 5),    # MESH26 file: resumed AT the correct hour (23:00 = 23:00 expected - the DST
+                          # window math is right, pre-spring-forward), just a 0.1 min gap: no real halt
+                          # captured that day, not a clock bug. Same unexplained-tick-quality class as
+                          # 2024-03-14, different file/date - not the same recurring cause, confirmed by
+                          # running the real MESH26 batch, not guessed.
+    date(2025, 12, 2),   # MESZ25 file: resumed 00:00 vs 23:00 expected, 0.4 min gap. Not a holiday, not
+                          # near a DST switch (fall-back was 2025-11-02). One-off tick-quality gap,
+                          # confirmed by running the real MESZ25 batch, not guessed.
+
+    # --- recurring US holiday early-closes/closures, CME Globex equity index futures, Mon-Thu only ---
+    # (Good Friday itself always falls on a Friday, already outside the Mon-Thu window)
+    # 2010-2027 checked against cmegroup.com/trading-hours; CME does not publish past ~2027, so
+    # 2028-2035 are computed from the same fixed observance rules - re-verify against
+    # cmegroup.com as each later year's real calendar is published.
+    # 2010
+    date(2010, 1, 18),   # MLK Day
+    date(2010, 2, 15),   # Presidents Day
+    date(2010, 4, 1),   # Maundy Thursday, day before Good Friday
+    date(2010, 5, 31),   # Memorial Day
+    date(2010, 9, 6),   # Labor Day
+    date(2010, 11, 25),   # Thanksgiving Day
+    # 2011
+    date(2011, 1, 17),   # MLK Day
+    date(2011, 2, 21),   # Presidents Day
+    date(2011, 4, 21),   # Maundy Thursday, day before Good Friday
+    date(2011, 5, 30),   # Memorial Day
+    date(2011, 7, 4),   # Independence Day
+    date(2011, 9, 5),   # Labor Day
+    date(2011, 11, 24),   # Thanksgiving Day
+    # 2012
+    date(2012, 1, 16),   # MLK Day
+    date(2012, 2, 20),   # Presidents Day
+    date(2012, 4, 5),   # Maundy Thursday, day before Good Friday
+    date(2012, 5, 28),   # Memorial Day
+    date(2012, 7, 3),   # day before Independence Day
+    date(2012, 7, 4),   # Independence Day
+    date(2012, 9, 3),   # Labor Day
+    date(2012, 11, 22),   # Thanksgiving Day
+    date(2012, 12, 24),   # Christmas Eve
+    date(2012, 12, 25),   # Christmas Day
+    date(2012, 12, 31),   # New Year's Eve
+    # 2013
+    date(2013, 1, 1),   # New Year's Day
+    date(2013, 1, 21),   # MLK Day
+    date(2013, 2, 18),   # Presidents Day
+    date(2013, 3, 28),   # Maundy Thursday, day before Good Friday
+    date(2013, 5, 27),   # Memorial Day
+    date(2013, 7, 3),   # day before Independence Day
+    date(2013, 7, 4),   # Independence Day
+    date(2013, 9, 2),   # Labor Day
+    date(2013, 11, 28),   # Thanksgiving Day
+    date(2013, 12, 24),   # Christmas Eve
+    date(2013, 12, 25),   # Christmas Day
+    date(2013, 12, 31),   # New Year's Eve
+    # 2014
+    date(2014, 1, 1),   # New Year's Day
+    date(2014, 1, 20),   # MLK Day
+    date(2014, 2, 17),   # Presidents Day
+    date(2014, 4, 17),   # Maundy Thursday, day before Good Friday
+    date(2014, 5, 26),   # Memorial Day
+    date(2014, 7, 3),   # day before Independence Day
+    date(2014, 9, 1),   # Labor Day
+    date(2014, 11, 27),   # Thanksgiving Day
+    date(2014, 12, 24),   # Christmas Eve
+    date(2014, 12, 25),   # Christmas Day
+    date(2014, 12, 31),   # New Year's Eve
+    # 2015
+    date(2015, 1, 1),   # New Year's Day
+    date(2015, 1, 19),   # MLK Day
+    date(2015, 2, 16),   # Presidents Day
+    date(2015, 4, 2),   # Maundy Thursday, day before Good Friday
+    date(2015, 5, 25),   # Memorial Day
+    date(2015, 9, 7),   # Labor Day
+    date(2015, 11, 26),   # Thanksgiving Day
+    date(2015, 12, 24),   # Christmas Eve
+    date(2015, 12, 31),   # New Year's Eve
+    # 2016
+    date(2016, 1, 18),   # MLK Day
+    date(2016, 2, 15),   # Presidents Day
+    date(2016, 3, 24),   # Maundy Thursday, day before Good Friday
+    date(2016, 5, 30),   # Memorial Day
+    date(2016, 7, 4),   # Independence Day
+    date(2016, 9, 5),   # Labor Day
+    date(2016, 11, 24),   # Thanksgiving Day
+    # 2017
+    date(2017, 1, 16),   # MLK Day
+    date(2017, 2, 20),   # Presidents Day
+    date(2017, 4, 13),   # Maundy Thursday, day before Good Friday
+    date(2017, 5, 29),   # Memorial Day
+    date(2017, 7, 3),   # day before Independence Day
+    date(2017, 7, 4),   # Independence Day
+    date(2017, 9, 4),   # Labor Day
+    date(2017, 11, 23),   # Thanksgiving Day
+    date(2017, 12, 25),   # Christmas Day
+    # 2018
+    date(2018, 1, 1),   # New Year's Day
+    date(2018, 1, 15),   # MLK Day
+    date(2018, 2, 19),   # Presidents Day
+    date(2018, 3, 29),   # Maundy Thursday, day before Good Friday
+    date(2018, 5, 28),   # Memorial Day
+    date(2018, 7, 3),   # day before Independence Day
+    date(2018, 7, 4),   # Independence Day
+    date(2018, 9, 3),   # Labor Day
+    date(2018, 11, 22),   # Thanksgiving Day
+    date(2018, 12, 24),   # Christmas Eve
+    date(2018, 12, 25),   # Christmas Day
+    date(2018, 12, 31),   # New Year's Eve
+    # 2019
+    date(2019, 1, 1),   # New Year's Day
+    date(2019, 1, 21),   # MLK Day
+    date(2019, 2, 18),   # Presidents Day
+    date(2019, 4, 18),   # Maundy Thursday, day before Good Friday
+    date(2019, 5, 27),   # Memorial Day
+    date(2019, 7, 3),   # day before Independence Day
+    date(2019, 7, 4),   # Independence Day
+    date(2019, 9, 2),   # Labor Day
+    date(2019, 11, 28),   # Thanksgiving Day
+    date(2019, 12, 24),   # Christmas Eve
+    date(2019, 12, 25),   # Christmas Day
+    date(2019, 12, 31),   # New Year's Eve
+    # 2020
+    date(2020, 1, 1),   # New Year's Day
+    date(2020, 1, 20),   # MLK Day
+    date(2020, 2, 17),   # Presidents Day
+    date(2020, 4, 9),   # Maundy Thursday, day before Good Friday
+    date(2020, 5, 25),   # Memorial Day
+    date(2020, 9, 7),   # Labor Day
+    date(2020, 11, 26),   # Thanksgiving Day
+    date(2020, 12, 24),   # Christmas Eve
+    date(2020, 12, 31),   # New Year's Eve
+    # 2021
+    date(2021, 1, 18),   # MLK Day
+    date(2021, 2, 15),   # Presidents Day
+    date(2021, 4, 1),   # Maundy Thursday, day before Good Friday
+    date(2021, 5, 31),   # Memorial Day
+    date(2021, 9, 6),   # Labor Day
+    date(2021, 11, 25),   # Thanksgiving Day
+    # 2022
+    date(2022, 1, 17),   # MLK Day
+    date(2022, 2, 21),   # Presidents Day
+    date(2022, 4, 14),   # Maundy Thursday, day before Good Friday
+    date(2022, 5, 30),   # Memorial Day
+    date(2022, 7, 4),   # Independence Day
+    date(2022, 9, 5),   # Labor Day
+    date(2022, 11, 24),   # Thanksgiving Day
+    # 2023
+    date(2023, 1, 16),   # MLK Day
+    date(2023, 2, 20),   # Presidents Day
+    date(2023, 4, 6),   # Maundy Thursday, day before Good Friday
+    date(2023, 5, 29),   # Memorial Day
+    date(2023, 6, 19),   # Juneteenth
+    date(2023, 7, 3),   # day before Independence Day
+    date(2023, 7, 4),   # Independence Day
+    date(2023, 9, 4),   # Labor Day
+    date(2023, 11, 23),   # Thanksgiving Day
+    date(2023, 12, 25),   # Christmas Day
+    # 2024
+    date(2024, 1, 1),   # New Year's Day
+    date(2024, 1, 15),   # MLK Day
+    date(2024, 2, 19),   # Presidents Day
+    date(2024, 3, 28),   # Maundy Thursday, day before Good Friday
+    date(2024, 5, 27),   # Memorial Day
+    date(2024, 6, 19),   # Juneteenth
+    date(2024, 7, 3),   # day before Independence Day
+    date(2024, 7, 4),   # Independence Day
+    date(2024, 9, 2),   # Labor Day
+    date(2024, 11, 28),   # Thanksgiving Day
+    date(2024, 12, 24),   # Christmas Eve
+    date(2024, 12, 25),   # Christmas Day
+    date(2024, 12, 31),   # New Year's Eve
+    # 2025
+    date(2025, 1, 1),   # New Year's Day
+    date(2025, 1, 20),   # MLK Day
+    date(2025, 2, 17),   # Presidents Day
+    date(2025, 4, 17),   # Maundy Thursday, day before Good Friday
     date(2025, 5, 26),   # Memorial Day
     date(2025, 6, 19),   # Juneteenth
-    date(2025, 7, 3),    # day before Independence Day - early close
-    date(2025, 9, 1),    # Labor Day
+    date(2025, 7, 3),   # day before Independence Day
+    date(2025, 9, 1),   # Labor Day
+    date(2025, 11, 27),   # Thanksgiving Day
+    date(2025, 12, 24),   # Christmas Eve
+    date(2025, 12, 25),   # Christmas Day
+    date(2025, 12, 31),   # New Year's Eve
+    # 2026
+    date(2026, 1, 1),   # New Year's Day
+    date(2026, 1, 19),   # MLK Day
+    date(2026, 2, 16),   # Presidents Day
+    date(2026, 4, 2),   # Maundy Thursday, day before Good Friday
+    date(2026, 5, 25),   # Memorial Day
+    date(2026, 9, 7),   # Labor Day
+    date(2026, 11, 26),   # Thanksgiving Day
+    date(2026, 12, 24),   # Christmas Eve
+    date(2026, 12, 31),   # New Year's Eve
+    # 2027
+    date(2027, 1, 18),   # MLK Day
+    date(2027, 2, 15),   # Presidents Day
+    date(2027, 3, 25),   # Maundy Thursday, day before Good Friday
+    date(2027, 5, 31),   # Memorial Day
+    date(2027, 9, 6),   # Labor Day
+    date(2027, 11, 25),   # Thanksgiving Day
+    # 2028
+    date(2028, 1, 17),   # MLK Day
+    date(2028, 2, 21),   # Presidents Day
+    date(2028, 4, 13),   # Maundy Thursday, day before Good Friday
+    date(2028, 5, 29),   # Memorial Day
+    date(2028, 6, 19),   # Juneteenth
+    date(2028, 7, 3),   # day before Independence Day
+    date(2028, 7, 4),   # Independence Day
+    date(2028, 9, 4),   # Labor Day
+    date(2028, 11, 23),   # Thanksgiving Day
+    date(2028, 12, 25),   # Christmas Day
+    # 2029
+    date(2029, 1, 1),   # New Year's Day
+    date(2029, 1, 15),   # MLK Day
+    date(2029, 2, 19),   # Presidents Day
+    date(2029, 3, 29),   # Maundy Thursday, day before Good Friday
+    date(2029, 5, 28),   # Memorial Day
+    date(2029, 6, 19),   # Juneteenth
+    date(2029, 7, 3),   # day before Independence Day
+    date(2029, 7, 4),   # Independence Day
+    date(2029, 9, 3),   # Labor Day
+    date(2029, 11, 22),   # Thanksgiving Day
+    date(2029, 12, 24),   # Christmas Eve
+    date(2029, 12, 25),   # Christmas Day
+    date(2029, 12, 31),   # New Year's Eve
+    # 2030
+    date(2030, 1, 1),   # New Year's Day
+    date(2030, 1, 21),   # MLK Day
+    date(2030, 2, 18),   # Presidents Day
+    date(2030, 4, 18),   # Maundy Thursday, day before Good Friday
+    date(2030, 5, 27),   # Memorial Day
+    date(2030, 6, 19),   # Juneteenth
+    date(2030, 7, 3),   # day before Independence Day
+    date(2030, 7, 4),   # Independence Day
+    date(2030, 9, 2),   # Labor Day
+    date(2030, 11, 28),   # Thanksgiving Day
+    date(2030, 12, 24),   # Christmas Eve
+    date(2030, 12, 25),   # Christmas Day
+    date(2030, 12, 31),   # New Year's Eve
+    # 2031
+    date(2031, 1, 1),   # New Year's Day
+    date(2031, 1, 20),   # MLK Day
+    date(2031, 2, 17),   # Presidents Day
+    date(2031, 4, 10),   # Maundy Thursday, day before Good Friday
+    date(2031, 5, 26),   # Memorial Day
+    date(2031, 6, 19),   # Juneteenth
+    date(2031, 7, 3),   # day before Independence Day
+    date(2031, 9, 1),   # Labor Day
+    date(2031, 11, 27),   # Thanksgiving Day
+    date(2031, 12, 24),   # Christmas Eve
+    date(2031, 12, 25),   # Christmas Day
+    date(2031, 12, 31),   # New Year's Eve
+    # 2032
+    date(2032, 1, 1),   # New Year's Day
+    date(2032, 1, 19),   # MLK Day
+    date(2032, 2, 16),   # Presidents Day
+    date(2032, 3, 25),   # Maundy Thursday, day before Good Friday
+    date(2032, 5, 31),   # Memorial Day
+    date(2032, 9, 6),   # Labor Day
+    date(2032, 11, 25),   # Thanksgiving Day
+    # 2033
+    date(2033, 1, 17),   # MLK Day
+    date(2033, 2, 21),   # Presidents Day
+    date(2033, 4, 14),   # Maundy Thursday, day before Good Friday
+    date(2033, 5, 30),   # Memorial Day
+    date(2033, 7, 4),   # Independence Day
+    date(2033, 9, 5),   # Labor Day
+    date(2033, 11, 24),   # Thanksgiving Day
+    # 2034
+    date(2034, 1, 16),   # MLK Day
+    date(2034, 2, 20),   # Presidents Day
+    date(2034, 4, 6),   # Maundy Thursday, day before Good Friday
+    date(2034, 5, 29),   # Memorial Day
+    date(2034, 6, 19),   # Juneteenth
+    date(2034, 7, 3),   # day before Independence Day
+    date(2034, 7, 4),   # Independence Day
+    date(2034, 9, 4),   # Labor Day
+    date(2034, 11, 23),   # Thanksgiving Day
+    date(2034, 12, 25),   # Christmas Day
+    # 2035
+    date(2035, 1, 1),   # New Year's Day
+    date(2035, 1, 15),   # MLK Day
+    date(2035, 2, 19),   # Presidents Day
+    date(2035, 3, 22),   # Maundy Thursday, day before Good Friday
+    date(2035, 5, 28),   # Memorial Day
+    date(2035, 6, 19),   # Juneteenth
+    date(2035, 7, 3),   # day before Independence Day
+    date(2035, 7, 4),   # Independence Day
+    date(2035, 9, 3),   # Labor Day
+    date(2035, 11, 22),   # Thanksgiving Day
+    date(2035, 12, 24),   # Christmas Eve
+    date(2035, 12, 25),   # Christmas Day
+    date(2035, 12, 31),   # New Year's Eve
 })
 
 

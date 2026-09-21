@@ -158,8 +158,10 @@ def test_daily_halt_anchor_passes_on_both_sides_of_a_dst_switch():
 
 def test_daily_halt_anchor_catches_one_bad_day_among_good_ones():
     good = gapped_day(datetime(2025, 1, 13), resume_hour=23)
-    bad = gapped_day(datetime(2025, 1, 20), resume_hour=22)  # off by one hour for a CST Monday
-    with pytest.raises(Exception, match="2025-01-20"):
+    # 2025-01-27: a plain CST Monday, not MLK Day (01-20) or any other _KNOWN_HALT_EXCEPTIONS date -
+    # picking an excepted date here would make the anchor skip it instead of catching the bug.
+    bad = gapped_day(datetime(2025, 1, 27), resume_hour=22)  # off by one hour
+    with pytest.raises(Exception, match="2025-01-27"):
         verify_daily_maintenance_halt_anchor(frame(*(good + bad)), market="CME")
 
 
@@ -215,6 +217,15 @@ def test_daily_halt_anchor_exception_does_not_mask_a_different_bad_day():
     bad = gapped_day(datetime(2025, 6, 16), resume_hour=21)  # off by one hour for a CDT Monday
     with pytest.raises(Exception, match="2025-06-16"):
         verify_daily_maintenance_halt_anchor(frame(*(holiday + bad)), market="CME")
+
+
+def test_daily_halt_anchor_skips_the_2024_2025_dates_that_first_surfaced_this_gap():
+    """2024-12-25 (recurring Christmas Day entry) and 2025-01-09 (one-off National Day of
+    Mourning) are the dates that originally failed on real MESH25 data and prompted extending
+    _KNOWN_HALT_EXCEPTIONS beyond a single evidence-seeded year - a Wednesday and a Thursday."""
+    christmas = [datetime(2024, 12, 25, h, 0) for h in range(19, 24)]  # flat, no gap
+    mourning = [datetime(2025, 1, 9, h, 0) for h in range(19, 24)]  # flat, no gap
+    verify_daily_maintenance_halt_anchor(frame(*(christmas + mourning)), market="CME")  # must not raise
 
 
 def test_daily_halt_report_returns_one_row_per_good_day():

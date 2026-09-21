@@ -94,6 +94,8 @@ def aggregate_auctions(
         [
             pl.col("Datetime").min().alias("StartTime"),
             pl.col("Datetime").max().alias("EndTime"),
+            pl.col("Index").min().alias("StartIndex"),
+            pl.col("Index").max().alias("EndIndex"),
             pl.col("BidPrice").first().alias("FirstBidprice"),
             pl.col("AskPrice").first().alias("FirstAskPrice"),
             pl.col("BidPrice").last().alias("LastBidPrice"),
@@ -155,7 +157,11 @@ def aggregate_auctions(
     )
 
     agg = agg.with_columns([imbalance.alias("Imbalance"), label.alias("Label")])
-    agg = agg.sort(["StartTime"], descending=False)
+    # Sort by AuctionId, not StartTime: AuctionId is a cumulative count over the caller's row
+    # order, so it is monotonic with true elapsed time by construction. StartTime is local
+    # wall-clock time, which repeats (November) or skips (March) an hour at the US DST switch -
+    # sorting on it can silently invert two auctions' true order once a year.
+    agg = agg.sort(["AuctionId"], descending=False)
 
     return agg
 
@@ -283,6 +289,7 @@ def get_valid_blocks(
             pl.col("AuctionId").alias("AuctionEndId"),
             pl.col("StartTime"),
             pl.col("EndTime"),
+            pl.col("EndIndex"),  # DST-safe join key - see attach_block_info
             pl.col("BlockVolume").alias("TotalBlockVolume"),
             pl.col("BlockImbalance").alias("TotalBlockImbalance"),
         ]
@@ -330,6 +337,62 @@ def get_valid_blocks(
                 "TotalBlockImbalance",
             ]
         )
+    )
+
+
+def attach_block_info(df: pl.DataFrame, df_blocks: pl.DataFrame) -> pl.DataFrame:
+    """Each tick inherits the most recent block that ended at or before it, prefixed `block_*`.
+
+    Matched on `Index` (each tick's strictly monotonic id, min/max'd per auction in
+    `aggregate_auctions` as `StartIndex`/`EndIndex`), not on local wall-clock `Datetime`. Local
+    time is not monotonic across the US DST switch - it repeats an hour every November and skips
+    one every March - so sorting or `join_asof`-matching on it can silently pair a tick with the
+    wrong block, or reorder two ticks that are really an hour apart, once a year, in the ETH
+    session ticks that fall in that hour. `Index` has no such ambiguity: it is assigned once, in
+    true source-instant order, before any timezone conversion, and never repeats or goes backward.
+
+    Requires `df` to have an `Index` column and `df_blocks` to be `get_valid_blocks`' output
+    (needs its `EndIndex` column - not present when `return_ids_list=True`).
+    """
+
+    if df_blocks.height == 0:
+        return df.with_columns(
+            [
+                pl.lit(None, dtype=pl.Datetime).alias("block_starttime"),
+                pl.lit(None, dtype=pl.Datetime).alias("block_endtime"),
+                pl.lit(None, dtype=pl.Int64).alias("block_blockid"),
+                pl.lit(None, dtype=pl.Float64).alias("block_totalblockvolume"),
+                pl.lit(None, dtype=pl.Float64).alias("block_totalblockimbalance"),
+                pl.lit(None, dtype=pl.Int32).alias("block_imbalancedirection"),
+            ]
+        )
+
+    if "EndIndex" not in df_blocks.columns:
+        raise Exception(
+            "df_blocks has no 'EndIndex' column - pass get_valid_blocks(..., return_ids_list=False) "
+            "output (the default), not the exploded per-auction-id variant."
+        )
+
+    block_cols_keep = [
+        c
+        for c in (
+            "StartTime",
+            "EndTime",
+            "EndIndex",
+            "BlockId",
+            "TotalBlockVolume",
+            "TotalBlockImbalance",
+            "ImbalanceDirection",
+        )
+        if c in df_blocks.columns
+    ]
+    df_blocks_small = (
+        df_blocks.select(block_cols_keep)
+        .rename({c: f"block_{c.lower()}" for c in block_cols_keep})
+        .sort("block_endindex")
+    )
+    return df.sort("Index").join_asof(
+        df_blocks_small, left_on="Index", right_on="block_endindex", strategy="backward",
     )
 
 

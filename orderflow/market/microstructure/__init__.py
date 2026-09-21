@@ -17,6 +17,7 @@ from .auctions import (
     SELL_CODE_DEFAULT,
     VOLUME_THRESHOLD_DEFAULT,
     aggregate_auctions,
+    attach_block_info,
     compute_forward_outcomes,
     compute_forward_outcomes_from_timestamps,
     get_valid_blocks,

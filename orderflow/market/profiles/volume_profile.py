@@ -397,6 +397,7 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
     total_volume = volume[0]
     value_area[0] = 'POC'
     poc_volume = volume[0]
+    poc = price[0]
 
     for i in tqdm(range(1, len_)):
 
@@ -413,7 +414,9 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
         else:
             volume_profile[price[i]] = volume[i]
 
-        if volume_profile[price[i]] > poc_volume:
+        # poc_volume == 0: nothing traded yet this session (e.g. a zero-volume first tick after the
+        # reset), so this tick seeds the POC the way tick 0 does.
+        if poc_volume == 0 or volume_profile[price[i]] > poc_volume:
 
             poc_volume    = volume_profile[price[i]]
             poc           = price[i]
@@ -436,12 +439,15 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
 
         while True:
 
+            moved = False
+
             if advance_up:
                 if upper_index >= len(vp_prices) - 1:
                     upper_volume = 0
                 else:
                     upper_index += 1
                     upper_volume += vp_volumes[upper_index]
+                    moved = True
 
             if advance_down:
                 if lower_index <= 0:
@@ -449,6 +455,7 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
                 else:
                     lower_index -= 1
                     lower_volume += vp_volumes[lower_index]
+                    moved = True
 
             if (upper_volume > 0 or lower_volume > 0) and (upper_volume > lower_volume):
                 advance_up = True
@@ -466,6 +473,13 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
                 if price[i] == vp_prices[lower_index]:
                     value_area[i] = 'VA'
                     break
+            elif not moved:
+                # Stalled: the paused side waits behind a zero-volume level while the running side is
+                # exhausted, so no state changes and this loop would never exit. Resume both sides;
+                # if both were already running, every level has been consumed.
+                if advance_up and advance_down:
+                    break
+                advance_up = advance_down = True
 
             if current_sum_of_volume > percentage_of_total_volume:
                 break

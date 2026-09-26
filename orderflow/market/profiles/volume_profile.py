@@ -333,7 +333,6 @@ def get_daily_session_moving_POC(data: pd.DataFrame) -> np.array:
 
     volume    = np.array(data.Volume)
     price     = np.array(data.Price)
-    dates     = np.array(data.Datetime)
     session   = np.array(data.SessionType)
     poc_final = dict()
     len_      = len(price)
@@ -349,9 +348,9 @@ def get_daily_session_moving_POC(data: pd.DataFrame) -> np.array:
         cp = price[i]
 
         if (session[i] != session[i - 1]) & session[i].endswith('ETH') & session[i - 1].endswith('RTH'):
-            if (dates[i] - dates[i - 1]).total_seconds() <= 86400: 
-                prev_poc = poc_[i - 1]
-                prev_poc_[i] = prev_poc
+            # Carry the session that just ended, however long the gap: Sunday's open carries Friday's POC.
+            prev_poc = poc_[i - 1]
+            prev_poc_[i] = prev_poc
             poc_final.clear()
             poc_final[cp] = volume[i]
             poc_[i]       = cp

@@ -583,6 +583,20 @@ class BacktestEngine:
                     f"TradeType contains invalid values: {bad}. Only 1 (SHORT) and 2 (LONG) are valid."
                 )
 
+        # Both loops pair sides with entry ticks by position (signal_ptr), so a signal that is
+        # duplicated, missing from the data, or out of tick order silently hands every later trade
+        # the wrong side. Refuse those inputs instead.
+        tick_index = pd.Index(timestamps)
+        if not tick_index.is_unique:
+            raise ValueError("data Index has duplicate values; every tick needs a unique Index.")
+        if len(np.unique(signal_ts)) != len(signal_ts):
+            raise ValueError("signals Index has duplicate values; keep one signal per entry tick.")
+        tick_pos = tick_index.get_indexer(signal_ts)
+        if (tick_pos < 0).any():
+            raise ValueError(f"signals Index not in data: {signal_ts[tick_pos < 0][:5].tolist()}")
+        if (np.diff(tick_pos) < 0).any():
+            raise ValueError("signals are not in tick order; sort them into the data's Index order.")
+
         # RTH filtering
         if self.trade_in_rth:
             signal_ts, signal_sides = self._filter_rth_signals(data, signal_ts, signal_sides)

@@ -138,3 +138,7 @@ def test_book_variant_needs_the_execution_level_to_be_the_largest_size():
     assert out["variant_book"].to_list() == [True]
     assert out["variant_vwap"].to_list() == [False]
     assert find(frame(wall_print(book=121))).height == 0
+
+
+def test_book_variant_needs_the_print_to_take_the_whole_level():
+    assert find(frame(wall_print(vol=100))).height == 0

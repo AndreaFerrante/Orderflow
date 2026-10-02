@@ -198,3 +198,13 @@ def test_eth_tick_is_never_the_entry_tick():
             {"t": "10:01:11.500", "mid": 97.0, "session": "ETH"},
             {"t": "10:01:13", "mid": 97.0}, {"t": "10:01:20", "mid": 97.0}]
     assert find(frame(rows))["entry_index"].to_list() == [3]
+
+
+def test_signals_do_not_change_when_later_ticks_change():
+    rows = buy_print() + [{"t": "10:02:00", "mid": 97.5}, {"t": "10:03:00", "mid": 97.5}]
+    before = find(frame(rows))
+    for row in rows[3:]:  # everything after the entry tick
+        row.update(mid=250.0, vwap=10.0)
+    after = find(frame(rows))
+    assert before.height == 1
+    assert after.equals(before)

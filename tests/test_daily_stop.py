@@ -23,3 +23,9 @@ def test_trades_entered_after_the_second_stop_are_dropped():
     kept = apply_daily_stop(trades([("09:00", "09:05", "stop_loss"), ("09:10", "09:20", "stop_loss"),
                                     ("09:30", "09:45", "time_exit"), ("10:00", "10:15", "time_exit")]))
     assert entries(kept) == ["09-15 09:00", "09-15 09:10"]
+
+
+def test_time_exits_do_not_count_as_stops():
+    kept = apply_daily_stop(trades([("09:00", "09:05", "stop_loss"), ("09:10", "09:25", "time_exit"),
+                                    ("09:30", "09:45", "time_exit"), ("10:00", "10:15", "time_exit")]))
+    assert len(kept) == 4

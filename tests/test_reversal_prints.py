@@ -116,3 +116,8 @@ def test_vwap_variant_rejects_a_print_that_pushes_away_from_vwap():
     rows = [{"t": "10:00:00", "mid": 96.0}, {"t": "10:01:10", "mid": 97.0, "vol": 100, "tt": 1},
             {"t": "10:01:11", "mid": 97.0}, {"t": "10:01:20", "mid": 97.0}]
     assert find(frame(rows)).height == 0
+
+
+def test_vwap_variant_is_off_when_the_band_has_no_width():
+    # vwap_sd1_top == vwap on the first ticks of a session: the distance is undefined.
+    assert find(frame(buy_print(sd=0.0))).height == 0

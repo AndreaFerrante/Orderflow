@@ -74,3 +74,9 @@ def test_trade_types_other_than_1_and_2_are_ignored():
 
 def test_eth_print_never_triggers():
     assert find(frame(buy_print(session="ETH"))).height == 0
+
+
+def test_print_with_the_prior_move_is_rejected():
+    rows = buy_print()
+    rows[0]["mid"] = 96.0  # price ROSE into the buy print
+    assert find(frame(rows)).height == 0

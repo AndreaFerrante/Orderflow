@@ -52,7 +52,8 @@ def find_reversal_prints(
     base = (
         rth.select("Index", "Date", "Datetime", "Price",
                    ((pl.col("AskPrice") + pl.col("BidPrice")) / 2).alias("mid"))
-        .collect().sort("Index")
+        .collect().sort("Index").with_row_index("pos")
+        .with_columns(pl.col("pos").min().over("Date").alias("day_start"))
     )
     cand = (
         rth.filter((pl.col("Volume") >= min_print_size) & pl.col("TradeType").is_in([1, 2]))
@@ -61,13 +62,22 @@ def find_reversal_prints(
     )
 
     idx = base["Index"].to_numpy()
+    t = base["Datetime"].dt.epoch("us").to_numpy()
     mid = base["mid"].to_numpy()
     k = np.searchsorted(idx, cand["Index"].to_numpy())
     side = np.where(cand["TradeType"].to_numpy() == 2, 1, -1).astype(np.int64)
     volume = cand["Volume"].to_numpy()
 
+    # Against the move: the reference is the last tick strictly older than the lookback, never
+    # one from an earlier day.
+    ref = np.maximum(
+        np.searchsorted(t, t[k] - int(lookback_s * _US), side="left") - 1,
+        base["day_start"].to_numpy().astype(np.int64)[k],
+    )
+    pre_move = side * (mid[k] - mid[ref]) / tick_size
+
     e = k
-    keep = np.arange(len(k))
+    keep = np.flatnonzero(pre_move < 0)
     out = pl.DataFrame({
         "Date": base["Date"].gather(k[keep]),
         "side": side[keep],
@@ -75,6 +85,7 @@ def find_reversal_prints(
         "trigger_datetime": base["Datetime"].gather(k[keep]),
         "volume": volume[keep],
         "mid": mid[k[keep]],
+        "pre_move_ticks": pre_move[keep],
         "entry_index": idx[e[keep]],
         "entry_datetime": base["Datetime"].gather(e[keep]),
         "entry_price": base["Price"].gather(e[keep]),

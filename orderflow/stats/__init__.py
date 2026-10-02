@@ -8,11 +8,6 @@ Submodules
 ----------
 stats             Core descriptive stats, risk metrics, time-series diagnostics.
 returns           Return series construction, equity curves, drawdown analysis.
-hypothesis        Statistical hypothesis tests (stationarity, normality, breaks).
-correlation       Correlation analysis (rolling, rank, stability, eigenvalues).
-montecarlo        Non-parametric bootstrap Monte Carlo for strategy robustness.
-markov            Markov chain & HMM regime predictors (no lookahead).
-markov_utilities  Feature engineering, HMM model selection, data loading.
 """
 
 # ── Core statistical functions ───────────────────────────────────────────────
@@ -53,60 +48,6 @@ from .returns import (
     trade_sharpe,
 )
 
-# ── Hypothesis testing ───────────────────────────────────────────────────────
-from .hypothesis import (
-    TestResult,
-    adf_test,
-    kpss_test,
-    is_stationary,
-    jarque_bera_test,
-    ljung_box_test,
-    holm_bonferroni,
-    cusum_test,
-)
-
-# ── Correlation analysis ─────────────────────────────────────────────────────
-from .correlation import (
-    rolling_correlation,
-    rank_correlation,
-    correlation_stability,
-    correlation_eigenvalues,
-)
-
-# ── Monte Carlo simulation ───────────────────────────────────────────────────
-from .montecarlo import (
-    MonteCarloResult,
-    get_montecarlo_analysis,
-    plot_montecarlo_paths,
-    plot_montecarlo_distribution,
-)
-
-# ── Markov & HMM regime detection ───────────────────────────────────────────
-from .markov import (
-    MarkovChainPredictor,
-    AdaptiveMarkovChainPredictor,
-    MultiFeatureHMM,
-    get_states_from_ohlc,
-    predict_bar_state,
-)
-
-# ── Feature engineering & utilities ─────────────────────────────────────────
-from .markov_utilities import (
-    threshold_prices_states,
-    adaptive_threshold_prices_states,
-    simulate_market_data,
-    compute_df_features,
-    select_best_hmm_model,
-    concat_sc_bar_data,
-    plot_distribution_of_float_series,
-)
-
-from .seasonality import (
-    bucket_of_day,
-    causal_bucket_zscore,
-    normalize_by_depth,
-)
-
 __all__ = [
     # stats.py
     "describe",
@@ -137,43 +78,7 @@ __all__ = [
     "drawdown_series",
     "rolling_volatility",
     "ewma_volatility",
-    "bucket_of_day",
-    "causal_bucket_zscore",
-    "normalize_by_depth",
     "underwater_duration",
     "max_drawdown_absolute",
     "trade_sharpe",
-    # hypothesis.py
-    "TestResult",
-    "adf_test",
-    "kpss_test",
-    "is_stationary",
-    "jarque_bera_test",
-    "ljung_box_test",
-    "holm_bonferroni",
-    "cusum_test",
-    # correlation.py
-    "rolling_correlation",
-    "rank_correlation",
-    "correlation_stability",
-    "correlation_eigenvalues",
-    # montecarlo.py
-    "MonteCarloResult",
-    "get_montecarlo_analysis",
-    "plot_montecarlo_paths",
-    "plot_montecarlo_distribution",
-    # markov.py
-    "MarkovChainPredictor",
-    "AdaptiveMarkovChainPredictor",
-    "MultiFeatureHMM",
-    "get_states_from_ohlc",
-    "predict_bar_state",
-    # markov_utilities.py
-    "threshold_prices_states",
-    "adaptive_threshold_prices_states",
-    "simulate_market_data",
-    "compute_df_features",
-    "select_best_hmm_model",
-    "concat_sc_bar_data",
-    "plot_distribution_of_float_series",
 ]

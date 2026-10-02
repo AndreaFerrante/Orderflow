@@ -21,5 +21,4 @@ from .exceptions import (
     IndexAbsent,
     SessionTypeAbsent,
 )
-from .paths import get_current_os
 

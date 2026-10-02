@@ -23,12 +23,6 @@ from .auctions import (
     get_valid_blocks,
     load_tick_data,
 )
-from .dom import (
-    get_dom_shape_for_n_levels,
-    identify_WG_position,
-    remove_DOM_columns,
-    sum_first_n_DOM_levels,
-)
 from .footprint import (
     filter_big_prints_on_ask,
     filter_big_prints_on_bid,

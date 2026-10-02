@@ -121,3 +121,20 @@ def test_vwap_variant_rejects_a_print_that_pushes_away_from_vwap():
 def test_vwap_variant_is_off_when_the_band_has_no_width():
     # vwap_sd1_top == vwap on the first ticks of a session: the distance is undefined.
     assert find(frame(buy_print(sd=0.0))).height == 0
+
+
+def wall_print(**overrides):
+    """A 150-lot buy AT VWAP (so never the VWAP variant) into a 120-lot ask, book maximum 119."""
+    spec = {"mid": 100.0, "vol": 150, "ask_size": 120, "book": 119}
+    spec.update(overrides)
+    rows = buy_print(**spec)
+    rows[0]["mid"] = 101.0
+    return rows
+
+
+def test_book_variant_needs_the_execution_level_to_be_the_largest_size():
+    out = find(frame(wall_print()))
+    assert out.height == 1
+    assert out["variant_book"].to_list() == [True]
+    assert out["variant_vwap"].to_list() == [False]
+    assert find(frame(wall_print(book=121))).height == 0

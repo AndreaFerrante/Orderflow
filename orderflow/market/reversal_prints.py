@@ -49,6 +49,7 @@ def find_reversal_prints(
     ``last_entry_time``, is dropped. Prints that share an entry tick keep the earliest.
     """
     rth = ticks.lazy().filter(pl.col("SessionType") == "RTH")
+    book = [f"{side}DOM_{i}" for side in ("Ask", "Bid") for i in range(book_levels)]
     base = (
         rth.select("Index", "Date", "Datetime", "Price",
                    ((pl.col("AskPrice") + pl.col("BidPrice")) / 2).alias("mid"))
@@ -57,7 +58,8 @@ def find_reversal_prints(
     )
     cand = (
         rth.filter((pl.col("Volume") >= min_print_size) & pl.col("TradeType").is_in([1, 2]))
-        .select("Index", "Volume", "TradeType", "vwap", "vwap_sd1_top")
+        .select("Index", "Volume", "TradeType", "AskSize", "BidSize", "vwap", "vwap_sd1_top",
+                pl.max_horizontal(book).alias("book_max"))
         .collect().sort("Index")
     )
 
@@ -83,8 +85,13 @@ def find_reversal_prints(
         z = np.where(sd > 0, (mid[k] - vwap) / sd, np.nan)
     variant_vwap = (np.abs(z) >= vwap_sd_min) & (side * np.sign(z) < 0)
 
+    # Book variant: the execution level was the largest size shown and the print took all of it.
+    level = np.where(side == 1, cand["AskSize"].to_numpy(), cand["BidSize"].to_numpy())
+    book_max = cand["book_max"].to_numpy()
+    variant_book = (level >= book_max) & (volume >= level)
+
     e = k
-    keep = np.flatnonzero((pre_move < 0) & variant_vwap)
+    keep = np.flatnonzero((pre_move < 0) & (variant_vwap | variant_book))
     out = pl.DataFrame({
         "Date": base["Date"].gather(k[keep]),
         "side": side[keep],
@@ -95,6 +102,9 @@ def find_reversal_prints(
         "pre_move_ticks": pre_move[keep],
         "z": z[keep],
         "variant_vwap": variant_vwap[keep],
+        "variant_book": variant_book[keep],
+        "level_size": level[keep],
+        "book_max": book_max[keep],
         "entry_index": idx[e[keep]],
         "entry_datetime": base["Datetime"].gather(e[keep]),
         "entry_price": base["Price"].gather(e[keep]),

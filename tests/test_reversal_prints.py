@@ -142,3 +142,12 @@ def test_book_variant_needs_the_execution_level_to_be_the_largest_size():
 
 def test_book_variant_needs_the_print_to_take_the_whole_level():
     assert find(frame(wall_print(vol=100))).height == 0
+
+
+def test_book_variant_reads_the_bid_size_for_a_sell_print():
+    rows = [{"t": "10:00:00", "mid": 99.0},
+            {"t": "10:01:10", "mid": 100.0, "vol": 150, "tt": 1, "bid_size": 120, "ask_size": 5, "book": 119},
+            {"t": "10:01:11", "mid": 100.0}, {"t": "10:01:20", "mid": 100.0}]
+    out = find(frame(rows))
+    assert out["side"].to_list() == [-1]
+    assert out["variant_book"].to_list() == [True]

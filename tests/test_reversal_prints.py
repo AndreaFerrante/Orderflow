@@ -166,3 +166,12 @@ def test_entry_is_the_first_tick_at_least_one_second_after_the_print():
     assert out["trigger_index"].to_list() == [1]
     assert out["entry_index"].to_list() == [3]
     assert out["entry_price"].to_list() == [97.5]
+
+
+def test_no_entry_at_or_after_the_cutoff():
+    late = [{"t": "15:38:00", "mid": 98.0}, {"t": "15:39:59.500", "mid": 97.0, "vol": 100, "tt": 2},
+            {"t": "15:40:00.500", "mid": 97.0}, {"t": "15:41:00", "mid": 97.0}]
+    in_time = [{"t": "15:38:00", "mid": 98.0}, {"t": "15:39:58", "mid": 97.0, "vol": 100, "tt": 2},
+               {"t": "15:39:59", "mid": 97.0}, {"t": "15:41:00", "mid": 97.0}]
+    assert find(frame(late)).height == 0
+    assert find(frame(in_time)).height == 1

@@ -89,3 +89,14 @@ def test_reference_tick_is_strictly_older_than_the_lookback():
             {"t": "10:01:04", "mid": 97.0, "vol": 100, "tt": 2},
             {"t": "10:01:05", "mid": 97.0}, {"t": "10:01:10", "mid": 97.0}]
     assert find(frame(rows)).height == 0
+
+
+def test_first_minute_print_uses_the_first_tick_of_its_own_day():
+    # Yesterday closed at 90. Against that tick price has risen and the print would be rejected;
+    # against today's first tick (98) it has fallen.
+    rows = [{"day": "2025-09-12", "t": "15:30:00", "mid": 90.0},
+            {"t": "08:30:00", "mid": 98.0}, {"t": "08:30:30", "mid": 97.0, "vol": 100, "tt": 2},
+            {"t": "08:30:31", "mid": 97.0}, {"t": "08:30:40", "mid": 97.0}]
+    out = find(frame(rows))
+    assert out.height == 1
+    assert out["pre_move_ticks"].to_list() == [-4.0]

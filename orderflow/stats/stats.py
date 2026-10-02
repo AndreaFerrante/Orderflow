@@ -735,3 +735,33 @@ def gain_to_pain_ratio(
     if total_pain < _EPS:
         raise ValueError("No losing periods; gain-to-pain ratio is undefined.")
     return total_return / total_pain
+
+
+def bootstrap_total_by_group(values, groups, *, n_resamples: int = 10_000, seed: int = 42) -> np.ndarray:
+    """
+    Bootstrap distribution of a total when observations come in dependent groups.
+
+    Whole groups (for a trade blotter: days) are resampled with replacement, so trades of one
+    day stay together. Resampling single trades would understate the spread whenever a day's
+    trades move together.
+
+    Parameters
+    ----------
+    values : array-like
+        One number per observation, e.g. net P&L per trade.
+    groups : array-like
+        Group label of each observation, same length as ``values``.
+    n_resamples : int
+        Number of bootstrap totals to draw.
+    seed : int
+        Seed of the generator; the same seed gives the same distribution.
+
+    Returns
+    -------
+    np.ndarray
+        ``n_resamples`` totals.
+    """
+    arr = np.asarray(values, dtype=np.float64).ravel()
+    sums = np.bincount(np.unique(np.asarray(groups), return_inverse=True)[1], weights=arr)
+    picks = np.random.default_rng(seed).integers(0, len(sums), size=(n_resamples, len(sums)))
+    return sums[picks].sum(axis=1)

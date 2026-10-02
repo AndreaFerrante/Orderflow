@@ -29,6 +29,7 @@ from .stats import (
     tail_ratio,
     profit_factor,
     gain_to_pain_ratio,
+    bootstrap_total_by_group,
 )
 
 # ── Return series analysis ───────────────────────────────────────────────────
@@ -67,6 +68,7 @@ __all__ = [
     "tail_ratio",
     "profit_factor",
     "gain_to_pain_ratio",
+    "bootstrap_total_by_group",
     # returns.py
     "to_log_returns",
     "to_arithmetic_returns",

@@ -117,4 +117,4 @@ def find_reversal_prints(
         "entry_datetime": base["Datetime"].gather(e[keep]),
         "entry_price": base["Price"].gather(e[keep]),
     })
-    return out
+    return out.unique(subset=["entry_index"], keep="first", maintain_order=True)

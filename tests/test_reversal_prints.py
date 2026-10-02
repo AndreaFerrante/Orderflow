@@ -181,3 +181,13 @@ def test_print_with_no_later_tick_that_day_is_dropped():
     rows = [{"t": "10:00:00", "mid": 98.0}, {"t": "10:01:10", "mid": 97.0, "vol": 100, "tt": 2},
             {"day": "2025-09-16", "t": "10:00:00", "mid": 97.0}]
     assert find(frame(rows)).height == 0
+
+
+def test_prints_sharing_an_entry_tick_keep_the_earliest_print():
+    rows = [{"t": "10:00:00", "mid": 98.0},
+            {"t": "10:01:10", "mid": 97.0, "vol": 100, "tt": 2},
+            {"t": "10:01:10.100", "mid": 97.0, "vol": 100, "tt": 2},
+            {"t": "10:01:12", "mid": 97.0}, {"t": "10:01:20", "mid": 97.0}]
+    out = find(frame(rows))
+    assert out["trigger_index"].to_list() == [1]
+    assert out["entry_index"].to_list() == [3]

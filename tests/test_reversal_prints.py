@@ -191,3 +191,10 @@ def test_prints_sharing_an_entry_tick_keep_the_earliest_print():
     out = find(frame(rows))
     assert out["trigger_index"].to_list() == [1]
     assert out["entry_index"].to_list() == [3]
+
+
+def test_eth_tick_is_never_the_entry_tick():
+    rows = [{"t": "10:00:00", "mid": 98.0}, {"t": "10:01:10", "mid": 97.0, "vol": 100, "tt": 2},
+            {"t": "10:01:11.500", "mid": 97.0, "session": "ETH"},
+            {"t": "10:01:13", "mid": 97.0}, {"t": "10:01:20", "mid": 97.0}]
+    assert find(frame(rows))["entry_index"].to_list() == [3]

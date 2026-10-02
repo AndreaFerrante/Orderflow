@@ -29,3 +29,11 @@ def test_time_exits_do_not_count_as_stops():
     kept = apply_daily_stop(trades([("09:00", "09:05", "stop_loss"), ("09:10", "09:25", "time_exit"),
                                     ("09:30", "09:45", "time_exit"), ("10:00", "10:15", "time_exit")]))
     assert len(kept) == 4
+
+
+def test_each_day_is_counted_on_its_own():
+    # One stop on each of two days: neither day has reached two, so nothing is dropped.
+    kept = apply_daily_stop(trades([("09:00", "09:05", "stop_loss"),
+                                    ("09:00", "09:05", "stop_loss", "2025-09-16"),
+                                    ("09:30", "09:45", "time_exit", "2025-09-16")]))
+    assert entries(kept) == ["09-15 09:00", "09-16 09:00", "09-16 09:30"]

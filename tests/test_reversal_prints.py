@@ -58,3 +58,8 @@ def sell_print(day):
 def test_buy_print_is_side_plus_one_and_sell_print_is_side_minus_one():
     out = find(frame(buy_print() + sell_print("2025-09-16")))
     assert out["side"].to_list() == [1, -1]
+
+
+def test_print_below_the_minimum_size_is_ignored():
+    assert find(frame(buy_print(vol=99))).height == 0
+    assert find(frame(buy_print(vol=100))).height == 1

@@ -175,3 +175,9 @@ def test_no_entry_at_or_after_the_cutoff():
                {"t": "15:39:59", "mid": 97.0}, {"t": "15:41:00", "mid": 97.0}]
     assert find(frame(late)).height == 0
     assert find(frame(in_time)).height == 1
+
+
+def test_print_with_no_later_tick_that_day_is_dropped():
+    rows = [{"t": "10:00:00", "mid": 98.0}, {"t": "10:01:10", "mid": 97.0, "vol": 100, "tt": 2},
+            {"day": "2025-09-16", "t": "10:00:00", "mid": 97.0}]
+    assert find(frame(rows)).height == 0

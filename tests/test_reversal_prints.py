@@ -151,3 +151,8 @@ def test_book_variant_reads_the_bid_size_for_a_sell_print():
     out = find(frame(rows))
     assert out["side"].to_list() == [-1]
     assert out["variant_book"].to_list() == [True]
+
+
+def test_ladder_levels_beyond_book_levels_are_not_read():
+    rows = wall_print(ask_dom_25=10_000)
+    assert find(frame(rows, levels=30)).height == 1

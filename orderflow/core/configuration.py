@@ -37,6 +37,16 @@ KDE_VARIANCE_BY_TICKER = {
     'ZB':   0.08,
     'FESX': 0.8,
     'FGBL': 0.8,
+    # ponytail: uncalibrated. ES-equivalent smoothing = 0.0114 x typical session range
+    # (ES 0.8 / ~70 pts), floored at 2 ticks; ranges approximate, not measured.
+    # Calibrate on the ticker's own data before trusting its LVN / ValleysPeaks.
+    'GC':   0.6,        # ~$50 range, 6 ticks
+    'CL':   0.023,      # ~$2.00 range, 2.3 ticks
+    'NQ':   3.4,        # ~300 pt range, 13.6 ticks
+    'ZC':   0.005,      # ~$0.08 range -> 2-tick floor
+    'ZF':   0.015625,   # ~0.3 pt range -> 2-tick floor
+    'NG':   0.0023,     # ~$0.20 range, 2.3 ticks
+    '6E':   0.0001,     # ~0.007 range -> 2-tick floor
 }
 VALUE_AREA             = 0.68
 VWAP_BAND_OFFSET_1     = 1

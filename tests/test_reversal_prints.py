@@ -70,3 +70,7 @@ def test_trade_types_other_than_1_and_2_are_ignored():
     rows = sell_print("2025-09-15")
     rows[1]["tt"] = 3
     assert find(frame(rows)).height == 0
+
+
+def test_eth_print_never_triggers():
+    assert find(frame(buy_print(session="ETH"))).height == 0

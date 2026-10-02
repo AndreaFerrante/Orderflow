@@ -80,3 +80,12 @@ def test_print_with_the_prior_move_is_rejected():
     rows = buy_print()
     rows[0]["mid"] = 96.0  # price ROSE into the buy print
     assert find(frame(rows)).height == 0
+
+
+def test_reference_tick_is_strictly_older_than_the_lookback():
+    # The print is at 10:01:04. A tick exactly 60 s earlier (10:00:04, mid 99) must NOT be the
+    # reference; the one before it (10:00:00, mid 96) is, and against it price has risen.
+    rows = [{"t": "10:00:00", "mid": 96.0}, {"t": "10:00:04", "mid": 99.0},
+            {"t": "10:01:04", "mid": 97.0, "vol": 100, "tt": 2},
+            {"t": "10:01:05", "mid": 97.0}, {"t": "10:01:10", "mid": 97.0}]
+    assert find(frame(rows)).height == 0

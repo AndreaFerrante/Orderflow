@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+import pandas as pd
 
 from orderflow.backtester.models import (
     ExitReason,
@@ -252,3 +253,23 @@ class RiskManager:
             )
 
         return ExitSignal(should_exit=False)
+
+
+def apply_daily_stop(trades: pd.DataFrame, *, max_stops: int = 2, stop_reason: str = "stop_loss") -> pd.DataFrame:
+    """Drop every trade entered after the day's ``max_stops``-th stopped trade has exited.
+
+    ``trades`` is the engine's ``trades_df`` (``entry_datetime``, ``exit_datetime``,
+    ``exit_reason``). With one position at a time this is exactly what a daily stop inside
+    the engine would produce: removing later trades never changes an earlier one, and any
+    signal skipped while a removed trade was open came after the stop as well.
+    """
+    if trades.empty:
+        return trades
+    ordered = trades.sort_values("entry_datetime")
+    day = pd.to_datetime(ordered["entry_datetime"]).dt.date
+    is_stop = ordered["exit_reason"] == stop_reason
+    last_allowed = is_stop & (is_stop.groupby(day).cumsum() == max_stops)
+    if not last_allowed.any():
+        return ordered.reset_index(drop=True)
+    cutoff = day.map(ordered.loc[last_allowed].groupby(day[last_allowed])["exit_datetime"].first())
+    return ordered[cutoff.isna() | (ordered["entry_datetime"] <= cutoff)].reset_index(drop=True)

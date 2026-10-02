@@ -37,3 +37,9 @@ def test_each_day_is_counted_on_its_own():
                                     ("09:00", "09:05", "stop_loss", "2025-09-16"),
                                     ("09:30", "09:45", "time_exit", "2025-09-16")]))
     assert entries(kept) == ["09-15 09:00", "09-16 09:00", "09-16 09:30"]
+
+
+def test_max_stops_sets_how_many_stops_end_the_day():
+    kept = apply_daily_stop(trades([("09:00", "09:05", "stop_loss"), ("09:10", "09:20", "stop_loss")]),
+                            max_stops=1)
+    assert entries(kept) == ["09-15 09:00"]

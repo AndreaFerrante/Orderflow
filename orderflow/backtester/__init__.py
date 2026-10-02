@@ -43,6 +43,7 @@ from orderflow.backtester.exits import (
     DynamicTPSLExit,
     CVDBreakEvenExit,
     LiveVWAPExit,
+    session_close_flag,
     HourBasedExit,
 )
 from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
@@ -77,6 +78,7 @@ __all__ = [
     "DynamicTPSLExit",
     "CVDBreakEvenExit",
     "LiveVWAPExit",
+    "session_close_flag",
     # Metrics
     "PerformanceMetrics",
     "compute_metrics",

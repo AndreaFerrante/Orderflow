@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+import polars as pl
 
 from orderflow.backtester.models import (
     ExitReason,
@@ -748,11 +749,15 @@ class LiveVWAPExit(BaseExitStrategy):
     """
     Structural stop + live VWAP target exit.
 
-    Checks stop first (same-tick priority), then VWAP. Returns no exit_price
-    override — the engine fills at the current tick price.
+    Checks stop first (same-tick priority), then VWAP, then session close:
+    a truthy ``session_close`` indicator (see ``session_close_flag``) flattens
+    on the last RTH tick, before VWAP resets. Without that indicator the exit
+    never flattens. Returns no exit_price override — the engine fills at the
+    current tick price.
     """
     signals_df: pd.DataFrame
     vwap_col: str = "vwap"
+    session_close_col: str = "session_close"
     _stop_lookup: Dict[int, float] = field(default_factory=dict, init=False, repr=False)
     _current_stop: float = field(default=float("nan"), init=False, repr=False)
 
@@ -797,7 +802,21 @@ class LiveVWAPExit(BaseExitStrategy):
                     metadata={"trigger": "live_vwap", "level": float(vwap)},
                 )
 
+        # Flat into the close: the VWAP target is gone after the reset.
+        if indicators.get(self.session_close_col):
+            return ExitSignal(should_exit=True, reason=ExitReason.SESSION_CLOSE)
+
         return ExitSignal(should_exit=False)
+
+
+def session_close_flag(session_col: str = "SessionType") -> pl.Expr:
+    """``session_close``: True on the last tick before an RTH -> non-RTH switch.
+
+    That switch is where VWAP, CVD and the profile reset. Reading the next
+    tick's session is not lookahead: the close is on the exchange calendar.
+    """
+    s = pl.col(session_col)
+    return ((s == "RTH") & (s.shift(-1) != "RTH")).fill_null(False).alias("session_close")
 
 
 @dataclass

@@ -57,7 +57,7 @@ def find_reversal_prints(
     )
     cand = (
         rth.filter((pl.col("Volume") >= min_print_size) & pl.col("TradeType").is_in([1, 2]))
-        .select("Index", "Volume", "TradeType")
+        .select("Index", "Volume", "TradeType", "vwap", "vwap_sd1_top")
         .collect().sort("Index")
     )
 
@@ -76,8 +76,15 @@ def find_reversal_prints(
     )
     pre_move = side * (mid[k] - mid[ref]) / tick_size
 
+    # VWAP variant: stretched, and the print pushes back toward VWAP.
+    vwap = cand["vwap"].to_numpy()
+    sd = cand["vwap_sd1_top"].to_numpy() - vwap
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = np.where(sd > 0, (mid[k] - vwap) / sd, np.nan)
+    variant_vwap = (np.abs(z) >= vwap_sd_min) & (side * np.sign(z) < 0)
+
     e = k
-    keep = np.flatnonzero(pre_move < 0)
+    keep = np.flatnonzero((pre_move < 0) & variant_vwap)
     out = pl.DataFrame({
         "Date": base["Date"].gather(k[keep]),
         "side": side[keep],
@@ -86,6 +93,8 @@ def find_reversal_prints(
         "volume": volume[keep],
         "mid": mid[k[keep]],
         "pre_move_ticks": pre_move[keep],
+        "z": z[keep],
+        "variant_vwap": variant_vwap[keep],
         "entry_index": idx[e[keep]],
         "entry_datetime": base["Datetime"].gather(e[keep]),
         "entry_price": base["Price"].gather(e[keep]),

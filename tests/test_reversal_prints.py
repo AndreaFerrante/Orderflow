@@ -100,3 +100,12 @@ def test_first_minute_print_uses_the_first_tick_of_its_own_day():
     out = find(frame(rows))
     assert out.height == 1
     assert out["pre_move_ticks"].to_list() == [-4.0]
+
+
+def test_vwap_variant_needs_two_standard_deviations():
+    near = buy_print(mid=98.1)   # 1.9 SD below VWAP
+    near[0]["mid"] = 99.0
+    at = buy_print(mid=98.0)     # exactly 2 SD below
+    at[0]["mid"] = 99.0
+    assert find(frame(near)).height == 0
+    assert find(frame(at))["variant_vwap"].to_list() == [True]

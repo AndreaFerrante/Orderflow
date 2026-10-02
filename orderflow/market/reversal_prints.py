@@ -90,8 +90,16 @@ def find_reversal_prints(
     book_max = cand["book_max"].to_numpy()
     variant_book = (level >= book_max) & (volume >= level)
 
-    e = k
-    keep = np.flatnonzero((pre_move < 0) & (variant_vwap | variant_book))
+    # Entry: first tick at least `entry_delay_s` later, same day, before the cutoff.
+    e = np.searchsorted(t, t[k] + int(entry_delay_s * _US), side="left")
+    has_tick = e < len(t)
+    e = np.where(has_tick, e, 0)
+    same_day = (base["Date"].gather(e) == base["Date"].gather(k)).to_numpy()
+    in_time = (base["Datetime"].gather(e).dt.time() < time.fromisoformat(last_entry_time)).to_numpy()
+
+    keep = np.flatnonzero(
+        (pre_move < 0) & (variant_vwap | variant_book) & has_tick & same_day & in_time
+    )
     out = pl.DataFrame({
         "Date": base["Date"].gather(k[keep]),
         "side": side[keep],

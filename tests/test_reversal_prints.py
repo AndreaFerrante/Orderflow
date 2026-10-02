@@ -156,3 +156,13 @@ def test_book_variant_reads_the_bid_size_for_a_sell_print():
 def test_ladder_levels_beyond_book_levels_are_not_read():
     rows = wall_print(ask_dom_25=10_000)
     assert find(frame(rows, levels=30)).height == 1
+
+
+def test_entry_is_the_first_tick_at_least_one_second_after_the_print():
+    rows = [{"t": "10:00:00", "mid": 98.0}, {"t": "10:01:10", "mid": 97.0, "vol": 100, "tt": 2},
+            {"t": "10:01:10.500", "mid": 97.25}, {"t": "10:01:11", "mid": 97.5},
+            {"t": "10:01:12", "mid": 97.75}]
+    out = find(frame(rows))
+    assert out["trigger_index"].to_list() == [1]
+    assert out["entry_index"].to_list() == [3]
+    assert out["entry_price"].to_list() == [97.5]

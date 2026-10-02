@@ -43,3 +43,8 @@ def test_max_stops_sets_how_many_stops_end_the_day():
     kept = apply_daily_stop(trades([("09:00", "09:05", "stop_loss"), ("09:10", "09:20", "stop_loss")]),
                             max_stops=1)
     assert entries(kept) == ["09-15 09:00"]
+
+
+def test_a_trade_list_with_no_trades_is_returned_as_is():
+    empty = pd.DataFrame()
+    assert apply_daily_stop(empty) is empty

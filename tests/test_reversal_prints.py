@@ -63,3 +63,10 @@ def test_buy_print_is_side_plus_one_and_sell_print_is_side_minus_one():
 def test_print_below_the_minimum_size_is_ignored():
     assert find(frame(buy_print(vol=99))).height == 0
     assert find(frame(buy_print(vol=100))).height == 1
+
+
+def test_trade_types_other_than_1_and_2_are_ignored():
+    # A sell-shaped setup: if 3 were read as "not a buy", it would trigger as a sell.
+    rows = sell_print("2025-09-15")
+    rows[1]["tt"] = 3
+    assert find(frame(rows)).height == 0

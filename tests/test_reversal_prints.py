@@ -3,6 +3,7 @@
 from datetime import datetime
 
 import polars as pl
+import pytest
 
 from orderflow.market.reversal_prints import find_reversal_prints
 
@@ -198,6 +199,14 @@ def test_eth_tick_is_never_the_entry_tick():
             {"t": "10:01:11.500", "mid": 97.0, "session": "ETH"},
             {"t": "10:01:13", "mid": 97.0}, {"t": "10:01:20", "mid": 97.0}]
     assert find(frame(rows))["entry_index"].to_list() == [3]
+
+
+def test_clock_that_goes_backwards_in_index_order_is_refused():
+    ticks = frame(buy_print()).with_columns(
+        pl.when(pl.col("Index") == 2).then(datetime(2025, 9, 15, 10, 0, 30))
+        .otherwise(pl.col("Datetime")).alias("Datetime"))
+    with pytest.raises(ValueError, match="non-decreasing.*Index 2"):
+        find(ticks)
 
 
 def test_signals_do_not_change_when_later_ticks_change():

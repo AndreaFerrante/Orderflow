@@ -65,6 +65,10 @@ def find_reversal_prints(
 
     idx = base["Index"].to_numpy()
     t = base["Datetime"].dt.epoch("us").to_numpy()
+    back = np.flatnonzero(np.diff(t) < 0)
+    if back.size:  # searchsorted below assumes time never goes backwards
+        raise ValueError("RTH Datetime must be non-decreasing in Index order; "
+                         f"first offending Index {idx[back[0] + 1]}")
     mid = base["mid"].to_numpy()
     k = np.searchsorted(idx, cand["Index"].to_numpy())
     side = np.where(cand["TradeType"].to_numpy() == 2, 1, -1).astype(np.int64)

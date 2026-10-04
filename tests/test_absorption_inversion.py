@@ -709,3 +709,14 @@ def test_a_tick_exactly_on_the_horizon_is_the_one_that_is_read():
 def test_the_excursions_cover_the_longest_horizon_whatever_the_order_of_the_horizons():
     out = moves(SESSION, -1, horizons_min=(15, 1))
     assert (out["mfe_15m"][0], out["mae_15m"][0]) == (3.5, -2.5)
+
+
+def test_mae_is_never_above_zero_even_when_the_quote_is_crossed_at_the_entry():
+    rows = [{"t": "10:00:00", "price": 100.00, "tt": 1},
+            {"t": "10:00:01", "price": 100.00, "tt": 2, "ask": 100.00, "bid": 100.50},  # the ask below the bid
+            {"t": "10:10:00", "price": 101.00, "tt": 1},
+            {"t": "10:20:00", "price": 101.00, "tt": 1}]
+    out = measure_forward_moves(frame(rows), events_at([0], [1]), tick_size=TICK, anchor_col="end_index",
+                                direction_col="trade_dir")
+    assert out["entry_price"].to_list() == [100.00]
+    assert out["mae_15m"].to_list() == [0.0]

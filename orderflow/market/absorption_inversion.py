@@ -113,6 +113,7 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
             p = px[i]
             v = vol[i]
             k = 1
+            d = quote_sz[i]
 
         while head < tail and px[high[tail - 1]] <= px[i]:
             tail -= 1

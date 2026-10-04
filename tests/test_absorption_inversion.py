@@ -141,3 +141,9 @@ def test_absorbed_volume_counts_only_aggressive_buys_at_the_stall_price():
     assert out["absorbed_volume"].to_list() == [50]
     assert out["n_trades"].to_list() == [3]
     assert out["price"].to_list() == [100.5]
+
+
+def test_refill_ratio_is_absorbed_volume_over_the_size_shown_on_arrival():
+    out = buyers(find(frame(buy_stall(BREAK_BACK, LATER))))
+    assert out["displayed_on_arrival"].to_list() == [20]
+    assert out["refill_ratio"].to_list() == [2.5]

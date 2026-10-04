@@ -375,3 +375,9 @@ def test_a_stall_closed_where_it_started_carries_its_price_its_trade_and_the_siz
     assert out["price"].to_list() == [103.25]
     assert out["n_trades"].to_list() == [1]
     assert out["displayed_on_arrival"].to_list() == [13]
+
+
+def test_a_break_of_one_tick_is_allowed():
+    out = buyers(find(frame(buy_stall(BREAK_BACK, LATER)), break_ticks=1))
+    assert out["ending"].to_list() == ["break_back"]
+    assert out["end_index"].to_list() == [4]  # the sell one tick below the stall

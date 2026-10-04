@@ -780,3 +780,9 @@ def test_the_difference_of_two_means_is_clustered_on_the_days_they_share():
     assert out["diff"] == pytest.approx(4.0)
     assert out["t"] == pytest.approx(3.0)
     assert (out["events_a"], out["events_b"]) == (3, 3)
+
+
+def test_the_difference_of_two_means_needs_events_on_both_sides():
+    a = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01"], "move_5m": [4.0, None]})
+    out = difference_of_means(a, a.head(0), move_col="move_5m")
+    assert (out["diff"], out["t"], out["events_a"], out["events_b"]) == (None, None, 1, 0)

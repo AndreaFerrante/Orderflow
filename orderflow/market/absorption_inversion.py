@@ -494,6 +494,10 @@ def difference_of_means(
     squaring, so a day that lifts both leaves the difference unmoved. ``diff`` is None when either
     frame has no move; ``t`` is None then, and with fewer than two days.
     """
+    a = a.filter(pl.col(move_col).is_not_null())
+    b = b.filter(pl.col(move_col).is_not_null())
+    if a.height == 0 or b.height == 0:
+        return {"diff": None, "t": None, "events_a": a.height, "events_b": b.height}
     xa, xb = a[move_col].to_numpy(), b[move_col].to_numpy()
     day_a, day_b = a[date_col].to_numpy(), b[date_col].to_numpy()
     days = np.unique(np.concatenate([day_a, day_b]))

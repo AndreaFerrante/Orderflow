@@ -660,3 +660,8 @@ def test_the_excursions_start_at_the_entry_not_at_the_anchor():
             ("10:00:01", 100.00), ("10:10:00", 99.00), ("10:20:00", 99.00)]
     short = moves(rows, -1)
     assert (short["mfe_15m"][0], short["mae_15m"][0]) == (3.5, -0.5)
+
+
+def test_a_boolean_is_not_an_entry_delay():
+    with pytest.raises(ValueError, match="entry_delay_s"):
+        moves(SESSION, -1, entry_delay_s=True)

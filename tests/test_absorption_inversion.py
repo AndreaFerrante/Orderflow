@@ -492,3 +492,9 @@ def two_quotes_a_minute(day="2025-09-15"):
 def test_the_ticks_of_one_minute_are_one_bar_measured_at_its_last_quote():
     out = attach_expected_move(frame(two_quotes_a_minute()), stalls_at(71), tick_size=TICK)  # 71: 10:35:30
     assert out["sigma_ticks"].to_list() == pytest.approx([float(np.std([2.0, -2.0] * 15, ddof=1))])
+
+
+def test_the_session_volume_before_an_arrival_counts_its_own_day_only():
+    ticks = frame(minute_tape() + minute_tape(day="2025-09-16"))
+    out = attach_expected_move(ticks, stalls_at(45, day="2025-09-16"), tick_size=TICK)  # 45: sixth tick of day two
+    assert out["session_volume_before"].to_list() == [50]

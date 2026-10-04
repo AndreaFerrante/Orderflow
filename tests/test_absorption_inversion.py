@@ -674,3 +674,12 @@ def test_one_anchor_that_is_not_an_rth_tick_is_enough_to_refuse_the_events(stray
     with pytest.raises(ValueError, match="end_index.*not an RTH tick"):
         measure_forward_moves(ticks, events_at([0, stray], [-1, -1]), tick_size=TICK, anchor_col="end_index",
                               direction_col="trade_dir")
+
+
+def test_the_last_tick_of_the_day_can_be_the_entry():
+    rows = [("10:00:00", 100.0), ("10:00:05", 99.75),  # the first day ends on the tick after the anchor
+            ("10:00:00", 99.0, "2025-09-16"), ("10:30:00", 99.0, "2025-09-16")]
+    out = moves(rows, -1)
+    assert out["entry_index"].to_list() == [1]
+    assert out["entry_price"].to_list() == [99.75]
+    assert out["move_1m"].to_list() == [None]

@@ -854,3 +854,10 @@ def test_events_without_a_move_are_left_out_on_both_sides_of_a_difference():
     out = difference_of_means(a, b, move_col="move_5m")
     assert out["diff"] == pytest.approx(3.0)
     assert out["events_b"] == 2
+
+
+def test_one_event_on_a_side_is_enough_for_a_difference():
+    a = pl.DataFrame({"Date": ["2025-05-01"], "move_5m": [5.0]})
+    b = pl.DataFrame({"Date": ["2025-05-01", "2025-05-02"], "move_5m": [1.0, 3.0]})
+    out = difference_of_means(a, b, move_col="move_5m")
+    assert (out["diff"], out["events_a"]) == (3.0, 1)

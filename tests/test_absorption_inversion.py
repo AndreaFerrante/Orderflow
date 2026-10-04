@@ -846,3 +846,11 @@ def test_of_days_with_the_same_total_the_earliest_count_as_the_best():
                            "move_5m": [move for _, move in single + double]})
     row = summarise_cells(events, by=[], move_col="move_5m").row(0, named=True)
     assert row["mean_ex_best_days"] == pytest.approx(3.0)  # every day totals 6: the five earliest go
+
+
+def test_events_without_a_move_are_left_out_on_both_sides_of_a_difference():
+    a = pl.DataFrame({"Date": ["2025-05-01", "2025-05-02"], "move_5m": [4.0, 6.0]})
+    b = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01", "2025-05-02"], "move_5m": [1.0, None, 3.0]})
+    out = difference_of_means(a, b, move_col="move_5m")
+    assert out["diff"] == pytest.approx(3.0)
+    assert out["events_b"] == 2

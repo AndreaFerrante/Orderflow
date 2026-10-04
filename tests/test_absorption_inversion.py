@@ -107,3 +107,12 @@ def test_a_buy_trade_below_the_stall_is_not_a_break_back():
     low_buy = {"t": "10:01:14", "price": 100.00, "tt": 2}  # the offer dropped; nobody sold
     out = buyers(find(frame(buy_stall(low_buy))))
     assert "break_back" not in out["ending"].to_list()
+
+
+def test_break_back_needs_break_ticks_ticks():
+    deep = {"t": "10:01:16", "price": 99.50, "tt": 1}
+    shallow = buyers(find(frame(buy_stall(BREAK_BACK, LATER)), break_ticks=4))
+    reached = buyers(find(frame(buy_stall(BREAK_BACK, LATER, deep)), break_ticks=4))
+    assert "break_back" not in shallow["ending"].to_list()
+    assert reached["ending"].to_list() == ["break_back"]
+    assert reached["end_index"].to_list() == [8]

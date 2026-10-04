@@ -13,6 +13,7 @@ from orderflow.market.absorption_inversion import (
     attach_expected_move,
     find_absorption_stalls,
     measure_forward_moves,
+    summarise_cells,
 )
 
 TICK = 0.25
@@ -720,3 +721,12 @@ def test_mae_is_never_above_zero_even_when_the_quote_is_crossed_at_the_entry():
                                 direction_col="trade_dir")
     assert out["entry_price"].to_list() == [100.00]
     assert out["mae_15m"].to_list() == [0.0]
+
+
+def test_the_t_of_a_cell_treats_each_day_as_one_observation():
+    events = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01", "2025-05-02"], "move_5m": [1.0, 3.0, 5.0]})
+    row = summarise_cells(events, by=[], move_col="move_5m").row(0, named=True)
+    assert (row["events"], row["days"]) == (3, 2)
+    assert row["mean"] == pytest.approx(3.0)
+    # summed deviations per day: -2 and +2 -> error = sqrt((4 + 4) * 2 / 1) / 3 = 4 / 3
+    assert row["t"] == pytest.approx(2.25)

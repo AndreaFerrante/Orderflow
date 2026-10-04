@@ -20,6 +20,10 @@ of the trade the inversion points to, the opposite one, and only a ``break_back`
 
 Only RTH ticks are read and every quantity is computed inside one ``Date``. The scan reads each
 tick once, in tape order, so a stall never depends on anything after its ending tick.
+
+The module also holds the event-study tools the panel needs: ``measure_forward_moves`` (what the
+quote did after an event) and ``summarise_cells`` / ``difference_of_means`` (the average move with
+days as clusters, because the events of one day share that day's drift).
 """
 
 from __future__ import annotations
@@ -413,3 +417,48 @@ def measure_forward_moves(
         spread(price, entered).alias("entry_price"),
         *[moves[name].alias(name) for name in names],
     )
+
+
+def _clustered(x: np.ndarray, day: np.ndarray):
+    """Mean of ``x`` and its t with days as clusters; t is None with fewer than two days."""
+    mean = float(x.mean())
+    codes = np.unique(day, return_inverse=True)[1]
+    days = int(codes.max()) + 1
+    residual = np.bincount(codes, x - mean)  # each day's summed deviation
+    error = float(np.sqrt((residual ** 2).sum() * days / (days - 1))) / x.size
+    return mean, mean / error
+
+
+def summarise_cells(
+    events: pl.DataFrame,
+    *,
+    by,
+    move_col: str,
+    date_col: str = "Date",
+    exclude_dates=(),
+    drop_best_days: int = 5,
+) -> pl.DataFrame:
+    """One row per cell of ``by``: how many events, their mean move, and how sure the mean is.
+
+    Rows with a null ``move_col`` are left out. Columns: the ``by`` columns, ``events``,
+    ``days``, ``mean``, ``t`` (day-clustered: the events of one day are one observation of that
+    day's drift, so the standard error sums each day's deviations before squaring; null with
+    fewer than two days), ``mean_<year>`` for every year in ``events``, ``mean_ex_dates`` (without
+    ``exclude_dates``) and ``mean_ex_best_days`` (without the ``drop_best_days`` dates whose summed
+    move is largest). An empty ``by`` gives one row for the whole frame.
+    """
+    data = events
+    schema = {name: events.schema[name] for name in by}
+    schema.update({"events": pl.Int64, "days": pl.Int64, "mean": pl.Float64, "t": pl.Float64})
+
+    groups = data.partition_by(by, as_dict=True) if by else {(): data}
+    rows = []
+    for key, group in groups.items():
+        x = group[move_col].to_numpy()
+        day = group[date_col].to_numpy()
+        mean, t_value = _clustered(x, day)
+        row = dict(zip(by, key))
+        row.update(events=int(x.size), days=int(np.unique(day).size), mean=mean, t=t_value)
+        rows.append(row)
+    out = pl.DataFrame(rows, schema=schema)
+    return out.sort(by) if by else out

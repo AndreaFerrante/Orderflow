@@ -273,3 +273,13 @@ def test_parameters_that_cannot_describe_a_stall_are_refused(bad):
     kwargs.update(bad)
     with pytest.raises(ValueError, match=next(iter(bad))):
         find_absorption_stalls(frame(buy_stall(BREAK_BACK, LATER)), **kwargs)
+
+
+def test_only_rth_ticks_are_read_and_a_lazy_frame_is_accepted():
+    eth_high = {"t": "10:01:12.500", "price": 101.00, "tt": 2, "session": "ETH"}  # would eat the stall
+    eth_low = {"t": "10:01:13.500", "price": 99.00, "tt": 1, "session": "ETH"}
+    ticks = frame(buy_stall(eth_high, eth_low, BREAK_BACK, LATER))
+    out = buyers(find(ticks.lazy()))
+    assert out["ending"].to_list() == ["break_back"]
+    assert out["absorbed_volume"].to_list() == [50]
+    assert out["end_index"].to_list() == [8]

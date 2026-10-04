@@ -371,6 +371,8 @@ def measure_forward_moves(
 
     anchor = events[anchor_col].to_numpy()[live]
     k = np.searchsorted(idx, anchor)
+    if (k >= n).any() or (idx[k] != anchor).any():
+        raise ValueError(f"{anchor_col} holds an Index that is not an RTH tick of `ticks`")
     last = day_end[np.searchsorted(starts, k, side="right") - 1]
     sign = direction[live]
 

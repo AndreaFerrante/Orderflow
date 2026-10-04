@@ -630,3 +630,8 @@ def test_an_entry_delay_skips_the_ticks_inside_it():
     delayed = moves(rows, -1, entry_delay_s=1.0)
     assert delayed["entry_index"].to_list() == [3]  # the first tick LATER than the anchor plus 1 s
     assert delayed["entry_price"].to_list() == [99.25]
+
+
+def test_an_anchor_that_is_not_an_rth_tick_is_refused():
+    with pytest.raises(ValueError, match="end_index.*not an RTH tick"):
+        moves(SESSION, -1, anchor=99)

@@ -311,3 +311,8 @@ def test_a_boolean_is_not_a_size():
     with pytest.raises(ValueError, match="tick_size"):
         find_absorption_stalls(frame(buy_stall(BREAK_BACK, LATER)), tick_size=True, push_window_s=60.0,
                                break_ticks=2, max_wait_s=60.0)
+
+
+def test_a_null_in_a_column_the_scan_does_not_read_is_ignored():
+    ticks = frame(buy_stall(BREAK_BACK, LATER)).with_columns(pl.lit(None, dtype=pl.Float64).alias("LVN"))
+    assert buyers(find(ticks))["ending"].to_list() == ["break_back"]

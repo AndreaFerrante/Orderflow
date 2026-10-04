@@ -837,3 +837,12 @@ def test_a_mean_with_no_event_left_is_null():
     row = summarise_cells(events, by=[], move_col="move_5m", exclude_dates=("2025-04-07",)).row(0, named=True)
     assert row["mean_ex_dates"] is None      # its only date is excluded
     assert row["mean_ex_best_days"] is None  # its only day is one of its five best
+
+
+def test_of_days_with_the_same_total_the_earliest_count_as_the_best():
+    single = [(f"2025-05-{d:02d}", 6.0) for d in range(1, 6)]                     # five days, one event each
+    double = [(f"2025-05-{d:02d}", 3.0) for d in range(6, 19) for _ in range(2)]  # thirteen days, two events each
+    events = pl.DataFrame({"Date": [day for day, _ in single + double],
+                           "move_5m": [move for _, move in single + double]})
+    row = summarise_cells(events, by=[], move_col="move_5m").row(0, named=True)
+    assert row["mean_ex_best_days"] == pytest.approx(3.0)  # every day totals 6: the five earliest go

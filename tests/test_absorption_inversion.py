@@ -124,3 +124,11 @@ def test_no_arrival_in_the_first_window_of_the_day():
             {"t": "10:00:21", "price": 100.00, "tt": 1},
             {"t": "10:00:22", "price": 100.00, "tt": 1}]
     assert find(frame(rows)).height == 0
+
+
+def test_the_first_trade_after_a_hole_in_the_data_is_not_an_arrival():
+    rows = [{"t": "10:00:00", "price": 100.00, "tt": 1},
+            {"t": "10:05:00", "price": 100.50, "tt": 2, "vol": 50},  # nothing for five minutes
+            {"t": "10:05:01", "price": 100.00, "tt": 1},
+            {"t": "10:05:02", "price": 100.00, "tt": 1}]
+    assert buyers(find(frame(rows))).height == 0

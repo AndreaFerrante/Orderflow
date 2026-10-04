@@ -814,3 +814,12 @@ def test_the_t_of_a_cell_on_three_days():
     row = summarise_cells(events, by=[], move_col="move_5m").row(0, named=True)
     # summed deviations per day: -1, +0.25, +0.75 -> error = sqrt(1.625 * 3 / 2) / 4
     assert row["t"] == pytest.approx(1.75 / (2.4375 ** 0.5 / 4))
+
+
+def test_the_t_of_a_difference_on_three_days():
+    a = pl.DataFrame({"Date": ["2025-05-01", "2025-05-02", "2025-05-03"], "move_5m": [2.0, 3.0, 4.0]})
+    b = pl.DataFrame({"Date": ["2025-05-01", "2025-05-02"], "move_5m": [0.5, 1.5]})
+    out = difference_of_means(a, b, move_col="move_5m")
+    # per-day net deviation: -1/12, -1/4, +1/3 -> error = sqrt(26/144 * 3 / 2)
+    assert out["diff"] == pytest.approx(2.0)
+    assert out["t"] == pytest.approx(2.0 / (26 / 144 * 1.5) ** 0.5)

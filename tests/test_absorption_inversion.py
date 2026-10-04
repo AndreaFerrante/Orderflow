@@ -476,3 +476,8 @@ def test_an_expected_move_that_cannot_be_measured_is_refused():
         attach_expected_move(frame(minute_tape()), stalls_at(99), tick_size=TICK)
     with pytest.raises(ValueError, match="tick_size"):
         attach_expected_move(frame(minute_tape()), stalls_at(35), tick_size=0)
+
+
+def test_a_sigma_window_that_is_not_a_positive_number_is_refused():
+    with pytest.raises(ValueError, match="sigma_minutes"):
+        attach_expected_move(frame(minute_tape()), stalls_at(35), tick_size=TICK, sigma_minutes=0)

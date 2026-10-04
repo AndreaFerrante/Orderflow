@@ -786,3 +786,12 @@ def test_the_difference_of_two_means_needs_events_on_both_sides():
     a = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01"], "move_5m": [4.0, None]})
     out = difference_of_means(a, a.head(0), move_col="move_5m")
     assert (out["diff"], out["t"], out["events_a"], out["events_b"]) == (None, None, 1, 0)
+
+
+def test_two_frames_that_move_together_or_share_one_day_have_a_difference_and_no_t():
+    a = pl.DataFrame({"Date": ["2025-05-01", "2025-05-02"], "move_5m": [4.0, 6.0]})
+    together = difference_of_means(a, a.with_columns(pl.col("move_5m") - 1.0), move_col="move_5m")
+    assert (together["diff"], together["t"]) == (1.0, None)
+    one_day = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01"], "move_5m": [4.0, 6.0]})
+    alone = difference_of_means(one_day, one_day.with_columns(pl.col("move_5m") * 2), move_col="move_5m")
+    assert (alone["diff"], alone["t"]) == (-5.0, None)

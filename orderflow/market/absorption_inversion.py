@@ -502,9 +502,11 @@ def difference_of_means(
     day_a, day_b = a[date_col].to_numpy(), b[date_col].to_numpy()
     days = np.unique(np.concatenate([day_a, day_b]))
     diff = float(xa.mean() - xb.mean())
+    if days.size < 2:
+        return {"diff": diff, "t": None, "events_a": a.height, "events_b": b.height}
     # each day's deviation in `a` net of its deviation in `b`
     residual = (np.bincount(np.searchsorted(days, day_a), xa - xa.mean(), days.size) / xa.size
                 - np.bincount(np.searchsorted(days, day_b), xb - xb.mean(), days.size) / xb.size)
     error = float(np.sqrt((residual ** 2).sum() * days.size / (days.size - 1)))
-    return {"diff": diff, "t": diff / error,
+    return {"diff": diff, "t": diff / error if error > 0 else None,
             "events_a": a.height, "events_b": b.height}

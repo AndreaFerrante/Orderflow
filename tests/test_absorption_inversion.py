@@ -116,3 +116,11 @@ def test_break_back_needs_break_ticks_ticks():
     assert "break_back" not in shallow["ending"].to_list()
     assert reached["ending"].to_list() == ["break_back"]
     assert reached["end_index"].to_list() == [8]
+
+
+def test_no_arrival_in_the_first_window_of_the_day():
+    rows = [{"t": "10:00:00", "price": 100.00, "tt": 1},
+            {"t": "10:00:20", "price": 100.50, "tt": 2, "vol": 50},  # a new high, 20 s into the day
+            {"t": "10:00:21", "price": 100.00, "tt": 1},
+            {"t": "10:00:22", "price": 100.00, "tt": 1}]
+    assert find(frame(rows)).height == 0

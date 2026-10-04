@@ -463,3 +463,9 @@ def test_expected_move_reads_nothing_after_the_arrival():
     before = attach_expected_move(frame(calm), stalls_at(35), tick_size=TICK)
     after = attach_expected_move(frame(wild), stalls_at(35), tick_size=TICK)
     assert after.equals(before)
+
+
+def test_expected_move_keeps_the_rows_in_order():
+    out = attach_expected_move(frame(minute_tape()), stalls_at(38, 31, 35), tick_size=TICK)
+    assert out["arrival_index"].to_list() == [38, 31, 35]
+    assert out["session_volume_before"].to_list() == [380, 310, 350]

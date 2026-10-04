@@ -479,3 +479,28 @@ def summarise_cells(
         rows.append(row)
     out = pl.DataFrame(rows, schema=schema)
     return out.sort(by) if by else out
+
+
+def difference_of_means(
+    a: pl.DataFrame,
+    b: pl.DataFrame,
+    *,
+    move_col: str,
+    date_col: str = "Date",
+) -> dict:
+    """``mean(a) - mean(b)`` and its day-clustered t, the days of both frames pooled.
+
+    The two frames may share days: a day's deviation in ``a`` and in ``b`` are netted before
+    squaring, so a day that lifts both leaves the difference unmoved. ``diff`` is None when either
+    frame has no move; ``t`` is None then, and with fewer than two days.
+    """
+    xa, xb = a[move_col].to_numpy(), b[move_col].to_numpy()
+    day_a, day_b = a[date_col].to_numpy(), b[date_col].to_numpy()
+    days = np.unique(np.concatenate([day_a, day_b]))
+    diff = float(xa.mean() - xb.mean())
+    # each day's deviation in `a` net of its deviation in `b`
+    residual = (np.bincount(np.searchsorted(days, day_a), xa - xa.mean(), days.size) / xa.size
+                - np.bincount(np.searchsorted(days, day_b), xb - xb.mean(), days.size) / xb.size)
+    error = float(np.sqrt((residual ** 2).sum() * days.size / (days.size - 1)))
+    return {"diff": diff, "t": diff / error,
+            "events_a": a.height, "events_b": b.height}

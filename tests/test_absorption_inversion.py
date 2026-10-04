@@ -11,6 +11,7 @@ from orderflow.market import absorption_inversion as ai
 from orderflow.market.absorption_inversion import (
     STALL_COLUMNS,
     attach_expected_move,
+    difference_of_means,
     find_absorption_stalls,
     measure_forward_moves,
     summarise_cells,
@@ -769,3 +770,13 @@ def test_events_without_a_move_are_left_out_of_a_cell():
     events = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01", "2025-05-02"], "move_5m": [1.0, None, 3.0]})
     row = summarise_cells(events, by=[], move_col="move_5m").row(0, named=True)
     assert (row["events"], row["mean"]) == (2, 2.0)
+
+
+def test_the_difference_of_two_means_is_clustered_on_the_days_they_share():
+    a = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01", "2025-05-02"], "move_5m": [4.0, 6.0, 11.0]})
+    b = pl.DataFrame({"Date": ["2025-05-01", "2025-05-02", "2025-05-02"], "move_5m": [1.0, 3.0, 5.0]})
+    out = difference_of_means(a, b, move_col="move_5m")
+    # per-day net deviation: -4/3 + 2/3 and +4/3 - 2/3 -> error = sqrt((4/9 + 4/9) * 2) = 4/3
+    assert out["diff"] == pytest.approx(4.0)
+    assert out["t"] == pytest.approx(3.0)
+    assert (out["events_a"], out["events_b"]) == (3, 3)

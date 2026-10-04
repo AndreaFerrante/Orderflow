@@ -643,3 +643,13 @@ def test_forward_moves_refuse_parameters_that_mean_nothing(bad):
     kwargs.update(bad)
     with pytest.raises(ValueError, match=next(iter(bad))):
         measure_forward_moves(quotes(SESSION), events_at([0], [-1]), **kwargs)
+
+
+def test_forward_moves_keep_the_rows_and_the_columns_of_the_events():
+    events = events_at([2, 0], [1, -1], tag=["b", "a"])
+    out = measure_forward_moves(quotes(SESSION), events, tick_size=TICK, anchor_col="end_index",
+                                direction_col="trade_dir")
+    assert out["tag"].to_list() == ["b", "a"]
+    assert out["entry_index"].to_list() == [3, 1]
+    assert out.columns == ["end_index", "trade_dir", "tag", "entry_index", "entry_datetime", "entry_price",
+                           "move_1m", "move_5m", "move_15m", "mfe_15m", "mae_15m"]

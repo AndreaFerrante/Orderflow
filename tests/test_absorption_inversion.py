@@ -610,3 +610,14 @@ def test_compiled_and_plain_python_window_extremes_agree():
     assert np.array_equal(compiled[0], plain[0]) and np.array_equal(compiled[1], plain[1])
     assert (compiled[0] >= mid[start]).all() and (compiled[1] <= mid[start]).all()
     assert (compiled[0] > compiled[1]).any()
+
+
+def test_an_event_with_no_direction_gets_nulls():
+    ticks = quotes(SESSION)
+    kwargs = dict(tick_size=TICK, anchor_col="end_index", direction_col="trade_dir")
+    out = measure_forward_moves(ticks, events_at([0, 0], [None, -1]), **kwargs)
+    assert out["entry_index"].to_list() == [None, 1]
+    assert out["move_5m"].to_list() == [None, 3.5]
+    none = measure_forward_moves(ticks, events_at([0], [None]), **kwargs)
+    assert none["entry_index"].to_list() == [None]
+    assert none.schema == out.schema

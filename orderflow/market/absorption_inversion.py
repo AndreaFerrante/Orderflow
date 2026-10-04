@@ -102,12 +102,17 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
                 ending[count] = how
                 count += 1
                 is_open = False
+            elif aggressor[i] and px[i] == p:
+                v += vol[i]
+                k += 1
 
         if (not is_open and aggressor[i] and head < tail and t[i] - t[0] >= window_us
                 and px[i] > px[high[head]]):
             is_open = True
             a = i
             p = px[i]
+            v = vol[i]
+            k = 1
 
         while head < tail and px[high[tail - 1]] <= px[i]:
             tail -= 1

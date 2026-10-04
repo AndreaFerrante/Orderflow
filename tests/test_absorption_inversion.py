@@ -132,3 +132,12 @@ def test_the_first_trade_after_a_hole_in_the_data_is_not_an_arrival():
             {"t": "10:05:01", "price": 100.00, "tt": 1},
             {"t": "10:05:02", "price": 100.00, "tt": 1}]
     assert buyers(find(frame(rows))).height == 0
+
+
+def test_absorbed_volume_counts_only_aggressive_buys_at_the_stall_price():
+    low_buy = {"t": "10:01:13.500", "price": 100.25, "tt": 2, "vol": 7}  # a buy, below the stall
+    out = buyers(find(frame(buy_stall(low_buy, BREAK_BACK, LATER))))
+    # 5 + 30 + 15: not the 3-lot sell, not the 7-lot buy below, not the 4-lot break-back
+    assert out["absorbed_volume"].to_list() == [50]
+    assert out["n_trades"].to_list() == [3]
+    assert out["price"].to_list() == [100.5]

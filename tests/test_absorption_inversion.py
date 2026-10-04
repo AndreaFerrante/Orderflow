@@ -653,3 +653,10 @@ def test_forward_moves_keep_the_rows_and_the_columns_of_the_events():
     assert out["entry_index"].to_list() == [3, 1]
     assert out.columns == ["end_index", "trade_dir", "tag", "entry_index", "entry_datetime", "entry_price",
                            "move_1m", "move_5m", "move_15m", "mfe_15m", "mae_15m"]
+
+
+def test_the_excursions_start_at_the_entry_not_at_the_anchor():
+    rows = [("10:00:00", 105.00),  # the anchor, far above everything after it
+            ("10:00:01", 100.00), ("10:10:00", 99.00), ("10:20:00", 99.00)]
+    short = moves(rows, -1)
+    assert (short["mfe_15m"][0], short["mae_15m"][0]) == (3.5, -0.5)

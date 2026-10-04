@@ -421,12 +421,16 @@ def measure_forward_moves(
 
 def _clustered(x: np.ndarray, day: np.ndarray):
     """Mean of ``x`` and its t with days as clusters; t is None with fewer than two days."""
+    if x.size == 0:
+        return None, None
     mean = float(x.mean())
-    codes = np.unique(day, return_inverse=True)[1]
+    codes =np.unique(day, return_inverse=True)[1]
     days = int(codes.max()) + 1
+    if days < 2:
+        return mean, None
     residual = np.bincount(codes, x - mean)  # each day's summed deviation
     error = float(np.sqrt((residual ** 2).sum() * days / (days - 1))) / x.size
-    return mean, mean / error
+    return mean, (mean / error if error > 0 else None)
 
 
 def summarise_cells(

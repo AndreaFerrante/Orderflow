@@ -730,3 +730,16 @@ def test_the_t_of_a_cell_treats_each_day_as_one_observation():
     assert row["mean"] == pytest.approx(3.0)
     # summed deviations per day: -2 and +2 -> error = sqrt((4 + 4) * 2 / 1) / 3 = 4 / 3
     assert row["t"] == pytest.approx(2.25)
+
+
+def test_a_cell_on_one_day_with_no_event_or_with_no_spread_has_no_t():
+    one_day = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01"], "move_5m": [1.0, 3.0]})
+    row = summarise_cells(one_day, by=[], move_col="move_5m").row(0, named=True)
+    assert (row["events"], row["mean"], row["t"]) == (2, 2.0, None)
+    flat = pl.DataFrame({"Date": ["2025-05-01", "2025-05-02"], "move_5m": [2.0, 2.0]})
+    row = summarise_cells(flat, by=[], move_col="move_5m").row(0, named=True)
+    assert (row["days"], row["mean"], row["t"]) == (2, 2.0, None)
+    empty = summarise_cells(one_day.head(0), by=[], move_col="move_5m").row(0, named=True)
+    assert (empty["events"], empty["days"], empty["mean"], empty["t"]) == (0, 0, None, None)
+    assert summarise_cells(one_day.head(0).with_columns(pl.lit(1).alias("side")), by=["side"],
+                           move_col="move_5m").height == 0

@@ -823,3 +823,10 @@ def test_the_t_of_a_difference_on_three_days():
     # per-day net deviation: -1/12, -1/4, +1/3 -> error = sqrt(26/144 * 3 / 2)
     assert out["diff"] == pytest.approx(2.0)
     assert out["t"] == pytest.approx(2.0 / (26 / 144 * 1.5) ** 0.5)
+
+
+def test_by_default_the_five_best_days_are_left_out():
+    events = pl.DataFrame({"Date": [f"2025-05-0{d}" for d in range(1, 8)],
+                           "move_5m": [10.0, 9.0, 8.0, 7.0, 6.0, -1.0, -3.0]})
+    row = summarise_cells(events, by=[], move_col="move_5m").row(0, named=True)
+    assert row["mean_ex_best_days"] == pytest.approx(-2.0)  # the two days left: -1 and -3

@@ -698,3 +698,9 @@ def test_a_horizon_is_counted_in_minutes_of_sixty_seconds():
             ("10:01:01.500", 99.00),  # half a second too late for it
             ("10:30:00", 99.00)]
     assert moves(rows, -1)["move_1m"].to_list() == [1.5]
+
+
+def test_a_tick_exactly_on_the_horizon_is_the_one_that_is_read():
+    rows = [("10:00:00", 100.00), ("10:00:01", 100.00), ("10:00:30", 99.50),
+            ("10:01:01", 99.00)]  # the day's last tick, exactly one minute after the entry
+    assert moves(rows, -1)["move_1m"].to_list() == [3.5]

@@ -347,3 +347,13 @@ def test_the_window_reaches_back_exactly_push_window_s():
     assert buyers(find(frame(at_the_high))).height == 0
     # the same buy, 60 s into the day and above everything before it: one full window has passed
     assert buyers(find(frame(above)))["arrival_index"].to_list() == [2]
+
+
+def test_only_the_trades_older_than_the_window_leave_it():
+    rows = [{"t": "10:00:00", "price": 101.00, "tt": 1},  # out of the window at the buy below
+            {"t": "10:00:50", "price": 100.75, "tt": 1},  # still in it: the high the buy would have to beat
+            {"t": "10:00:55", "price": 100.25, "tt": 1},
+            {"t": "10:01:20", "price": 100.50, "tt": 2, "vol": 50},
+            {"t": "10:01:21", "price": 100.00, "tt": 1},
+            {"t": "10:01:22", "price": 100.00, "tt": 1}]
+    assert buyers(find(frame(rows))).height == 0

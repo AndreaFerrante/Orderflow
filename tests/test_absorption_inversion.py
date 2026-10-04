@@ -498,3 +498,10 @@ def test_the_session_volume_before_an_arrival_counts_its_own_day_only():
     ticks = frame(minute_tape() + minute_tape(day="2025-09-16"))
     out = attach_expected_move(ticks, stalls_at(45, day="2025-09-16"), tick_size=TICK)  # 45: sixth tick of day two
     assert out["session_volume_before"].to_list() == [50]
+
+
+def test_the_first_minute_of_every_day_is_measured_from_its_own_first_quote():
+    ticks = frame(minute_tape() + two_quotes_a_minute(day="2025-09-16"))
+    out = attach_expected_move(ticks, stalls_at(101, day="2025-09-16"), tick_size=TICK)  # 101: 10:30:30, day two
+    # day two opens at 99.00 and its first minute closes at 100.00: +4 ticks, then +2, -2, ... as on any day
+    assert out["sigma_ticks"].to_list() == pytest.approx([float(np.std([4.0] + [2.0, -2.0] * 14 + [2.0], ddof=1))])

@@ -621,3 +621,12 @@ def test_an_event_with_no_direction_gets_nulls():
     none = measure_forward_moves(ticks, events_at([0], [None]), **kwargs)
     assert none["entry_index"].to_list() == [None]
     assert none.schema == out.schema
+
+
+def test_an_entry_delay_skips_the_ticks_inside_it():
+    rows = [("10:00:00", 100.0), ("10:00:00.400", 99.75), ("10:00:01", 99.50), ("10:00:01.200", 99.25),
+            ("10:30:00", 99.25)]
+    assert moves(rows, -1)["entry_index"].to_list() == [1]
+    delayed = moves(rows, -1, entry_delay_s=1.0)
+    assert delayed["entry_index"].to_list() == [3]  # the first tick LATER than the anchor plus 1 s
+    assert delayed["entry_price"].to_list() == [99.25]

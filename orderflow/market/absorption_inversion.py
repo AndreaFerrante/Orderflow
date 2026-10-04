@@ -374,7 +374,7 @@ def measure_forward_moves(
     last = day_end[np.searchsorted(starts, k, side="right") - 1]
     sign = direction[live]
 
-    e = np.searchsorted(t, t[k], side="right")
+    e = np.searchsorted(t, t[k] + int(entry_delay_s * _US), side="right")
     entered = e <= last  # a later tick exists on the same Date
     e = np.where(entered, e, k)  # stand-in position, masked out below
     price = np.where(sign > 0, ask[e], bid[e])

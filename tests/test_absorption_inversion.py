@@ -568,3 +568,8 @@ def test_an_event_with_no_later_tick_that_day_is_kept_with_nulls():
     assert out["entry_index"].to_list() == [None]
     assert out["entry_price"].to_list() == [None]
     assert out["move_1m"].to_list() == [None]
+
+
+def test_ticks_sharing_the_anchor_timestamp_are_not_the_entry():
+    rows = [("10:00:00", 100.0), ("10:00:00", 99.75), ("10:00:01", 99.50), ("10:30:00", 99.50)]
+    assert moves(rows, -1)["entry_index"].to_list() == [2]

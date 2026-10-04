@@ -305,3 +305,9 @@ def test_a_tape_with_no_stall_gives_an_empty_frame_with_every_column():
     no_rth = find(frame([{"t": "10:00:00", "price": 100.0, "tt": 1, "session": "ETH"}]))
     assert no_rth.height == 0
     assert no_rth.schema == full.schema
+
+
+def test_a_boolean_is_not_a_size():
+    with pytest.raises(ValueError, match="tick_size"):
+        find_absorption_stalls(frame(buy_stall(BREAK_BACK, LATER)), tick_size=True, push_window_s=60.0,
+                               break_ticks=2, max_wait_s=60.0)

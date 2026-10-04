@@ -224,3 +224,22 @@ def test_the_sell_side_is_the_mirror_of_the_buy_side():
                                (200.0 - pl.col("price")).alias("price"),
                                (3 - pl.col("TradeType")).alias("TradeType"))
     assert down.equals(expected)
+
+
+def test_compiled_and_plain_python_scans_agree():
+    pytest.importorskip("numba")  # without Numba the plain Python scan is the only one
+    assert hasattr(ai._scan_side, "py_func"), "the scan is not compiled"
+    rng = np.random.default_rng(7)
+    n = 4000
+    t = np.cumsum(rng.integers(1, 2_000_000, n)).astype(np.int64)
+    px = (400 + np.cumsum(rng.integers(-1, 2, n))).astype(np.int64)
+    vol = rng.integers(1, 40, n).astype(np.int64)
+    buy = rng.random(n) < 0.5
+    shown = rng.integers(0, 60, n).astype(np.int64)
+    args = (t, px, vol, buy, ~buy, px, shown, 60_000_000, 2, 5_000_000)  # 60 s window, 5 s wait
+    plain = ai._scan_side.py_func(*args)
+    compiled = ai._scan_side(*args)
+    assert len(compiled[0]) > 50
+    assert set(compiled[6].tolist()) == {0, 1, 2}  # every ending occurs
+    for a, b in zip(compiled, plain):
+        assert np.array_equal(a, b)

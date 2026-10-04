@@ -27,6 +27,19 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 
+# Optional Numba import -- graceful degradation
+try:
+    from numba import njit  # type: ignore[import-untyped]
+except ImportError:  # pragma: no cover
+
+    def njit(*args, **kwargs):  # type: ignore[misc]
+        """No-op decorator when Numba is not installed."""
+        def _wrapper(fn):  # type: ignore[return]
+            return fn
+        if args and callable(args[0]):
+            return args[0]
+        return _wrapper
+
 _US = 1_000_000
 
 _BREAK_BACK, _EATEN, _TIMEOUT = 0, 1, 2
@@ -58,6 +71,7 @@ def _to_ticks(prices: pl.Series, tick_size: float) -> np.ndarray:
     return np.rint(prices.to_numpy() / tick_size).astype(np.int64)
 
 
+@njit(cache=True)
 def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, break_ticks, wait_us):
     """Stalls of one side on one day. Written for buyers: every comparison looks upward.
 

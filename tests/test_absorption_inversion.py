@@ -743,3 +743,13 @@ def test_a_cell_on_one_day_with_no_event_or_with_no_spread_has_no_t():
     assert (empty["events"], empty["days"], empty["mean"], empty["t"]) == (0, 0, None, None)
     assert summarise_cells(one_day.head(0).with_columns(pl.lit(1).alias("side")), by=["side"],
                            move_col="move_5m").height == 0
+
+
+def test_a_cell_reports_the_mean_of_every_year():
+    events = pl.DataFrame({"Date": ["2024-05-01", "2025-05-01", "2025-05-02", "2026-05-01"],
+                           "side": [1, 1, 1, -1], "move_5m": [2.0, 4.0, 6.0, -1.0]})
+    rows = summarise_cells(events, by=["side"], move_col="move_5m").to_dicts()
+    assert [row["side"] for row in rows] == [-1, 1]
+    assert [row.get("mean_2024") for row in rows] == [None, 2.0]
+    assert [row.get("mean_2025") for row in rows] == [None, 5.0]
+    assert [row.get("mean_2026") for row in rows] == [-1.0, None]

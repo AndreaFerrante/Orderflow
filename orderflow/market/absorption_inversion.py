@@ -452,17 +452,22 @@ def summarise_cells(
     move is largest). An empty ``by`` gives one row for the whole frame.
     """
     data = events
-    schema = {name: events.schema[name] for name in by}
+    years = np.unique(data[date_col].str.slice(0, 4).to_numpy())
+    schema ={name: events.schema[name] for name in by}
     schema.update({"events": pl.Int64, "days": pl.Int64, "mean": pl.Float64, "t": pl.Float64})
+    schema.update({f"mean_{year}": pl.Float64 for year in years})
 
     groups = data.partition_by(by, as_dict=True) if by else {(): data}
     rows = []
     for key, group in groups.items():
         x = group[move_col].to_numpy()
         day = group[date_col].to_numpy()
+        year = group[date_col].str.slice(0, 4).to_numpy()
         mean, t_value = _clustered(x, day)
         row = dict(zip(by, key))
         row.update(events=int(x.size), days=int(np.unique(day).size), mean=mean, t=t_value)
+        for value in years:
+            row[f"mean_{value}"] = float(x[year == value].mean()) if (year == value).any() else None
         rows.append(row)
     out = pl.DataFrame(rows, schema=schema)
     return out.sort(by) if by else out

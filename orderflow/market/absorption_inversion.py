@@ -311,6 +311,21 @@ def attach_expected_move(
         .alias("expected_move"))
 
 
+def _window_extremes(mid, start, stop):
+    """Highest and lowest mid between two positions, both included: one pair per event."""
+    high = np.empty(start.size, np.float64)
+    low = np.empty(start.size, np.float64)
+    for j in range(start.size):
+        top = mid[start[j]]
+        bottom = top
+        for i in range(start[j] + 1, stop[j] + 1):
+            top = max(top, mid[i])
+            bottom = min(bottom, mid[i])
+        high[j] = top
+        low[j] = bottom
+    return high, low
+
+
 def measure_forward_moves(
     ticks: pl.DataFrame | pl.LazyFrame,
     events: pl.DataFrame,
@@ -369,12 +384,17 @@ def measure_forward_moves(
         full[live[valid]] = values[valid]
         return pl.Series(full).fill_nan(None)
 
-    moves = {name: pl.Series(np.full(rows, np.nan)).fill_nan(None) for name in names}
+    moves = {}
     for h in horizons:
         moment = t[e] + h * 60 * _US
         inside = entered & (moment <= t[last])
         at = np.where(inside, np.searchsorted(t, moment, side="right") - 1, e)
         moves[f"move_{h}m"] = spread(sign * (mid[at] - price) / tick_size, inside)
+        if h == longest:
+            high, low = _window_extremes(mid, e, at)
+            up, down = (high - price) / tick_size, (low - price) / tick_size
+            moves[f"mfe_{longest}m"] = spread(np.maximum(np.where(sign > 0, up, -down), 0.0), inside)
+            moves[f"mae_{longest}m"] = spread(np.minimum(np.where(sign > 0, down, -up), 0.0), inside)
 
     position = np.zeros(rows, np.int64)
     position[live[entered]] = e[entered]

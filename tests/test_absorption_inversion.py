@@ -587,3 +587,12 @@ def test_a_horizon_past_the_last_tick_of_the_day_is_null():
     assert (out["move_1m"][0], out["move_5m"][0]) == (1.5, 3.5)
     assert out["move_15m"][0] is None  # 10:15:01 is after the day's last tick; tomorrow is not read
     assert out["mfe_15m"][0] is None and out["mae_15m"][0] is None
+
+
+def test_mfe_and_mae_are_the_best_and_worst_mid_over_the_longest_horizon():
+    short, long = moves(SESSION, -1), moves(SESSION, 1)
+    assert (short["mfe_15m"][0], short["mae_15m"][0]) == (3.5, -2.5)
+    assert (long["mfe_15m"][0], long["mae_15m"][0]) == (1.5, -4.5)
+    rising = [("10:00:00", 100.00), ("10:00:01", 100.00), ("10:10:00", 101.00), ("10:20:00", 101.00)]
+    against = moves(rising, -1)
+    assert (against["mfe_15m"][0], against["mae_15m"][0]) == (0.0, -4.5)  # never in profit: MFE 0

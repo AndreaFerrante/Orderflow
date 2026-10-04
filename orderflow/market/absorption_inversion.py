@@ -90,7 +90,9 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
 
         if is_open:
             how = -1
-            if px[i] > p:
+            if t[i] > t[a] + wait_us:
+                how = _TIMEOUT
+            elif px[i] > p:
                 how = _EATEN
             elif counter[i] and px[i] <= p - break_ticks:
                 how = _BREAK_BACK

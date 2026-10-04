@@ -171,3 +171,15 @@ def test_a_trade_above_the_stall_eats_it_and_starts_the_next_one():
     assert out["arrival_index"].to_list() == [2, 6]
     assert out["end_index"].to_list() == [6, 7]
     assert out["TradeType"].to_list() == [None, 1]
+
+
+def test_a_stall_times_out_at_the_first_tick_later_than_max_wait():
+    late = {"t": "10:02:11", "price": 100.25, "tt": 1}  # 61 s after the arrival
+    sell = {"t": "10:02:12", "price": 100.00, "tt": 1}  # would have been a break-back
+    out = buyers(find(frame(buy_stall(late, sell, {"t": "10:02:13", "price": 100.00, "tt": 1}))))
+    assert out["ending"].to_list() == ["timeout"]
+    assert out["end_index"].to_list() == [6]
+    assert out["duration_s"].to_list() == [61.0]
+    assert out["TradeType"].to_list() == [None]
+    on_time = {"t": "10:02:10", "price": 100.00, "tt": 1}  # exactly 60 s: not later
+    assert buyers(find(frame(buy_stall(on_time, late))))["ending"].to_list() == ["break_back"]

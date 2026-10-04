@@ -806,3 +806,11 @@ def test_a_difference_on_one_day_has_no_t_whatever_the_moves():
     a = pl.DataFrame({"Date": ["2025-05-01"] * 3, "move_5m": [0.1, 0.2, 0.4]})  # the net deviation is 9.3e-18, not 0
     b = pl.DataFrame({"Date": ["2025-05-01"] * 2, "move_5m": [0.3, 0.5]})
     assert difference_of_means(a, b, move_col="move_5m")["t"] is None
+
+
+def test_the_t_of_a_cell_on_three_days():
+    events = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01", "2025-05-02", "2025-05-03"],
+                           "move_5m": [1.0, 1.5, 2.0, 2.5]})
+    row = summarise_cells(events, by=[], move_col="move_5m").row(0, named=True)
+    # summed deviations per day: -1, +0.25, +0.75 -> error = sqrt(1.625 * 3 / 2) / 4
+    assert row["t"] == pytest.approx(1.75 / (2.4375 ** 0.5 / 4))

@@ -212,3 +212,15 @@ def test_the_break_back_tick_alone_turns_a_timeout_into_an_inversion():
     assert without["ending"].to_list() == ["timeout"]
     assert with_break["ending"].to_list() == ["break_back"]
     assert without["arrival_index"].to_list() == with_break["arrival_index"].to_list() == [2]
+
+
+def test_the_sell_side_is_the_mirror_of_the_buy_side():
+    higher = {"t": "10:01:14", "price": 100.75, "tt": 2, "vol": 9, "ask_size": 3}
+    back = {"t": "10:01:14.500", "price": 100.25, "tt": 1}
+    tape = buy_stall(higher, back, LATER)
+    up, down = find(frame(tape)), find(frame(mirror(tape)))
+    assert up["side"].to_list() == [1, 1]
+    expected = up.with_columns((-pl.col("side")).alias("side"),
+                               (200.0 - pl.col("price")).alias("price"),
+                               (3 - pl.col("TradeType")).alias("TradeType"))
+    assert down.equals(expected)

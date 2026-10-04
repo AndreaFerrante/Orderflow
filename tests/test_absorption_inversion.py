@@ -413,3 +413,13 @@ def test_one_lot_shown_at_the_stall_price_is_enough_for_a_refill_ratio():
     out = buyers(find(frame(rows)))
     assert out["displayed_on_arrival"].to_list() == [1]
     assert out["refill_ratio"].to_list() == [50.0]
+
+
+def test_every_column_of_a_stall_has_a_fixed_type():
+    out = find(frame(buy_stall(BREAK_BACK, LATER)))
+    assert out.schema == {
+        "Date": pl.String, "side": pl.Int64, "arrival_index": pl.Int64, "arrival_datetime": pl.Datetime("us"),
+        "price": pl.Float64, "absorbed_volume": pl.Int64, "displayed_on_arrival": pl.Int64,
+        "refill_ratio": pl.Float64, "n_trades": pl.Int64, "duration_s": pl.Float64, "ending": pl.String,
+        "end_index": pl.Int64, "end_datetime": pl.Datetime("us"), "TradeType": pl.Int64,
+    }

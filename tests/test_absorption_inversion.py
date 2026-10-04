@@ -147,3 +147,16 @@ def test_refill_ratio_is_absorbed_volume_over_the_size_shown_on_arrival():
     out = buyers(find(frame(buy_stall(BREAK_BACK, LATER))))
     assert out["displayed_on_arrival"].to_list() == [20]
     assert out["refill_ratio"].to_list() == [2.5]
+
+
+def test_refill_ratio_is_null_when_no_size_was_shown_at_the_stall_price():
+    stale = buy_stall(BREAK_BACK, LATER)
+    stale[2]["ask"] = 100.75  # the quote sat one tick above the trade
+    empty = buy_stall(BREAK_BACK, LATER)
+    empty[2]["ask_size"] = 0
+    stale_out, empty_out = buyers(find(frame(stale))), buyers(find(frame(empty)))
+    assert stale_out["displayed_on_arrival"].to_list() == [None]
+    assert stale_out["refill_ratio"].to_list() == [None]
+    assert stale_out["absorbed_volume"].to_list() == [50]
+    assert empty_out["displayed_on_arrival"].to_list() == [0]
+    assert empty_out["refill_ratio"].to_list() == [None]

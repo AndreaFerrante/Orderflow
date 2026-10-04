@@ -683,3 +683,10 @@ def test_the_last_tick_of_the_day_can_be_the_entry():
     assert out["entry_index"].to_list() == [1]
     assert out["entry_price"].to_list() == [99.75]
     assert out["move_1m"].to_list() == [None]
+
+
+def test_an_event_on_the_last_tick_of_the_tape_is_kept_with_nulls():
+    out = moves([("10:00:00", 100.0), ("10:00:05", 100.0)], -1, anchor=1)
+    assert out["entry_index"].to_list() == [None]
+    assert out["entry_price"].to_list() == [None]
+    assert out["move_5m"].to_list() == [None]

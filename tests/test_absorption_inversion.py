@@ -391,3 +391,17 @@ def test_a_stall_on_the_second_day_ends_on_a_tick_of_that_day():
     assert out["end_index"].to_list() == [9]
     assert out["end_datetime"].to_list() == [datetime(2025, 9, 16, 10, 1, 14)]
     assert out["duration_s"].to_list() == [4.0]
+
+
+def test_stalls_of_both_sides_come_in_the_order_of_their_arrival_ticks():
+    rows = [{"t": "10:00:00", "price": 100.25, "tt": 1},
+            {"t": "10:00:30", "price": 100.25, "tt": 1},
+            {"t": "10:01:10", "price": 100.50, "tt": 2},  # buyers arrive; their stall ends last, on its timeout
+            {"t": "10:01:20", "price": 100.00, "tt": 1},  # sellers arrive
+            {"t": "10:01:25", "price": 99.75, "tt": 1},   # ... are eaten at once, and arrive again
+            {"t": "10:02:15", "price": 100.00, "tt": 1},
+            {"t": "10:02:30", "price": 100.00, "tt": 1}]
+    out = find(frame(rows), break_ticks=4)
+    assert out["side"].to_list() == [1, -1, -1]
+    assert out["arrival_index"].to_list() == [2, 3, 4]
+    assert out["end_index"].to_list() == [5, 4, 6]

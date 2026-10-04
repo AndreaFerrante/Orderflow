@@ -456,6 +456,7 @@ def summarise_cells(
     schema ={name: events.schema[name] for name in by}
     schema.update({"events": pl.Int64, "days": pl.Int64, "mean": pl.Float64, "t": pl.Float64})
     schema.update({f"mean_{year}": pl.Float64 for year in years})
+    schema.update({"mean_ex_dates": pl.Float64, "mean_ex_best_days": pl.Float64})
 
     groups = data.partition_by(by, as_dict=True) if by else {(): data}
     rows = []
@@ -468,6 +469,13 @@ def summarise_cells(
         row.update(events=int(x.size), days=int(np.unique(day).size), mean=mean, t=t_value)
         for value in years:
             row[f"mean_{value}"] = float(x[year == value].mean()) if (year == value).any() else None
+        kept = ~np.isin(day, list(exclude_dates))
+        row["mean_ex_dates"] = float(x[kept].mean()) if kept.any() else None
+        names, codes = np.unique(day, return_inverse=True)
+        totals = np.bincount(codes, x)  # each day's summed move
+        best = names[np.argsort(-totals, kind="stable")[:drop_best_days]]
+        kept = ~np.isin(day, best)
+        row["mean_ex_best_days"] = float(x[kept].mean()) if kept.any() else None
         rows.append(row)
     out = pl.DataFrame(rows, schema=schema)
     return out.sort(by) if by else out

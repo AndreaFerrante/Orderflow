@@ -753,3 +753,13 @@ def test_a_cell_reports_the_mean_of_every_year():
     assert [row.get("mean_2024") for row in rows] == [None, 2.0]
     assert [row.get("mean_2025") for row in rows] == [None, 5.0]
     assert [row.get("mean_2026") for row in rows] == [-1.0, None]
+
+
+def test_a_cell_reports_its_mean_without_named_dates_and_without_its_best_days():
+    events = pl.DataFrame({"Date": ["2025-04-07", "2025-05-01", "2025-05-01", "2025-05-02", "2025-05-03"],
+                           "move_5m": [40.0, 1.0, 2.0, 6.0, -3.0]})
+    row = summarise_cells(events, by=[], move_col="move_5m", exclude_dates=("2025-04-07",),
+                          drop_best_days=2).row(0, named=True)
+    assert row["mean"] == pytest.approx(9.2)
+    assert row.get("mean_ex_dates") == pytest.approx(1.5)      # (1 + 2 + 6 - 3) / 4
+    assert row.get("mean_ex_best_days") == pytest.approx(0.0)  # without 04-07 (40) and 05-02 (6)

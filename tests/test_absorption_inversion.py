@@ -160,3 +160,14 @@ def test_refill_ratio_is_null_when_no_size_was_shown_at_the_stall_price():
     assert stale_out["absorbed_volume"].to_list() == [50]
     assert empty_out["displayed_on_arrival"].to_list() == [0]
     assert empty_out["refill_ratio"].to_list() == [None]
+
+
+def test_a_trade_above_the_stall_eats_it_and_starts_the_next_one():
+    higher = {"t": "10:01:14", "price": 100.75, "tt": 2, "vol": 9, "ask_size": 3}
+    back = {"t": "10:01:14.500", "price": 100.25, "tt": 1}
+    out = buyers(find(frame(buy_stall(higher, back, LATER))))
+    assert out["ending"].to_list() == ["eaten", "break_back"]
+    assert out["price"].to_list() == [100.5, 100.75]
+    assert out["arrival_index"].to_list() == [2, 6]
+    assert out["end_index"].to_list() == [6, 7]
+    assert out["TradeType"].to_list() == [None, 1]

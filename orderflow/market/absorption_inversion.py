@@ -90,7 +90,9 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
 
         if is_open:
             how = -1
-            if counter[i] and px[i] <= p - break_ticks:
+            if px[i] > p:
+                how = _EATEN
+            elif counter[i] and px[i] <= p - break_ticks:
                 how = _BREAK_BACK
             if how >= 0:
                 arrival[count] = a
@@ -106,6 +108,7 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
                 v += vol[i]
                 k += 1
 
+        # The tick that ends a stall may start the next one: a buyer eating the level is at a new high.
         if (not is_open and aggressor[i] and head < tail and t[i] - t[0] >= window_us
                 and px[i] > px[high[head]]):
             is_open = True

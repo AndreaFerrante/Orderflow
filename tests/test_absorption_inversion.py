@@ -505,3 +505,11 @@ def test_the_first_minute_of_every_day_is_measured_from_its_own_first_quote():
     out = attach_expected_move(ticks, stalls_at(101, day="2025-09-16"), tick_size=TICK)  # 101: 10:30:30, day two
     # day two opens at 99.00 and its first minute closes at 100.00: +4 ticks, then +2, -2, ... as on any day
     assert out["sigma_ticks"].to_list() == pytest.approx([float(np.std([4.0] + [2.0, -2.0] * 14 + [2.0], ddof=1))])
+
+
+@pytest.mark.parametrize("stray", [99, 36])
+def test_one_arrival_that_is_not_an_rth_tick_is_enough_to_refuse_the_stalls(stray):
+    tape = minute_tape()
+    tape[36]["session"] = "ETH"  # Index 36 is in the tape, and it is not an RTH tick; 99 is past its end
+    with pytest.raises(ValueError, match="arrival_index.*not an RTH tick"):
+        attach_expected_move(frame(tape), stalls_at(35, stray), tick_size=TICK)

@@ -8,7 +8,12 @@ import polars as pl
 import pytest
 
 from orderflow.market import absorption_inversion as ai
-from orderflow.market.absorption_inversion import STALL_COLUMNS, attach_expected_move, find_absorption_stalls
+from orderflow.market.absorption_inversion import (
+    STALL_COLUMNS,
+    attach_expected_move,
+    find_absorption_stalls,
+    measure_forward_moves,
+)
 
 TICK = 0.25
 
@@ -523,3 +528,34 @@ def test_the_expected_move_needs_some_volume_traded_before_the_arrival():
     sigma = float(np.std([2.0, -2.0] * 15, ddof=1))
     assert none["expected_move"].to_list() == [None]
     assert some["expected_move"].to_list() == pytest.approx([sigma * 90 ** 0.5])
+
+
+def quotes(rows):
+    """rows: (t, bid) or (t, bid, day); the ask is one tick above the bid."""
+    return frame([{"t": r[0], "price": r[1], "tt": 1, **({"day": r[2]} if len(r) > 2 else {})} for r in rows])
+
+
+SESSION = [("10:00:00", 100.00),  # 0 the anchor
+           ("10:00:01", 100.00),  # 1 the entry: bid 100.00, ask 100.25
+           ("10:01:00", 99.50),   # 2 mid 99.625
+           ("10:05:00", 99.00),   # 3 mid 99.125
+           ("10:15:00", 100.50),  # 4 mid 100.625
+           ("10:20:00", 101.00)]  # 5 keeps every horizon inside the day
+
+
+def events_at(anchors, directions, **more):
+    return pl.DataFrame({"end_index": anchors, "trade_dir": directions, **more},
+                        schema_overrides={"end_index": pl.Int64, "trade_dir": pl.Int64})
+
+
+def moves(rows, direction, anchor=0, **kwargs):
+    return measure_forward_moves(quotes(rows), events_at([anchor], [direction]), tick_size=TICK,
+                                 anchor_col="end_index", direction_col="trade_dir", **kwargs)
+
+
+def test_a_short_enters_at_the_bid_and_a_long_at_the_ask_of_the_next_tick():
+    short, long = moves(SESSION, -1), moves(SESSION, 1)
+    assert short["entry_index"].to_list() == long["entry_index"].to_list() == [1]
+    assert short["entry_price"].to_list() == [100.00]
+    assert long["entry_price"].to_list() == [100.25]
+    assert short["entry_datetime"].to_list() == [datetime(2025, 9, 15, 10, 0, 1)]

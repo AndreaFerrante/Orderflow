@@ -47,7 +47,8 @@ _ENDINGS = ("break_back", "eaten", "timeout")
 
 _STALL_INPUT = ("Index", "Date", "Datetime", "SessionType", "Price", "Volume", "TradeType",
                 "AskPrice", "BidPrice", "AskSize", "BidSize")
-_VOLUME_INPUT = ("Index", "Date", "Datetime", "SessionType", "Volume", "AskPrice", "BidPrice")
+_QUOTE_INPUT = ("Index", "Date", "Datetime", "SessionType", "AskPrice", "BidPrice")
+_VOLUME_INPUT =("Index", "Date", "Datetime", "SessionType", "Volume", "AskPrice", "BidPrice")
 
 #: Columns of :func:`find_absorption_stalls`, in order. An empty result carries them too.
 STALL_COLUMNS = [
@@ -308,3 +309,76 @@ def attach_expected_move(
         pl.when(volume > 0)
         .then(pl.col("sigma_ticks") * (pl.col("absorbed_volume") / volume).sqrt())
         .alias("expected_move"))
+
+
+def measure_forward_moves(
+    ticks: pl.DataFrame | pl.LazyFrame,
+    events: pl.DataFrame,
+    *,
+    tick_size: float,
+    anchor_col: str,
+    direction_col: str,
+    horizons_min=(1, 5, 15),
+    entry_delay_s: float = 0.0,
+) -> pl.DataFrame:
+    """``events`` plus the entry a taker gets and what the quote did afterwards, in ticks.
+
+    ``anchor_col`` holds the ``Index`` of the tick that triggers the event, ``direction_col`` +1
+    for a long and -1 for a short; a null or zero direction gets nulls.
+
+    The entry tick is the first RTH tick of the same ``Date`` with a ``Datetime`` later than the
+    anchor's plus ``entry_delay_s``. A long pays that tick's ``AskPrice``, a short gets its
+    ``BidPrice``. ``move_<h>m`` is the mid of the last tick at or before ``h`` minutes after the
+    entry minus the entry price, signed in the trade direction; null when that moment is past the
+    day's last RTH tick. ``mfe_<H>m`` / ``mae_<H>m`` are the best and worst signed mid move over
+    the longest horizon ``H``; MFE is never below 0 and MAE never above 0.
+
+    Rows keep their order. The anchor and everything before it are never read for the move.
+    """
+    horizons = [int(h) for h in horizons_min]
+    longest = max(horizons)
+    names = [f"move_{h}m" for h in horizons] + [f"mfe_{longest}m", f"mae_{longest}m"]
+
+    rth = _rth_ticks(ticks, _QUOTE_INPUT)
+    rows = events.height
+    direction = events[direction_col].fill_null(0.0).to_numpy()
+    live = np.flatnonzero(direction != 0)  # the events that are measured
+
+    idx = rth["Index"].to_numpy()
+    t = rth["Datetime"].dt.epoch("us").to_numpy()
+    ask = rth["AskPrice"].to_numpy()
+    bid = rth["BidPrice"].to_numpy()
+    mid = (ask + bid) / 2
+    n = idx.size
+    starts = _day_starts(rth)
+    day_end = np.append(starts[1:], n) - 1  # position of each day's last tick
+
+    anchor = events[anchor_col].to_numpy()[live]
+    k = np.searchsorted(idx, anchor)
+    last = day_end[np.searchsorted(starts, k, side="right") - 1]
+    sign = direction[live]
+
+    e = np.searchsorted(t, t[k], side="right")
+    entered = e <= last  # a later tick exists on the same Date
+    e = np.where(entered, e, k)  # stand-in position, masked out below
+    price = np.where(sign > 0, ask[e], bid[e])
+
+    def spread(values: np.ndarray, valid: np.ndarray) -> pl.Series:
+        """Per-event values back onto the rows of ``events``; null wherever not valid."""
+        full = np.full(rows, np.nan)
+        full[live[valid]] = values[valid]
+        return pl.Series(full).fill_nan(None)
+
+    moves = {name: pl.Series(np.full(rows, np.nan)).fill_nan(None) for name in names}  # not measured yet
+
+    position = np.zeros(rows, np.int64)
+    position[live[entered]] = e[entered]
+    has_entry = np.zeros(rows, bool)
+    has_entry[live[entered]] = True
+    keep = pl.Series(has_entry)
+    return events.with_columns(
+        pl.when(keep).then(pl.Series(idx[position])).alias("entry_index"),
+        pl.when(keep).then(rth["Datetime"].gather(position)).alias("entry_datetime"),
+        spread(price, entered).alias("entry_price"),
+        *[moves[name].alias(name) for name in names],
+    )

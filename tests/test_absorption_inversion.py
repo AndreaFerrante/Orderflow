@@ -704,3 +704,8 @@ def test_a_tick_exactly_on_the_horizon_is_the_one_that_is_read():
     rows = [("10:00:00", 100.00), ("10:00:01", 100.00), ("10:00:30", 99.50),
             ("10:01:01", 99.00)]  # the day's last tick, exactly one minute after the entry
     assert moves(rows, -1)["move_1m"].to_list() == [3.5]
+
+
+def test_the_excursions_cover_the_longest_horizon_whatever_the_order_of_the_horizons():
+    out = moves(SESSION, -1, horizons_min=(15, 1))
+    assert (out["mfe_15m"][0], out["mae_15m"][0]) == (3.5, -2.5)

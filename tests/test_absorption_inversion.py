@@ -283,3 +283,13 @@ def test_only_rth_ticks_are_read_and_a_lazy_frame_is_accepted():
     assert out["ending"].to_list() == ["break_back"]
     assert out["absorbed_volume"].to_list() == [50]
     assert out["end_index"].to_list() == [8]
+
+
+def test_a_finished_stall_does_not_change_when_later_ticks_change():
+    # the stall ends on the break-back tick, Index 6; every tick after it differs between the two tapes
+    tail = [{"t": "10:01:15", "price": 100.00, "tt": 1}, {"t": "10:03:00", "price": 100.00, "tt": 1}]
+    wild = [dict(row, price=250.0, tt=2, vol=999, ask_size=77, bid_size=77) for row in tail]
+    before = find(frame(buy_stall(BREAK_BACK, *tail))).filter(pl.col("end_index") <= 6)
+    after = find(frame(buy_stall(BREAK_BACK, *wild))).filter(pl.col("end_index") <= 6)
+    assert before.height == 1
+    assert after.equals(before)

@@ -193,3 +193,13 @@ def test_a_stall_still_open_at_the_last_tick_of_the_day_times_out_there():
     assert out["Date"].to_list() == ["2025-09-15"]
     assert out["end_index"].to_list() == [5]  # the day's last tick, never a tick of the next day
     assert out["absorbed_volume"].to_list() == [35]  # the ending tick is not counted
+
+
+def test_an_arrival_on_the_last_tick_of_the_day_is_closed_where_it_started():
+    rows = [{"t": "10:00:00", "price": 100.00, "tt": 1},
+            {"t": "10:00:30", "price": 100.00, "tt": 1},
+            {"t": "10:01:10", "price": 100.50, "tt": 2, "vol": 5}]
+    out = buyers(find(frame(rows)))
+    assert out["ending"].to_list() == ["timeout"]
+    assert out["arrival_index"].to_list() == out["end_index"].to_list() == [2]
+    assert out["absorbed_volume"].to_list() == [5]

@@ -122,6 +122,15 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
             v = vol[i]
             k = 1
             d = quote_sz[i] if quote_px[i] == p else -1
+            if last:  # nothing can follow: the stall is closed where it started
+                arrival[count] = a
+                end[count] = i
+                level[count] = p
+                absorbed[count] = v
+                trades[count] = k
+                displayed[count] = d
+                ending[count] = _TIMEOUT
+                count += 1
 
         while head < tail and px[high[tail - 1]] <= px[i]:
             tail -= 1

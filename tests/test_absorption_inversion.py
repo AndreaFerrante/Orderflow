@@ -830,3 +830,10 @@ def test_by_default_the_five_best_days_are_left_out():
                            "move_5m": [10.0, 9.0, 8.0, 7.0, 6.0, -1.0, -3.0]})
     row = summarise_cells(events, by=[], move_col="move_5m").row(0, named=True)
     assert row["mean_ex_best_days"] == pytest.approx(-2.0)  # the two days left: -1 and -3
+
+
+def test_a_mean_with_no_event_left_is_null():
+    events = pl.DataFrame({"Date": ["2025-04-07", "2025-04-07"], "move_5m": [40.0, 20.0]})
+    row = summarise_cells(events, by=[], move_col="move_5m", exclude_dates=("2025-04-07",)).row(0, named=True)
+    assert row["mean_ex_dates"] is None      # its only date is excluded
+    assert row["mean_ex_best_days"] is None  # its only day is one of its five best

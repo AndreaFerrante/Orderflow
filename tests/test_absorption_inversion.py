@@ -447,3 +447,11 @@ def test_expected_move_is_sigma_times_the_root_of_the_volume_share():
     assert out["sigma_ticks"].to_list() == pytest.approx([sigma])
     assert out["session_volume_before"].to_list() == [350]  # 35 ticks of 10 lots before the arrival
     assert out["expected_move"].to_list() == pytest.approx([sigma * (90 / 350) ** 0.5])
+
+
+def test_expected_move_is_null_until_thirty_minutes_of_the_same_day_exist():
+    ticks = frame(minute_tape() + minute_tape(day="2025-09-16"))
+    stalls = pl.concat([stalls_at(29, 30), stalls_at(45, day="2025-09-16")])  # 45 = sixth tick of day two
+    out = attach_expected_move(ticks, stalls, tick_size=TICK)
+    assert out["sigma_ticks"].is_null().to_list() == [True, False, True]
+    assert out["expected_move"].is_null().to_list() == [True, False, True]

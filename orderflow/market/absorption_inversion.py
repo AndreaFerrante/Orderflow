@@ -451,7 +451,7 @@ def summarise_cells(
     ``exclude_dates``) and ``mean_ex_best_days`` (without the ``drop_best_days`` dates whose summed
     move is largest). An empty ``by`` gives one row for the whole frame.
     """
-    data = events
+    data = events.filter(pl.col(move_col).is_not_null())
     years = np.unique(data[date_col].str.slice(0, 4).to_numpy())
     schema ={name: events.schema[name] for name in by}
     schema.update({"events": pl.Int64, "days": pl.Int64, "mean": pl.Float64, "t": pl.Float64})

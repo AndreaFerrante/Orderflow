@@ -366,3 +366,12 @@ def test_after_a_hole_in_the_data_the_window_fills_again():
             {"t": "10:05:31", "price": 100.00, "tt": 1},
             {"t": "10:05:32", "price": 100.00, "tt": 1}]
     assert buyers(find(frame(rows)))["arrival_index"].to_list() == [2]
+
+
+def test_a_stall_closed_where_it_started_carries_its_price_its_trade_and_the_size_shown():
+    quiet = [{"t": f"10:00:{s:02d}", "price": 100.00, "tt": 1} for s in range(0, 50, 5)]
+    rows = quiet + [{"t": "10:01:10", "price": 103.25, "tt": 2, "vol": 37, "ask_size": 13}]  # the day's last tick
+    out = buyers(find(frame(rows)))
+    assert out["price"].to_list() == [103.25]
+    assert out["n_trades"].to_list() == [1]
+    assert out["displayed_on_arrival"].to_list() == [13]

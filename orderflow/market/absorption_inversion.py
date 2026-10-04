@@ -63,7 +63,13 @@ def _rth_ticks(ticks: pl.DataFrame | pl.LazyFrame, columns) -> pl.DataFrame:
     missing = [column for column in columns if column not in names]
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
-    return lazy.filter(pl.col("SessionType") == "RTH").select(columns).collect().sort("Index")
+    rth = lazy.filter(pl.col("SessionType") == "RTH").select(columns).collect().sort("Index")
+    t = rth["Datetime"].dt.epoch("us").to_numpy()
+    back = np.flatnonzero(np.diff(t) < 0)
+    if back.size:  # the window and every searchsorted below assume time never goes backwards
+        raise ValueError("RTH Datetime must be non-decreasing in Index order; "
+                         f"first offending Index {rth['Index'][int(back[0]) + 1]}")
+    return rth
 
 
 def _day_starts(rth: pl.DataFrame) -> np.ndarray:

@@ -248,3 +248,11 @@ def test_compiled_and_plain_python_scans_agree():
 def test_a_missing_column_is_refused():
     with pytest.raises(ValueError, match="Missing required columns.*AskSize"):
         find(frame(buy_stall(BREAK_BACK, LATER)).drop("AskSize"))
+
+
+def test_a_clock_that_goes_backwards_in_index_order_is_refused():
+    ticks = frame(buy_stall(BREAK_BACK, LATER)).with_columns(
+        pl.when(pl.col("Index") == 4).then(datetime(2025, 9, 15, 10, 0, 45))
+        .otherwise(pl.col("Datetime")).alias("Datetime"))
+    with pytest.raises(ValueError, match="non-decreasing.*Index 4"):
+        find(ticks)

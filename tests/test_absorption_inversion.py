@@ -513,3 +513,13 @@ def test_one_arrival_that_is_not_an_rth_tick_is_enough_to_refuse_the_stalls(stra
     tape[36]["session"] = "ETH"  # Index 36 is in the tape, and it is not an RTH tick; 99 is past its end
     with pytest.raises(ValueError, match="arrival_index.*not an RTH tick"):
         attach_expected_move(frame(tape), stalls_at(35, stray), tick_size=TICK)
+
+
+def test_the_expected_move_needs_some_volume_traded_before_the_arrival():
+    quiet = [dict(row, vol=0) for row in minute_tape()]
+    one_lot = [dict(row, vol=int(m == 0)) for m, row in enumerate(minute_tape())]
+    none = attach_expected_move(frame(quiet), stalls_at(35), tick_size=TICK)
+    some = attach_expected_move(frame(one_lot), stalls_at(35), tick_size=TICK)
+    sigma = float(np.std([2.0, -2.0] * 15, ddof=1))
+    assert none["expected_move"].to_list() == [None]
+    assert some["expected_move"].to_list() == pytest.approx([sigma * 90 ** 0.5])

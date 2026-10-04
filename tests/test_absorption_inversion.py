@@ -293,3 +293,15 @@ def test_a_finished_stall_does_not_change_when_later_ticks_change():
     after = find(frame(buy_stall(BREAK_BACK, *wild))).filter(pl.col("end_index") <= 6)
     assert before.height == 1
     assert after.equals(before)
+
+
+def test_a_tape_with_no_stall_gives_an_empty_frame_with_every_column():
+    quiet = find(frame([{"t": "10:00:00", "price": 100.0, "tt": 1}, {"t": "10:00:01", "price": 100.0, "tt": 1}]))
+    assert quiet.height == 0
+    assert quiet.columns == STALL_COLUMNS
+    full = find(frame(buy_stall(BREAK_BACK, LATER)))
+    assert quiet.schema == full.schema
+    assert pl.concat([quiet, full]).height == full.height
+    no_rth = find(frame([{"t": "10:00:00", "price": 100.0, "tt": 1, "session": "ETH"}]))
+    assert no_rth.height == 0
+    assert no_rth.schema == full.schema

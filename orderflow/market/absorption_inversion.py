@@ -226,7 +226,7 @@ def find_absorption_stalls(
             found.append((np.full(part[0].size, side, np.int64), part[0] + lo, part[1] + lo) + part[2:])
 
     def column(j: int) -> np.ndarray:
-        return np.concatenate([part[j] for part in found])
+        return np.concatenate([part[j] for part in found]) if found else np.empty(0, np.int64)
 
     order = np.argsort(column(1))
     side, arrival, end, level, absorbed, trades, displayed, ending = (column(j)[order] for j in range(8))

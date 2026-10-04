@@ -47,6 +47,7 @@ _ENDINGS = ("break_back", "eaten", "timeout")
 
 _STALL_INPUT = ("Index", "Date", "Datetime", "SessionType", "Price", "Volume", "TradeType",
                 "AskPrice", "BidPrice", "AskSize", "BidSize")
+_VOLUME_INPUT = ("Index", "Date", "Datetime", "SessionType", "Volume", "AskPrice", "BidPrice")
 
 #: Columns of :func:`find_absorption_stalls`, in order. An empty result carries them too.
 STALL_COLUMNS = [
@@ -254,3 +255,53 @@ def find_absorption_stalls(
         pl.when(pl.col("ending") == "break_back")
         .then(pl.when(pl.col("side") == 1).then(1).otherwise(2)).cast(pl.Int64).alias("TradeType"),
     ).select(STALL_COLUMNS)
+
+
+def attach_expected_move(
+    ticks: pl.DataFrame | pl.LazyFrame,
+    stalls: pl.DataFrame,
+    *,
+    tick_size: float,
+    sigma_minutes: int = 30,
+) -> pl.DataFrame:
+    """``stalls`` plus ``sigma_ticks``, ``session_volume_before`` and ``expected_move``.
+
+    The square-root law says a volume ``Q`` moves price by about ``sigma * sqrt(Q / V)``. Inside a
+    stall the realised move is zero by construction, so the law's prediction is what is worth
+    keeping: how far the absorbed volume *should* have pushed. The scale constant is 1, so the
+    column orders stalls and means nothing in absolute terms.
+
+    ``sigma_ticks`` is the standard deviation of the one-minute mid changes over the
+    ``sigma_minutes`` RTH minutes that ended before the arrival's minute; null until that many
+    minutes exist. ``session_volume_before`` is the RTH volume of the ``Date`` before the arrival
+    tick. Both are known at the arrival: nothing later is read.
+    """
+    minute = pl.col("Datetime").dt.truncate("1m")
+    rth = _rth_ticks(ticks, _VOLUME_INPUT).with_columns(
+        ((pl.col("AskPrice") + pl.col("BidPrice")) / 2).alias("mid"),
+        # one number per (Date, minute), counted from 1 in tape order
+        (minute != minute.shift(1)).fill_null(True).cum_sum().alias("bar"),
+        (pl.col("Volume").cum_sum().over("Date") - pl.col("Volume")).alias("session_volume_before"),
+    )
+    bars = (
+        rth.group_by("Date", "bar", maintain_order=True)  # groups in tape order: row j is bar j + 1
+        .agg(pl.col("mid").first().alias("open"), pl.col("mid").last().alias("close"))
+        # the first minute of a day has no earlier close: it is measured from its own first quote
+        .with_columns(pl.col("close").shift(1).over("Date").fill_null(pl.col("open")).alias("before"))
+        .with_columns(((pl.col("close") - pl.col("before")) / tick_size).alias("change"))
+        # shift(1): the minutes that ENDED before this one, never this one itself
+        .with_columns(pl.col("change").rolling_std(sigma_minutes).shift(1).over("Date").alias("sigma_ticks"))
+    )
+
+    idx = rth["Index"].to_numpy()
+    arrival = stalls["arrival_index"].to_numpy()
+    k = np.searchsorted(idx, arrival)
+    volume = pl.col("session_volume_before")
+    # Picked by position, not joined: the rows of `stalls` cannot move.
+    return stalls.with_columns(
+        bars["sigma_ticks"].gather(rth["bar"].gather(k) - 1),
+        rth["session_volume_before"].gather(k),
+    ).with_columns(
+        pl.when(volume > 0)
+        .then(pl.col("sigma_ticks") * (pl.col("absorbed_volume") / volume).sqrt())
+        .alias("expected_move"))

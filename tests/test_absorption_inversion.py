@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 
 from orderflow.market import absorption_inversion as ai
-from orderflow.market.absorption_inversion import STALL_COLUMNS, find_absorption_stalls
+from orderflow.market.absorption_inversion import STALL_COLUMNS, attach_expected_move, find_absorption_stalls
 
 TICK = 0.25
 
@@ -423,3 +423,27 @@ def test_every_column_of_a_stall_has_a_fixed_type():
         "refill_ratio": pl.Float64, "n_trades": pl.Int64, "duration_s": pl.Float64, "ending": pl.String,
         "end_index": pl.Int64, "end_datetime": pl.Datetime("us"), "TradeType": pl.Int64,
     }
+
+
+def minute_tape(day="2025-09-15"):
+    """Forty ticks, one a minute from 10:00:30, 10 lots each; the bid steps 100.00, 100.50, 100.00 ...
+
+    From 10:35 on everything is 40 ticks higher: the arrival's own minute holds a jump that must
+    not be part of its sigma.
+    """
+    return [{"day": day, "t": f"10:{m:02d}:30", "tt": 1, "vol": 10,
+             "price": 100.0 + 0.5 * (m % 2) + (10.0 if m >= 35 else 0.0)} for m in range(40)]
+
+
+def stalls_at(*arrival, day="2025-09-15"):
+    return pl.DataFrame({"Date": [day] * len(arrival), "arrival_index": list(arrival),
+                         "absorbed_volume": [90] * len(arrival)},
+                        schema={"Date": pl.String, "arrival_index": pl.Int64, "absorbed_volume": pl.Int64})
+
+
+def test_expected_move_is_sigma_times_the_root_of_the_volume_share():
+    out = attach_expected_move(frame(minute_tape()), stalls_at(35), tick_size=TICK)
+    sigma = float(np.std([2.0, -2.0] * 15, ddof=1))  # the thirty one-minute changes before 10:35
+    assert out["sigma_ticks"].to_list() == pytest.approx([sigma])
+    assert out["session_volume_before"].to_list() == [350]  # 35 ticks of 10 lots before the arrival
+    assert out["expected_move"].to_list() == pytest.approx([sigma * (90 / 350) ** 0.5])

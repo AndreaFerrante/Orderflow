@@ -381,3 +381,13 @@ def test_a_break_of_one_tick_is_allowed():
     out = buyers(find(frame(buy_stall(BREAK_BACK, LATER)), break_ticks=1))
     assert out["ending"].to_list() == ["break_back"]
     assert out["end_index"].to_list() == [4]  # the sell one tick below the stall
+
+
+def test_a_stall_on_the_second_day_ends_on_a_tick_of_that_day():
+    first_day = [{"t": "10:00:00", "price": 100.00, "tt": 1}, {"t": "10:00:10", "price": 100.00, "tt": 1},
+                 {"t": "10:00:20", "price": 100.00, "tt": 1}]
+    out = buyers(find(frame(first_day + buy_stall(BREAK_BACK, LATER, day="2025-09-16"))))
+    assert out["arrival_index"].to_list() == [5]
+    assert out["end_index"].to_list() == [9]
+    assert out["end_datetime"].to_list() == [datetime(2025, 9, 16, 10, 1, 14)]
+    assert out["duration_s"].to_list() == [4.0]

@@ -405,3 +405,11 @@ def test_stalls_of_both_sides_come_in_the_order_of_their_arrival_ticks():
     assert out["side"].to_list() == [1, -1, -1]
     assert out["arrival_index"].to_list() == [2, 3, 4]
     assert out["end_index"].to_list() == [5, 4, 6]
+
+
+def test_one_lot_shown_at_the_stall_price_is_enough_for_a_refill_ratio():
+    rows = buy_stall(BREAK_BACK, LATER)
+    rows[2]["ask_size"] = 1
+    out = buyers(find(frame(rows)))
+    assert out["displayed_on_arrival"].to_list() == [1]
+    assert out["refill_ratio"].to_list() == [50.0]

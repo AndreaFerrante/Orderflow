@@ -92,3 +92,12 @@ def test_buyers_trapped_point_short_and_sellers_trapped_point_long():
     assert out["side"].to_list() == [1, -1]
     assert out["ending"].to_list() == ["break_back", "break_back"]
     assert out["TradeType"].to_list() == [1, 2]
+
+
+def test_a_trade_at_the_high_of_the_window_is_not_an_arrival():
+    rows = [{"t": "10:00:00", "price": 100.50, "tt": 1},
+            {"t": "10:00:30", "price": 100.50, "tt": 1},
+            {"t": "10:01:10", "price": 100.50, "tt": 2, "vol": 50},
+            {"t": "10:01:14", "price": 100.00, "tt": 1},
+            {"t": "10:01:15", "price": 100.00, "tt": 1}]
+    assert buyers(find(frame(rows))).height == 0

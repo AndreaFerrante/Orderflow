@@ -323,3 +323,15 @@ def test_ticks_handed_over_out_of_index_order_give_the_same_stalls():
     out = find(ticks.reverse())
     assert out.height == 1
     assert out.equals(find(ticks))
+
+
+def test_a_price_lands_on_its_own_tick_when_floats_cannot_hold_the_grid_exactly():
+    rows = [{"t": "10:00:00", "price": 100.0, "tt": 1},
+            {"t": "10:00:30", "price": 100.0, "tt": 1},
+            {"t": "10:01:10", "price": 100.3, "tt": 2, "vol": 5},  # 100.3 / 0.1 is 1002.9999999999999
+            {"t": "10:01:14", "price": 100.1, "tt": 1},            # two ticks of 0.1 below
+            {"t": "10:01:15", "price": 100.1, "tt": 1}]
+    out = buyers(find_absorption_stalls(frame(rows), tick_size=0.1, push_window_s=60.0, break_ticks=2,
+                                        max_wait_s=60.0))
+    assert out["ending"].to_list() == ["break_back"]
+    assert out["price"].to_list() == pytest.approx([100.3])

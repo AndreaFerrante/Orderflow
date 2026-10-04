@@ -256,3 +256,10 @@ def test_a_clock_that_goes_backwards_in_index_order_is_refused():
         .otherwise(pl.col("Datetime")).alias("Datetime"))
     with pytest.raises(ValueError, match="non-decreasing.*Index 4"):
         find(ticks)
+
+
+def test_a_null_in_a_required_column_is_refused():
+    ticks = frame(buy_stall(BREAK_BACK, LATER)).with_columns(
+        pl.when(pl.col("Index") == 3).then(None).otherwise(pl.col("Price")).alias("Price"))
+    with pytest.raises(ValueError, match="Null values.*Price"):
+        find(ticks)

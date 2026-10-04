@@ -64,6 +64,9 @@ def _rth_ticks(ticks: pl.DataFrame | pl.LazyFrame, columns) -> pl.DataFrame:
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
     rth = lazy.filter(pl.col("SessionType") == "RTH").select(columns).collect().sort("Index")
+    holes = [column for column, count in rth.null_count().row(0, named=True).items() if count]
+    if holes:
+        raise ValueError(f"Null values in required columns: {holes}")
     t = rth["Datetime"].dt.epoch("us").to_numpy()
     back = np.flatnonzero(np.diff(t) < 0)
     if back.size:  # the window and every searchsorted below assume time never goes backwards

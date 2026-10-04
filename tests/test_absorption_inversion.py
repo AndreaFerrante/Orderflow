@@ -101,3 +101,9 @@ def test_a_trade_at_the_high_of_the_window_is_not_an_arrival():
             {"t": "10:01:14", "price": 100.00, "tt": 1},
             {"t": "10:01:15", "price": 100.00, "tt": 1}]
     assert buyers(find(frame(rows))).height == 0
+
+
+def test_a_buy_trade_below_the_stall_is_not_a_break_back():
+    low_buy = {"t": "10:01:14", "price": 100.00, "tt": 2}  # the offer dropped; nobody sold
+    out = buyers(find(frame(buy_stall(low_buy))))
+    assert "break_back" not in out["ending"].to_list()

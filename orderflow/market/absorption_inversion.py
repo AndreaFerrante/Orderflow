@@ -90,7 +90,7 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
 
         if is_open:
             how = -1
-            if px[i] <= p - break_ticks:
+            if counter[i] and px[i] <= p - break_ticks:
                 how = _BREAK_BACK
             if how >= 0:
                 arrival[count] = a

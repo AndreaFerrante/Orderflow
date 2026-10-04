@@ -573,3 +573,9 @@ def test_an_event_with_no_later_tick_that_day_is_kept_with_nulls():
 def test_ticks_sharing_the_anchor_timestamp_are_not_the_entry():
     rows = [("10:00:00", 100.0), ("10:00:00", 99.75), ("10:00:01", 99.50), ("10:30:00", 99.50)]
     assert moves(rows, -1)["entry_index"].to_list() == [2]
+
+
+def test_forward_moves_are_in_ticks_and_signed_in_the_trade_direction():
+    short, long = moves(SESSION, -1), moves(SESSION, 1)
+    assert [short[c][0] for c in ("move_1m", "move_5m", "move_15m")] == [1.5, 3.5, -2.5]
+    assert [long[c][0] for c in ("move_1m", "move_5m", "move_15m")] == [-2.5, -4.5, 1.5]

@@ -369,7 +369,11 @@ def measure_forward_moves(
         full[live[valid]] = values[valid]
         return pl.Series(full).fill_nan(None)
 
-    moves = {name: pl.Series(np.full(rows, np.nan)).fill_nan(None) for name in names}  # not measured yet
+    moves = {name: pl.Series(np.full(rows, np.nan)).fill_nan(None) for name in names}
+    for h in horizons:
+        moment = t[e] + h * 60 * _US
+        at = np.searchsorted(t, moment, side="right") - 1
+        moves[f"move_{h}m"] = spread(sign * (mid[at] - price) / tick_size, entered)
 
     position = np.zeros(rows, np.int64)
     position[live[entered]] = e[entered]

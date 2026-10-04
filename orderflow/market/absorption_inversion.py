@@ -52,7 +52,7 @@ _ENDINGS = ("break_back", "eaten", "timeout")
 _STALL_INPUT = ("Index", "Date", "Datetime", "SessionType", "Price", "Volume", "TradeType",
                 "AskPrice", "BidPrice", "AskSize", "BidSize")
 _QUOTE_INPUT = ("Index", "Date", "Datetime", "SessionType", "AskPrice", "BidPrice")
-_VOLUME_INPUT =("Index", "Date", "Datetime", "SessionType", "Volume", "AskPrice", "BidPrice")
+_VOLUME_INPUT = ("Index", "Date", "Datetime", "SessionType", "Volume", "AskPrice", "BidPrice")
 
 #: Columns of :func:`find_absorption_stalls`, in order. An empty result carries them too.
 STALL_COLUMNS = [
@@ -424,7 +424,7 @@ def _clustered(x: np.ndarray, day: np.ndarray):
     if x.size == 0:
         return None, None
     mean = float(x.mean())
-    codes =np.unique(day, return_inverse=True)[1]
+    codes = np.unique(day, return_inverse=True)[1]
     days = int(codes.max()) + 1
     if days < 2:
         return mean, None
@@ -453,7 +453,7 @@ def summarise_cells(
     """
     data = events.filter(pl.col(move_col).is_not_null())
     years = np.unique(data[date_col].str.slice(0, 4).to_numpy())
-    schema ={name: events.schema[name] for name in by}
+    schema = {name: events.schema[name] for name in by}
     schema.update({"events": pl.Int64, "days": pl.Int64, "mean": pl.Float64, "t": pl.Float64})
     schema.update({f"mean_{year}": pl.Float64 for year in years})
     schema.update({"mean_ex_dates": pl.Float64, "mean_ex_best_days": pl.Float64})

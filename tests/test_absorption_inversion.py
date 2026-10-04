@@ -243,3 +243,8 @@ def test_compiled_and_plain_python_scans_agree():
     assert set(compiled[6].tolist()) == {0, 1, 2}  # every ending occurs
     for a, b in zip(compiled, plain):
         assert np.array_equal(a, b)
+
+
+def test_a_missing_column_is_refused():
+    with pytest.raises(ValueError, match="Missing required columns.*AskSize"):
+        find(frame(buy_stall(BREAK_BACK, LATER)).drop("AskSize"))

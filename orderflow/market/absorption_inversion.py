@@ -57,8 +57,13 @@ STALL_COLUMNS = [
 
 
 def _rth_ticks(ticks: pl.DataFrame | pl.LazyFrame, columns) -> pl.DataFrame:
-    """RTH rows of ``columns`` in tape order."""
-    return ticks.lazy().filter(pl.col("SessionType") == "RTH").select(columns).collect().sort("Index")
+    """RTH rows of ``columns`` in tape order. Refuses what would silently corrupt the scan."""
+    lazy = ticks.lazy()
+    names = set(lazy.collect_schema())
+    missing = [column for column in columns if column not in names]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+    return lazy.filter(pl.col("SessionType") == "RTH").select(columns).collect().sort("Index")
 
 
 def _day_starts(rth: pl.DataFrame) -> np.ndarray:

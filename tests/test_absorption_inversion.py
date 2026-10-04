@@ -579,3 +579,11 @@ def test_forward_moves_are_in_ticks_and_signed_in_the_trade_direction():
     short, long = moves(SESSION, -1), moves(SESSION, 1)
     assert [short[c][0] for c in ("move_1m", "move_5m", "move_15m")] == [1.5, 3.5, -2.5]
     assert [long[c][0] for c in ("move_1m", "move_5m", "move_15m")] == [-2.5, -4.5, 1.5]
+
+
+def test_a_horizon_past_the_last_tick_of_the_day_is_null():
+    rows = SESSION[:4] + [("10:10:00", 99.00), ("10:00:00", 90.00, "2025-09-16"), ("10:30:00", 90.00, "2025-09-16")]
+    out = moves(rows, -1)
+    assert (out["move_1m"][0], out["move_5m"][0]) == (1.5, 3.5)
+    assert out["move_15m"][0] is None  # 10:15:01 is after the day's last tick; tomorrow is not read
+    assert out["mfe_15m"][0] is None and out["mae_15m"][0] is None

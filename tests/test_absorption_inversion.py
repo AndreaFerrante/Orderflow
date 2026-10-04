@@ -183,3 +183,13 @@ def test_a_stall_times_out_at_the_first_tick_later_than_max_wait():
     assert out["TradeType"].to_list() == [None]
     on_time = {"t": "10:02:10", "price": 100.00, "tt": 1}  # exactly 60 s: not later
     assert buyers(find(frame(buy_stall(on_time, late))))["ending"].to_list() == ["break_back"]
+
+
+def test_a_stall_still_open_at_the_last_tick_of_the_day_times_out_there():
+    next_day = [{"day": "2025-09-16", "t": "10:00:00", "price": 99.00, "tt": 1},
+                {"day": "2025-09-16", "t": "10:00:10", "price": 101.00, "tt": 2}]
+    out = buyers(find(frame(buy_stall() + next_day), max_wait_s=300.0))
+    assert out["ending"].to_list() == ["timeout"]
+    assert out["Date"].to_list() == ["2025-09-15"]
+    assert out["end_index"].to_list() == [5]  # the day's last tick, never a tick of the next day
+    assert out["absorbed_volume"].to_list() == [35]  # the ending tick is not counted

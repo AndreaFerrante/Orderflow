@@ -87,6 +87,7 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
     for i in range(n):
         while head < tail and t[high[head]] < t[i] - window_us:
             head += 1
+        last = i == n - 1
 
         if is_open:
             how = -1
@@ -96,6 +97,8 @@ def _scan_side(t, px, vol, aggressor, counter, quote_px, quote_sz, window_us, br
                 how = _EATEN
             elif counter[i] and px[i] <= p - break_ticks:
                 how = _BREAK_BACK
+            elif last:
+                how = _TIMEOUT
             if how >= 0:
                 arrival[count] = a
                 end[count] = i

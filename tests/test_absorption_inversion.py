@@ -469,3 +469,10 @@ def test_expected_move_keeps_the_rows_in_order():
     out = attach_expected_move(frame(minute_tape()), stalls_at(38, 31, 35), tick_size=TICK)
     assert out["arrival_index"].to_list() == [38, 31, 35]
     assert out["session_volume_before"].to_list() == [380, 310, 350]
+
+
+def test_an_expected_move_that_cannot_be_measured_is_refused():
+    with pytest.raises(ValueError, match="arrival_index.*not an RTH tick"):
+        attach_expected_move(frame(minute_tape()), stalls_at(99), tick_size=TICK)
+    with pytest.raises(ValueError, match="tick_size"):
+        attach_expected_move(frame(minute_tape()), stalls_at(35), tick_size=0)

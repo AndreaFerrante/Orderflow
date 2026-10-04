@@ -276,6 +276,7 @@ def attach_expected_move(
     minutes exist. ``session_volume_before`` is the RTH volume of the ``Date`` before the arrival
     tick. Both are known at the arrival: nothing later is read.
     """
+    _check_positive(tick_size=tick_size, sigma_minutes=sigma_minutes)
     minute = pl.col("Datetime").dt.truncate("1m")
     rth = _rth_ticks(ticks, _VOLUME_INPUT).with_columns(
         ((pl.col("AskPrice") + pl.col("BidPrice")) / 2).alias("mid"),
@@ -296,6 +297,8 @@ def attach_expected_move(
     idx = rth["Index"].to_numpy()
     arrival = stalls["arrival_index"].to_numpy()
     k = np.searchsorted(idx, arrival)
+    if (k >= idx.size).any() or (idx[k] != arrival).any():
+        raise ValueError("arrival_index holds an Index that is not an RTH tick of `ticks`")
     volume = pl.col("session_volume_before")
     # Picked by position, not joined: the rows of `stalls` cannot move.
     return stalls.with_columns(

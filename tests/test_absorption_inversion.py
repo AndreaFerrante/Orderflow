@@ -335,3 +335,15 @@ def test_a_price_lands_on_its_own_tick_when_floats_cannot_hold_the_grid_exactly(
                                         max_wait_s=60.0))
     assert out["ending"].to_list() == ["break_back"]
     assert out["price"].to_list() == pytest.approx([100.3])
+
+
+def test_the_window_reaches_back_exactly_push_window_s():
+    at_the_high = [{"t": "10:00:00", "price": 100.50, "tt": 1},  # 60 s old at the buy below: still the high
+                   {"t": "10:00:30", "price": 100.00, "tt": 1},
+                   {"t": "10:01:00", "price": 100.50, "tt": 2, "vol": 50},
+                   {"t": "10:01:01", "price": 100.00, "tt": 1},
+                   {"t": "10:01:02", "price": 100.00, "tt": 1}]
+    above = [dict(row, price=100.00) if i == 0 else row for i, row in enumerate(at_the_high)]
+    assert buyers(find(frame(at_the_high))).height == 0
+    # the same buy, 60 s into the day and above everything before it: one full window has passed
+    assert buyers(find(frame(above)))["arrival_index"].to_list() == [2]

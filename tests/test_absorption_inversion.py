@@ -795,3 +795,8 @@ def test_two_frames_that_move_together_or_share_one_day_have_a_difference_and_no
     one_day = pl.DataFrame({"Date": ["2025-05-01", "2025-05-01"], "move_5m": [4.0, 6.0]})
     alone = difference_of_means(one_day, one_day.with_columns(pl.col("move_5m") * 2), move_col="move_5m")
     assert (alone["diff"], alone["t"]) == (-5.0, None)
+
+
+def test_a_cell_on_one_day_has_no_t_whatever_its_moves():
+    one_day = pl.DataFrame({"Date": ["2025-05-01"] * 3, "move_5m": [0.1, 0.2, 0.4]})  # deviations sum to -5.6e-17
+    assert summarise_cells(one_day, by=[], move_col="move_5m")["t"].to_list() == [None]

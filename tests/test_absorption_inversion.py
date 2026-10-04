@@ -690,3 +690,11 @@ def test_an_event_on_the_last_tick_of_the_tape_is_kept_with_nulls():
     assert out["entry_index"].to_list() == [None]
     assert out["entry_price"].to_list() == [None]
     assert out["move_5m"].to_list() == [None]
+
+
+def test_a_horizon_is_counted_in_minutes_of_sixty_seconds():
+    rows = [("10:00:00", 100.00), ("10:00:01", 100.00),
+            ("10:01:00", 99.50),      # the last quote within one minute of the entry
+            ("10:01:01.500", 99.00),  # half a second too late for it
+            ("10:30:00", 99.00)]
+    assert moves(rows, -1)["move_1m"].to_list() == [1.5]

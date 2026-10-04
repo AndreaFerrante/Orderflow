@@ -481,3 +481,14 @@ def test_an_expected_move_that_cannot_be_measured_is_refused():
 def test_a_sigma_window_that_is_not_a_positive_number_is_refused():
     with pytest.raises(ValueError, match="sigma_minutes"):
         attach_expected_move(frame(minute_tape()), stalls_at(35), tick_size=TICK, sigma_minutes=0)
+
+
+def two_quotes_a_minute(day="2025-09-15"):
+    """The minute tape with an earlier tick in every minute, at 10:MM:10, always at 99.00."""
+    early = [{"day": day, "t": f"10:{m:02d}:10", "tt": 1, "vol": 10, "price": 99.0} for m in range(40)]
+    return early + minute_tape(day)
+
+
+def test_the_ticks_of_one_minute_are_one_bar_measured_at_its_last_quote():
+    out = attach_expected_move(frame(two_quotes_a_minute()), stalls_at(71), tick_size=TICK)  # 71: 10:35:30
+    assert out["sigma_ticks"].to_list() == pytest.approx([float(np.std([2.0, -2.0] * 15, ddof=1))])

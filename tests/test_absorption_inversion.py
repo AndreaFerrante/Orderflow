@@ -316,3 +316,10 @@ def test_a_boolean_is_not_a_size():
 def test_a_null_in_a_column_the_scan_does_not_read_is_ignored():
     ticks = frame(buy_stall(BREAK_BACK, LATER)).with_columns(pl.lit(None, dtype=pl.Float64).alias("LVN"))
     assert buyers(find(ticks))["ending"].to_list() == ["break_back"]
+
+
+def test_ticks_handed_over_out_of_index_order_give_the_same_stalls():
+    ticks = frame(buy_stall(BREAK_BACK, LATER))
+    out = find(ticks.reverse())
+    assert out.height == 1
+    assert out.equals(find(ticks))

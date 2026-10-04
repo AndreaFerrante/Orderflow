@@ -455,3 +455,11 @@ def test_expected_move_is_null_until_thirty_minutes_of_the_same_day_exist():
     out = attach_expected_move(ticks, stalls, tick_size=TICK)
     assert out["sigma_ticks"].is_null().to_list() == [True, False, True]
     assert out["expected_move"].is_null().to_list() == [True, False, True]
+
+
+def test_expected_move_reads_nothing_after_the_arrival():
+    calm = minute_tape()
+    wild = [dict(row, price=row["price"] + 50.0, vol=999) if i > 35 else row for i, row in enumerate(calm)]
+    before = attach_expected_move(frame(calm), stalls_at(35), tick_size=TICK)
+    after = attach_expected_move(frame(wild), stalls_at(35), tick_size=TICK)
+    assert after.equals(before)

@@ -665,3 +665,12 @@ def test_the_excursions_start_at_the_entry_not_at_the_anchor():
 def test_a_boolean_is_not_an_entry_delay():
     with pytest.raises(ValueError, match="entry_delay_s"):
         moves(SESSION, -1, entry_delay_s=True)
+
+
+@pytest.mark.parametrize("stray", [99, 2])
+def test_one_anchor_that_is_not_an_rth_tick_is_enough_to_refuse_the_events(stray):
+    ticks = quotes(SESSION).with_columns(  # Index 2 is in the tape, and it is not an RTH tick; 99 is past its end
+        pl.when(pl.col("Index") == 2).then(pl.lit("ETH")).otherwise(pl.col("SessionType")).alias("SessionType"))
+    with pytest.raises(ValueError, match="end_index.*not an RTH tick"):
+        measure_forward_moves(ticks, events_at([0, stray], [-1, -1]), tick_size=TICK, anchor_col="end_index",
+                              direction_col="trade_dir")

@@ -263,3 +263,13 @@ def test_a_null_in_a_required_column_is_refused():
         pl.when(pl.col("Index") == 3).then(None).otherwise(pl.col("Price")).alias("Price"))
     with pytest.raises(ValueError, match="Null values.*Price"):
         find(ticks)
+
+
+@pytest.mark.parametrize("bad", [
+    {"tick_size": 0}, {"break_ticks": 0}, {"break_ticks": 2.0}, {"max_wait_s": 0}, {"push_window_s": -1.0},
+])
+def test_parameters_that_cannot_describe_a_stall_are_refused(bad):
+    kwargs = {"tick_size": TICK, "push_window_s": 60.0, "break_ticks": 2, "max_wait_s": 60.0}
+    kwargs.update(bad)
+    with pytest.raises(ValueError, match=next(iter(bad))):
+        find_absorption_stalls(frame(buy_stall(BREAK_BACK, LATER)), **kwargs)

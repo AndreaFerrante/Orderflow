@@ -56,6 +56,12 @@ STALL_COLUMNS = [
 ]
 
 
+def _check_positive(**values) -> None:
+    for name, value in values.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+            raise ValueError(f"{name} must be a positive number, got {value!r}")
+
+
 def _rth_ticks(ticks: pl.DataFrame | pl.LazyFrame, columns) -> pl.DataFrame:
     """RTH rows of ``columns`` in tape order. Refuses what would silently corrupt the scan."""
     lazy = ticks.lazy()
@@ -190,6 +196,10 @@ def find_absorption_stalls(
     was displayed. ``TradeType`` is 1 (short) for a buy-side ``break_back``, 2 (long) for a
     sell-side one, null for every other ending.
     """
+    _check_positive(tick_size=tick_size, push_window_s=push_window_s, max_wait_s=max_wait_s)
+    if isinstance(break_ticks, bool) or not isinstance(break_ticks, int) or break_ticks < 1:
+        raise ValueError(f"break_ticks must be a whole number of ticks, 1 or more, got {break_ticks!r}")
+
     rth = _rth_ticks(ticks, _STALL_INPUT)
     idx = rth["Index"].to_numpy()
     t = rth["Datetime"].dt.epoch("us").to_numpy()

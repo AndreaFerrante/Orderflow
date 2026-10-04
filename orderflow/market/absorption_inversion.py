@@ -351,6 +351,9 @@ def measure_forward_moves(
 
     Rows keep their order. The anchor and everything before it are never read for the move.
     """
+    _check_positive(tick_size=tick_size)
+    if isinstance(entry_delay_s, bool) or not isinstance(entry_delay_s, (int, float)) or entry_delay_s < 0:
+        raise ValueError(f"entry_delay_s must be zero or more, got {entry_delay_s!r}")
     horizons = [int(h) for h in horizons_min]
     longest = max(horizons)
     names = [f"move_{h}m" for h in horizons] + [f"mfe_{longest}m", f"mae_{longest}m"]

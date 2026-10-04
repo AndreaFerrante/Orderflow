@@ -635,3 +635,11 @@ def test_an_entry_delay_skips_the_ticks_inside_it():
 def test_an_anchor_that_is_not_an_rth_tick_is_refused():
     with pytest.raises(ValueError, match="end_index.*not an RTH tick"):
         moves(SESSION, -1, anchor=99)
+
+
+@pytest.mark.parametrize("bad", [{"tick_size": 0}, {"entry_delay_s": -1.0}])
+def test_forward_moves_refuse_parameters_that_mean_nothing(bad):
+    kwargs = {"tick_size": TICK, "anchor_col": "end_index", "direction_col": "trade_dir"}
+    kwargs.update(bad)
+    with pytest.raises(ValueError, match=next(iter(bad))):
+        measure_forward_moves(quotes(SESSION), events_at([0], [-1]), **kwargs)

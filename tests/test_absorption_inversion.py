@@ -203,3 +203,12 @@ def test_an_arrival_on_the_last_tick_of_the_day_is_closed_where_it_started():
     assert out["ending"].to_list() == ["timeout"]
     assert out["arrival_index"].to_list() == out["end_index"].to_list() == [2]
     assert out["absorbed_volume"].to_list() == [5]
+
+
+def test_the_break_back_tick_alone_turns_a_timeout_into_an_inversion():
+    quiet = [{"t": "10:01:20", "price": 100.25, "tt": 1}, {"t": "10:03:00", "price": 100.25, "tt": 1}]
+    without = buyers(find(frame(buy_stall(*quiet))))
+    with_break = buyers(find(frame(buy_stall(BREAK_BACK, *quiet))))
+    assert without["ending"].to_list() == ["timeout"]
+    assert with_break["ending"].to_list() == ["break_back"]
+    assert without["arrival_index"].to_list() == with_break["arrival_index"].to_list() == [2]

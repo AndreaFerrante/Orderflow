@@ -311,6 +311,7 @@ def attach_expected_move(
         .alias("expected_move"))
 
 
+@njit(cache=True)
 def _window_extremes(mid, start, stop):
     """Highest and lowest mid between two positions, both included: one pair per event."""
     high = np.empty(start.size, np.float64)

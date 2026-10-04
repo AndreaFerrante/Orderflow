@@ -596,3 +596,17 @@ def test_mfe_and_mae_are_the_best_and_worst_mid_over_the_longest_horizon():
     rising = [("10:00:00", 100.00), ("10:00:01", 100.00), ("10:10:00", 101.00), ("10:20:00", 101.00)]
     against = moves(rising, -1)
     assert (against["mfe_15m"][0], against["mae_15m"][0]) == (0.0, -4.5)  # never in profit: MFE 0
+
+
+def test_compiled_and_plain_python_window_extremes_agree():
+    pytest.importorskip("numba")
+    assert hasattr(ai._window_extremes, "py_func"), "the window extremes are not compiled"
+    rng = np.random.default_rng(11)
+    mid = 100.0 + np.cumsum(rng.integers(-2, 3, 3000)) * 0.125
+    start = np.sort(rng.integers(0, 2500, 200)).astype(np.int64)
+    stop = start + rng.integers(0, 400, 200)
+    plain = ai._window_extremes.py_func(mid, start, stop)
+    compiled = ai._window_extremes(mid, start, stop)
+    assert np.array_equal(compiled[0], plain[0]) and np.array_equal(compiled[1], plain[1])
+    assert (compiled[0] >= mid[start]).all() and (compiled[1] <= mid[start]).all()
+    assert (compiled[0] > compiled[1]).any()

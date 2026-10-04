@@ -357,3 +357,12 @@ def test_only_the_trades_older_than_the_window_leave_it():
             {"t": "10:01:21", "price": 100.00, "tt": 1},
             {"t": "10:01:22", "price": 100.00, "tt": 1}]
     assert buyers(find(frame(rows))).height == 0
+
+
+def test_after_a_hole_in_the_data_the_window_fills_again():
+    rows = [{"t": "10:00:00", "price": 100.00, "tt": 1},
+            {"t": "10:05:00", "price": 100.00, "tt": 1},  # nothing for five minutes: the window is empty here
+            {"t": "10:05:30", "price": 100.50, "tt": 2, "vol": 5},  # ... and holds the tick above again here
+            {"t": "10:05:31", "price": 100.00, "tt": 1},
+            {"t": "10:05:32", "price": 100.00, "tt": 1}]
+    assert buyers(find(frame(rows)))["arrival_index"].to_list() == [2]

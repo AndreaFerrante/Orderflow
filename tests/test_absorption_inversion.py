@@ -559,3 +559,12 @@ def test_a_short_enters_at_the_bid_and_a_long_at_the_ask_of_the_next_tick():
     assert short["entry_price"].to_list() == [100.00]
     assert long["entry_price"].to_list() == [100.25]
     assert short["entry_datetime"].to_list() == [datetime(2025, 9, 15, 10, 0, 1)]
+
+
+def test_an_event_with_no_later_tick_that_day_is_kept_with_nulls():
+    rows = [("10:00:00", 100.0), ("10:00:05", 100.0), ("10:00:00", 99.0, "2025-09-16"), ("10:30:00", 99.0, "2025-09-16")]
+    out = moves(rows, -1, anchor=1)
+    assert out.height == 1
+    assert out["entry_index"].to_list() == [None]
+    assert out["entry_price"].to_list() == [None]
+    assert out["move_1m"].to_list() == [None]

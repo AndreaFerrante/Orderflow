@@ -218,6 +218,29 @@ def find_rolling_stacked_imbalances(
     return pl.DataFrame(columns)
 
 
+@njit(cache=True)
+def _excursions(level, entry, valid, direction, horizon):
+    """Best and worst signed move, in ticks, over the ``horizon`` records after each entry."""
+    best = np.zeros(entry.size, np.int64)
+    worst = np.zeros(entry.size, np.int64)
+    for e in range(entry.size):
+        if valid[e]:
+            for j in range(1, horizon + 1):
+                move = direction[e] * (level[entry[e] + j] - level[entry[e]])
+                if move > best[e]:
+                    best[e] = move
+                if move < worst[e]:
+                    worst[e] = move
+    return best, worst
+
+
+def _within(segment: np.ndarray, at: np.ndarray, last: np.ndarray) -> np.ndarray:
+    """True where tick position ``last`` exists and lies in the same session run as position ``at``."""
+    inside = last < segment.size
+    inside[inside] = segment[last[inside]] == segment[at[inside]]
+    return inside
+
+
 def forward_moves_by_tick(
     ticks: pl.DataFrame | pl.LazyFrame,
     events: pl.DataFrame,
@@ -240,7 +263,39 @@ def forward_moves_by_tick(
     ``SessionType`` than the anchor. Rows keep their order. The anchor and everything before it are
     never read for a move.
     """
-    raise NotImplementedError
+    _check_positive(tick_size=tick_size)
+    if (not isinstance(horizons, (tuple, list)) or not horizons
+            or any(isinstance(h, bool) or not isinstance(h, int) or h < 1 for h in horizons)):
+        raise ValueError(f"horizons must be whole numbers of records, 1 or more, got {horizons!r}")
+    frame = _tape(ticks, ["Index", "SessionType", "Price"])
+    if not frame.height:
+        raise ValueError("the tape has no ticks")
+    index = frame["Index"].to_numpy()
+    anchor = events[anchor_col].to_numpy()
+    at = np.searchsorted(index, anchor)
+    # an anchor past the end is clamped to the last Index, which differs from it
+    if (index[np.minimum(at, index.size - 1)] != anchor).any():
+        raise ValueError(f"{anchor_col} holds an Index that is not in the tape")
+    level = np.rint(frame["Price"].to_numpy() / tick_size).astype(np.int64)
+    segment = _segments(frame["SessionType"])
+    entry = at + 1
+    direction = events[direction_col].to_numpy()
+    if not np.isin(direction, (-1, 1)).all():
+        raise ValueError(f"{direction_col} must be +1 or -1")
+    columns = []
+    for h in horizons:
+        valid = _within(segment, at, entry + h)
+        move = np.full(at.size, np.nan)
+        move[valid] = direction[valid] * (level[entry[valid] + h] - level[entry[valid]])
+        columns.append(pl.Series(f"move_{h}", move, nan_to_null=True))
+    longest = max(horizons)
+    valid = _within(segment, at, entry + longest)
+    best, worst = _excursions(level, entry, valid, direction, longest)
+    for name, values in ((f"mfe_{longest}", best), (f"mae_{longest}", worst)):
+        excursion = values.astype(np.float64)
+        excursion[~valid] = np.nan
+        columns.append(pl.Series(name, excursion, nan_to_null=True))
+    return events.with_columns(columns)
 
 
 def systematic_events(ticks: pl.DataFrame | pl.LazyFrame, *, step: int) -> pl.DataFrame:

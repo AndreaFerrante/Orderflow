@@ -354,3 +354,126 @@ def test_a_parameter_that_cannot_work_is_refused(name, value):
     kwargs[name] = value
     with pytest.raises(ValueError):
         find_rolling_stacked_imbalances(tape(BUY_STACK), **kwargs)
+
+
+# --- forward moves, in records ------------------------------------------------------------------------
+
+def walk(levels, session="RTH"):
+    """One contract at the ask at each level: a tape where only the price path matters."""
+    return [(level, 1, ASK, session) for level in levels]
+
+
+def moves(rows, anchors, directions, first_index=0, **kwargs):
+    kwargs.setdefault("horizons", (2,))
+    kwargs.setdefault("tick_size", TICK)
+    events = pl.DataFrame({"signal_index": anchors, "direction": directions})
+    return forward_moves_by_tick(tape(rows, first_index), events, **kwargs)
+
+
+def test_a_long_event_gains_when_the_price_rises_after_the_entry():
+    assert moves(walk([0, 0, 1, 2, 3]), [0], [1])["move_2"].to_list() == [2.0]
+
+
+def test_a_short_event_gains_when_the_price_falls_after_the_entry():
+    assert moves(walk([0, 0, 1, 2, 3]), [0], [-1])["move_2"].to_list() == [-2.0]
+
+
+def test_the_entry_is_the_tick_after_the_anchor_not_the_anchor():
+    assert moves(walk([0, 5, 6, 7]), [0], [1], horizons=(1,))["move_1"].to_list() == [1.0]
+
+
+def test_the_horizon_counts_records_after_the_entry():
+    result = moves(walk([0, 0, 1, 3, 6, 10]), [0], [1], horizons=(1, 3))
+    assert result["move_1"].to_list() == [1.0]
+    assert result["move_3"].to_list() == [6.0]
+
+
+def test_a_move_is_null_when_its_record_is_past_the_end_of_the_tape():
+    result = moves(walk([0, 0, 1]), [0], [1], horizons=(1, 5))
+    assert result["move_1"].to_list() == [1.0]
+    assert result["move_5"].to_list() == [None]
+
+
+def test_a_move_is_null_when_its_record_is_in_another_session():
+    rows = walk([0, 0, 1], "RTH") + walk([2, 3], "ETH")
+    result = moves(rows, [0], [1], horizons=(1, 2))
+    assert result["move_1"].to_list() == [1.0]
+    assert result["move_2"].to_list() == [None]
+
+
+def test_a_move_is_null_when_its_record_is_the_one_just_past_the_end():
+    assert moves(walk([0, 0, 1]), [0], [1], horizons=(2,))["move_2"].to_list() == [None]
+
+
+def test_an_event_on_the_last_tick_is_kept_with_null_moves():
+    result = moves(walk([0, 0, 1]), [2], [1])
+    assert result.height == 1
+    assert result["move_2"].to_list() == [None]
+
+
+def test_mfe_and_mae_are_the_best_and_the_worst_signed_move_after_the_entry():
+    rows = walk([0, 0, 6, -2, 1, -7])  # the first record is the best for a long, the last is the worst
+    long = moves(rows, [0], [1], horizons=(2, 4))
+    short = moves(rows, [0], [-1], horizons=(2, 4))
+    assert (long["mfe_4"].to_list(), long["mae_4"].to_list()) == ([6.0], [-7.0])
+    assert (short["mfe_4"].to_list(), short["mae_4"].to_list()) == ([7.0], [-6.0])
+
+
+def test_mfe_and_mae_are_null_when_the_longest_horizon_is_cut():
+    result = moves(walk([0, 0, 3, -2]), [0], [1], horizons=(1, 4))
+    assert result["move_1"].to_list() == [3.0]
+    assert result["mfe_4"].to_list() == [None]
+    assert result["mae_4"].to_list() == [None]
+
+
+def test_the_default_horizons_are_5_20_and_100():
+    events = pl.DataFrame({"signal_index": [0], "direction": [1]})
+    result = forward_moves_by_tick(tape(walk(range(110))), events, tick_size=TICK)
+    assert result.columns == ["signal_index", "direction", "move_5", "move_20", "move_100", "mfe_100", "mae_100"]
+    assert result.row(0)[2:] == (5.0, 20.0, 100.0, 100.0, 0.0)
+
+
+def test_the_anchor_is_an_index_not_a_row_position():
+    assert moves(walk([0, 0, 1, 2]), [1000], [1], first_index=1000)["move_2"].to_list() == [2.0]
+
+
+def test_events_keep_their_order_and_their_columns():
+    events = pl.DataFrame({"signal_index": [2, 0], "direction": [1, -1], "x": ["a", "b"]})
+    result = forward_moves_by_tick(tape(walk([0, 0, 1, 2, 3, 4])), events, tick_size=TICK, horizons=(1,))
+    assert result["x"].to_list() == ["a", "b"]
+    assert result["signal_index"].to_list() == [2, 0]
+    assert result["move_1"].to_list() == [1.0, -1.0]
+
+
+def test_an_anchor_that_is_not_in_the_tape_is_refused():
+    with pytest.raises(ValueError, match="not in the tape"):
+        moves(walk([0, 0, 1]), [99], [1])
+
+
+def test_a_direction_other_than_plus_or_minus_one_is_refused():
+    with pytest.raises(ValueError, match="must be"):
+        moves(walk([0, 0, 1]), [0], [0])
+
+
+@pytest.mark.parametrize("horizons", [(), (0,), (2.5,), (True,), 5])
+def test_horizons_that_cannot_work_are_refused(horizons):
+    with pytest.raises(ValueError, match="horizons"):
+        moves(walk([0, 0, 1]), [0], [1], horizons=horizons)
+
+
+def test_a_tick_size_that_cannot_work_is_refused_by_the_forward_moves():
+    with pytest.raises(ValueError, match="tick_size"):
+        moves(walk([0, 0, 1]), [0], [1], tick_size=0)
+
+
+def test_the_forward_moves_refuse_a_tape_out_of_tape_order():
+    ticks = tape(walk([0, 0, 1])).with_columns((pl.col("Index") // 2).alias("Index"))
+    events = pl.DataFrame({"signal_index": [0], "direction": [1]})
+    with pytest.raises(ValueError, match="strictly increasing"):
+        forward_moves_by_tick(ticks, events, tick_size=TICK, horizons=(1,))
+
+
+def test_the_forward_moves_refuse_an_empty_tape():
+    events = pl.DataFrame({"signal_index": [0], "direction": [1]})
+    with pytest.raises(ValueError, match="no ticks"):
+        forward_moves_by_tick(tape(walk([0, 0, 1])).clear(), events, tick_size=TICK, horizons=(1,))

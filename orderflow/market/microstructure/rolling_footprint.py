@@ -304,4 +304,8 @@ def systematic_events(ticks: pl.DataFrame | pl.LazyFrame, *, step: int) -> pl.Da
     The columns are the first five of :func:`find_rolling_stacked_imbalances`, so the same tools read
     both. No random numbers: the sample is a function of the tape.
     """
-    raise NotImplementedError
+    if isinstance(step, bool) or not isinstance(step, int) or step < 1:
+        raise ValueError(f"step must be a whole number, 1 or more, got {step!r}")
+    sample = (_tape(ticks, ["Index", "Date", "Datetime", "SessionType"]).gather_every(step)
+              .rename({"Index": "signal_index"}))
+    return pl.concat([sample.with_columns(pl.lit(side, pl.Int64).alias("direction")) for side in (1, -1)])

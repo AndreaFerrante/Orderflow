@@ -477,3 +477,23 @@ def test_the_forward_moves_refuse_an_empty_tape():
     events = pl.DataFrame({"signal_index": [0], "direction": [1]})
     with pytest.raises(ValueError, match="no ticks"):
         forward_moves_by_tick(tape(walk([0, 0, 1])).clear(), events, tick_size=TICK, horizons=(1,))
+
+
+# --- the base rate ------------------------------------------------------------------------------------
+
+def test_systematic_events_take_every_step_th_tick_once_long_and_once_short():
+    result = systematic_events(tape(walk(range(7)), first_index=10), step=3)
+    assert result.columns == ["signal_index", "Date", "Datetime", "SessionType", "direction"]
+    assert result["signal_index"].to_list() == [10, 13, 16, 10, 13, 16]
+    assert result["direction"].to_list() == [1, 1, 1, -1, -1, -1]
+
+
+@pytest.mark.parametrize("step", [0, -3, 2.5, True])
+def test_a_step_that_cannot_work_is_refused(step):
+    with pytest.raises(ValueError, match="step"):
+        systematic_events(tape(walk(range(7))), step=step)
+
+
+def test_a_step_of_one_takes_every_tick():
+    result = systematic_events(tape(walk(range(4))), step=1)
+    assert result["signal_index"].to_list() == [0, 1, 2, 3, 0, 1, 2, 3]

@@ -497,3 +497,13 @@ def test_a_step_that_cannot_work_is_refused(step):
 def test_a_step_of_one_takes_every_tick():
     result = systematic_events(tape(walk(range(4))), step=1)
     assert result["signal_index"].to_list() == [0, 1, 2, 3, 0, 1, 2, 3]
+
+
+# --- the package ---------------------------------------------------------------------------------------
+
+def test_the_package_exports_the_rolling_footprint_api():
+    import orderflow.market as market
+    import orderflow.market.microstructure as microstructure
+
+    for name in ("find_rolling_stacked_imbalances", "forward_moves_by_tick", "systematic_events"):
+        assert hasattr(microstructure, name) and hasattr(market, name), name

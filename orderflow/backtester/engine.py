@@ -71,6 +71,68 @@ except ImportError:  # pragma: no cover
         return _wrapper
 
 
+class _StringBlocks:
+    """
+    Element reads of a pandas string array, converted to Python strings a block at a time.
+
+    pandas keeps strings in an Arrow-backed array whose element read costs microseconds, and the
+    Python loop reads one element per tick in position. Converting the whole column at once reads
+    fast but builds a Python string per row, about 50 bytes each: gigabytes on a full tick file
+    that the loop never needed. A block at a time costs neither. Each element stays what reading
+    it from the array gives: the same ``str``, or the dtype's own missing value.
+    """
+    __slots__ = ("_values", "_start", "_stop", "_block")
+    SIZE = 1024
+
+    def __init__(self, values):
+        self._values = values
+        self._start = self._stop = 0
+        self._block = ()
+
+    def __getitem__(self, i):
+        if not self._start <= i < self._stop:
+            self._block = np.asarray(self._values[i:i + self.SIZE], dtype=object)
+            self._start, self._stop = i, i + len(self._block)
+        return self._block[i - self._start]
+
+
+def _plain_strings(values):
+    """A pandas string column behind ``_StringBlocks``, anything else untouched."""
+    if isinstance(getattr(values, "dtype", None), pd.StringDtype):
+        return _StringBlocks(values)
+    return values
+
+
+def _push_prices(buffer, length, prices, start, stop):
+    """
+    The price-history buffer after the per-tick update has run for ticks ``start`` .. ``stop - 1``.
+
+    That update appends while the buffer fills and then shifts it left by one for each new price.
+    Several ticks at once leave the same content, whatever the buffer held before, and return the
+    new fill length. One tick is that update itself.
+    """
+    window = buffer.shape[0]
+    count = stop - start
+    if count < 2:
+        for k in range(start, stop):
+            if length < window:
+                buffer[length] = prices[k]
+                length += 1
+            else:
+                buffer[:-1] = buffer[1:]
+                buffer[-1] = prices[k]
+        return length
+    if count >= window:  # (at count == window the lines below would write the same)
+        buffer[:] = prices[stop - window:stop]
+        return window
+    overflow = length + count - window
+    if overflow > 0:  # the oldest prices leave
+        buffer[:length - overflow] = buffer[overflow:length]
+        length -= overflow
+    buffer[length:length + count] = prices[start:stop]
+    return length + count
+
+
 # ======================================================================== #
 #  Numba-accelerated inner loop (pure TP/SL — no custom strategy)          #
 # ======================================================================== #
@@ -750,17 +812,19 @@ class BacktestEngine:
         signal_ptr = 0
         pos = PositionState()
 
-        # Price history ring buffer
+        # Price history ring buffer. The exit strategy is handed the buffer itself, so it stays the
+        # one array it always was; ``hist_next`` is the first tick not pushed into it yet.
         hist_window = self.price_history_window
         price_history = np.empty(hist_window, dtype=np.float64)
         hist_len = 0
+        hist_next = 0
 
         # Pre-extract indicator arrays
         ind_arrays: Dict[str, np.ndarray] = {}
         if indicator_columns:
             for col in indicator_columns:
                 if col in data.columns:
-                    ind_arrays[col] = data[col].values
+                    ind_arrays[col] = _plain_strings(data[col].values)
 
         # Optional bid/ask
         has_bid = "Bid" in data.columns
@@ -770,23 +834,38 @@ class BacktestEngine:
 
         # Session type
         has_session = "SessionType" in data.columns
-        session_types = data["SessionType"].values if has_session else np.full(n, "")
+        session_types = _plain_strings(data["SessionType"].values) if has_session else np.full(n, "")
+        dates = _plain_strings(dates)
 
-        iterator = tqdm(range(n), desc="Backtesting", disable=not self.progress_bar)
+        # Every tick carrying a signal consumes one signal slot, so while slots remain the next
+        # signal tick is ``entry_positions[signal_ptr]``.
+        entry_positions = np.flatnonzero(entry_mask)
+        n_entries = min(len(signal_sides), entry_positions.size)
 
-        for i in iterator:
-            price = prices[i]
+        progress = tqdm(total=n, desc="Backtesting", disable=not self.progress_bar)
+        reported = 0
 
-            # Update rolling price history
-            if hist_len < hist_window:
-                price_history[hist_len] = price
-                hist_len += 1
-            else:
-                price_history[:-1] = price_history[1:]
-                price_history[-1] = price
+        if n:
+            # the first tick enters the buffer whether or not anything ever trades
+            hist_len = _push_prices(price_history, hist_len, prices, 0, 1)
+            hist_next = 1
+
+        i = 0
+        while i < n:
+            if i - reported >= 8192:
+                progress.update(i - reported)
+                reported = i
 
             # ---- Not in position: try entry ----
             if pos.is_flat:
+                # Nothing can happen before the next signal tick: go straight to it.
+                if signal_ptr >= n_entries:
+                    break
+                i = int(entry_positions[signal_ptr])
+                price = prices[i]
+                hist_len = _push_prices(price_history, hist_len, prices, hist_next, i + 1)
+                hist_next = i + 1
+
                 if entry_mask[i] and signal_ptr < len(signal_sides):
                     side_code = signal_sides[signal_ptr]
                     side = Side.LONG if side_code == 2 else Side.SHORT
@@ -825,14 +904,27 @@ class BacktestEngine:
                         exit_strategy.on_entry(tick_obj, pos)
 
                     signal_ptr += 1
+                    i += 1
                     continue
 
                 # Advance signal pointer for stale entries
                 if entry_mask[i] and signal_ptr < len(signal_sides):
                     signal_ptr += 1
+                i += 1
                 continue
 
             # ---- In position: evaluate risk + strategy ----
+            price = prices[i]
+
+            # Update rolling price history (every tick before this one is in it)
+            if hist_len < hist_window:
+                price_history[hist_len] = price
+                hist_len += 1
+            else:
+                price_history[:-1] = price_history[1:]
+                price_history[-1] = price
+            hist_next = i + 1
+
             # Consume signal slot for entry_mask hits while in position
             if entry_mask[i] and signal_ptr < len(signal_sides):
                 signal_ptr += 1
@@ -906,6 +998,11 @@ class BacktestEngine:
                     exit_strategy.on_exit(tick_obj, pos, exit_signal.reason)
 
                 pos.reset()
+
+            i += 1
+
+        progress.update(n - reported)
+        progress.close()
 
         # --- Close dangling position at end of data ---
         if not pos.is_flat:

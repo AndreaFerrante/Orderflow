@@ -1474,9 +1474,11 @@ def get_market_evening_session(data: pd.DataFrame | polars.DataFrame, ticker: st
 
     elif isinstance(data, pd.DataFrame):
 
+        # one pass: ``dt.time`` builds a Python ``time`` object per row, and it was asked for four times
+        time_of_day = data.Datetime.dt.time
         condlist = [
-            (data.Datetime.dt.time >= start_time) & (data.Datetime.dt.time <= end_time),
-            (data.Datetime.dt.time <= start_time) | (data.Datetime.dt.time >= end_time)
+            (time_of_day >= start_time) & (time_of_day <= end_time),
+            (time_of_day <= start_time) | (time_of_day >= end_time)
         ]
         choicelist = ["RTH", "ETH"]
 

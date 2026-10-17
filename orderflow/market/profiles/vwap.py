@@ -4,6 +4,8 @@ import math
 from tqdm import tqdm
 from orderflow.core.configuration import *
 from orderflow.core.exceptions import SessionTypeAbsent
+from orderflow.core._kernel_calls import run_kernel as _run_kernel
+from orderflow.market.profiles import _session_kernels as _kernels
 
 
 def get_vwap(data: pd.DataFrame) -> pd.DataFrame:
@@ -18,6 +20,31 @@ def get_vwap(data: pd.DataFrame) -> pd.DataFrame:
 
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
+
+    # Numba kernel; the loop below stays as its reference and as the path for a frame the kernel
+    # does not reproduce exactly (see ``_session_kernels.session_arrays``).
+    arrays = _kernels.session_arrays(data, with_levels=False)
+    if arrays is None:
+        return _get_vwap_py(data)
+    price, volume, reset, _, _ = arrays
+    # A session opening on a zero-volume tick divides 0 by 0: the loop warns there, so it keeps it.
+    if volume[0] == 0 or (volume[reset] == 0).any():
+        return _get_vwap_py(data)
+    offsets = np.array([VWAP_BAND_OFFSET_1, VWAP_BAND_OFFSET_2, VWAP_BAND_OFFSET_3, VWAP_BAND_OFFSET_4],
+                       dtype=np.float64)
+    with tqdm(total=len(price) - 1) as bar:
+        vwap, top, bottom = _run_kernel(
+            _kernels.session_vwap, price, volume, reset, offsets, ticks=len(price), bar=bar
+        )
+    return pd.DataFrame({'vwap': vwap,
+                         'vwap_sd1_top': top[0], 'vwap_sd1_bottom': bottom[0],
+                         'vwap_sd2_top': top[1], 'vwap_sd2_bottom': bottom[1],
+                         'vwap_sd3_top': top[2], 'vwap_sd3_bottom': bottom[2],
+                         'vwap_sd4_top': top[3], 'vwap_sd4_bottom': bottom[3]})
+
+
+def _get_vwap_py(data: pd.DataFrame) -> pd.DataFrame:
+    """Reference loop of :func:`get_vwap`."""
 
     price     = np.array(data.Price)
     volume    = np.array(data.Volume)

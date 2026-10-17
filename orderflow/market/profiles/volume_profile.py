@@ -11,6 +11,13 @@ except ImportError:
     from orderflow.core.exceptions import SessionTypeAbsent
     from orderflow.core.configuration import *
     from orderflow.market.profiles.volume_profile_kde import gaussian_kde, gaussian_kde_numba_parallel, get_kde_high_low_price_peaks, gaussian_kde_sliding_window
+from orderflow.core._kernel_calls import run_kernel as _run_kernel
+from orderflow.market.profiles import _session_kernels as _kernels
+
+# The session functions below run a Numba kernel (``_session_kernels``) and keep their original
+# pure-Python loop as ``_<name>_py``: it is the reference the kernel is tested against, and the
+# path taken for every input the kernel is not known to reproduce (``_session_kernels.session_arrays``),
+# so that such an input still returns, raises, prints and warns as it always did.
 
 
 def get_dynamic_cumulative_delta(data: pd.DataFrame) -> pd.DataFrame:
@@ -265,9 +272,26 @@ def get_dynamic_cumulative_delta_per_session(data: pd.DataFrame) -> pd.DataFrame
     """
     
     print(f'Get dynamic cumulative delta per session...')
-    
+
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
+
+    arrays = _kernels.session_arrays(data, with_levels=False)
+    trade_type = None if arrays is None else _kernels.numeric_column(data, "TradeType")
+    if trade_type is None:
+        return _get_dynamic_cumulative_delta_per_session_py(data)
+    _, volume, reset, _, _ = arrays
+    with tqdm(total=len(volume) - 1) as bar:
+        cd_ask, cd_bid, total = _run_kernel(
+            _kernels.cumulative_delta, volume, trade_type == 1, reset, ticks=len(volume), bar=bar
+        )
+    return pd.DataFrame({'CD_Ask':   cd_ask,
+                         'CD_Bid':   cd_bid,
+                         'CD_Total': total})
+
+
+def _get_dynamic_cumulative_delta_per_session_py(data: pd.DataFrame) -> pd.DataFrame:
+    """Reference loop of :func:`get_dynamic_cumulative_delta_per_session`."""
 
     price          = np.array(data.Price)
     volume         = np.array(data.Volume)
@@ -331,6 +355,19 @@ def get_daily_session_moving_POC(data: pd.DataFrame) -> np.array:
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
+    arrays = _kernels.session_arrays(data)
+    if arrays is None:
+        return _get_daily_session_moving_POC_py(data)
+    _, volume, reset, level, levels = arrays
+    poc, prev_poc = np.zeros(len(volume)), np.zeros(len(volume))
+    with tqdm(total=len(volume) - 1) as bar:
+        _run_kernel(_kernels.moving_poc, volume, reset, level, levels, poc, prev_poc, ticks=len(volume), bar=bar)
+    return poc, prev_poc
+
+
+def _get_daily_session_moving_POC_py(data: pd.DataFrame) -> np.array:
+    """Reference loop of :func:`get_daily_session_moving_POC`."""
+
     volume    = np.array(data.Volume)
     price     = np.array(data.Price)
     session   = np.array(data.SessionType)
@@ -379,6 +416,22 @@ def get_volume_profile_areas(data: pd.DataFrame) -> np.array:
 
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
+
+    arrays = _kernels.session_arrays(data)
+    if arrays is None:
+        return _get_volume_profile_areas_py(data)
+    _, volume, reset, level, _ = arrays
+    with tqdm(total=len(volume) - 1) as bar:
+        labels = _run_kernel(
+            _kernels.value_area_labels, volume, level, _kernels.session_starts(reset), VALUE_AREA,
+            ticks=len(volume), bar=bar,
+        )
+    # '<U2' on purpose: the reference writes 'POC' into an array of 'na', which keeps 'PO'.
+    return np.array(['na', 'PO', 'VA'])[labels]
+
+
+def _get_volume_profile_areas_py(data: pd.DataFrame) -> np.array:
+    """Reference loop of :func:`get_volume_profile_areas`."""
 
     price          = np.array(data.Price)
     volume         = np.array(data.Volume)
@@ -513,6 +566,40 @@ def get_volume_profile_peaks_valleys(
 
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
+
+    # ``fast`` asks for the truncated sliding-window density: a different, approximate result
+    # that only the reference loop produces.
+    arrays = None if fast else _kernels.session_arrays(data)
+    if arrays is None or not _kernels.kde_parameters_ok(arrays[0], tick_size, kde_bandwidth):
+        return _get_volume_profile_peaks_valleys_py(data, tick_size, fast, kde_bandwidth)
+    _, volume, reset, level, levels = arrays
+    # ponytail: a session of more than KDE_TABLE_MAX_LEVELS price levels calls exp() for every term:
+    # the 2,586-level session of the 56.8M-tick file takes 36 s alone, the KDE of the whole file. A
+    # higher cap is faster at levels**2 * 8 bytes per thread (53 MB there); measure memory first.
+    starts = _kernels.session_starts(reset)
+    labels = np.zeros(len(volume))
+    with tqdm(total=len(range(1, len(volume) - 1))) as bar:
+        unresolved = _run_kernel(
+            _kernels.peaks_valleys,
+            volume, level, levels, starts, float(tick_size), float(kde_bandwidth),
+            _kernels.KDE_TABLE_MAX_LEVELS, _kernels.get_num_threads(), labels,
+            ticks=len(volume), bar=bar, slots=len(starts),
+        )
+        bar.leave = not unresolved  # the loop below draws its own
+    if unresolved:
+        # The loop prints two lines for each of these ticks (a tick size too small for the data does
+        # it); only the loop knows what goes in them, so it runs and prints them.
+        return _get_volume_profile_peaks_valleys_py(data, tick_size, fast, kde_bandwidth)
+    return labels
+
+
+def _get_volume_profile_peaks_valleys_py(
+    data: pd.DataFrame,
+    tick_size: float = 0.25,
+    fast: bool = False,
+    kde_bandwidth: float = KDE_VARIANCE_VALUE,
+) -> np.array:
+    """Reference loop of :func:`get_volume_profile_peaks_valleys`."""
 
     price          = np.array(data.Price)
     volume         = np.array(data.Volume)
@@ -658,9 +745,22 @@ def get_daily_high_and_low_by_session(data: pd.DataFrame):
     
 
     print(f'Get daily high and low prices by session...')
-    
+
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
+
+    arrays = _kernels.session_arrays(data, with_levels=False, with_volume=False)
+    if arrays is None:
+        return _get_daily_high_and_low_by_session_py(data)
+    price, _, reset, _, _ = arrays
+    lows, highs = np.zeros(len(price)), np.zeros(len(price))
+    with tqdm(total=len(price) - 1) as bar:
+        _run_kernel(_kernels.session_low_high, price, reset, lows, highs, ticks=len(price), bar=bar)
+    return lows, highs
+
+
+def _get_daily_high_and_low_by_session_py(data: pd.DataFrame):
+    """Reference loop of :func:`get_daily_high_and_low_by_session`."""
 
     price       = np.array(data.Price)
     session     = np.array(data.SessionType)
@@ -703,11 +803,28 @@ def get_volume_profile_node_volume(data: pd.DataFrame):
     if 'SessionType' not in data.columns:
         raise SessionTypeAbsent('No SessionType column present into the DataFrame passed. Execution stops.')
 
+    arrays = _kernels.session_arrays(data)
+    trade_type = None if arrays is None else _kernels.numeric_column(data, "TradeType")
+    if trade_type is None:
+        return _get_volume_profile_node_volume_py(data)
+    _, volume, reset, level, levels = arrays
+    node, slot_1, slot_2, session_volume = (np.zeros(len(volume)) for _ in range(4))
+    with tqdm(total=len(volume) - 1) as bar:
+        _run_kernel(
+            _kernels.node_volume, volume, trade_type == 1, trade_type == 2, reset, level, levels.size,
+            node, slot_1, slot_2, session_volume, ticks=len(volume), bar=bar,
+        )
+    return node, slot_1, slot_2, session_volume
+
+
+def _get_volume_profile_node_volume_py(data: pd.DataFrame):
+    """Reference loop of :func:`get_volume_profile_node_volume`."""
+
     volume = np.array(data.Volume)
     price = np.array(data.Price)
     trade_type = np.array(data.TradeType)
     session = np.array(data.SessionType)
-    
+
     price_vol = np.zeros(data.shape[0])
     price_ask_vol = np.zeros(data.shape[0])
     price_bid_vol = np.zeros(data.shape[0])    

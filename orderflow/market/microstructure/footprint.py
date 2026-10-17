@@ -4,6 +4,8 @@ import pandas as pd
 import numpy as np
 import polars as pl
 
+from orderflow.core import _kernel_calls
+
 
 def _buy_flag(ask, bid, p, ratio, eps):
     """Buy imbalance at level ``p``: ask at P against bid one level BELOW.
@@ -277,6 +279,288 @@ def _detect(
     )
 
 
+# ---------------------------------------------------------------------------
+# Numba path of ``_detect``. The Python functions above stay as the reference
+# (and as the API the tests call level by level); ``tests/test_footprint_kernel.py``
+# holds the two equal on random tapes.
+# ---------------------------------------------------------------------------
+
+# The look-out of a kernel: see ``orderflow.core._kernel_calls.run_kernel``.
+_LOOK = _kernel_calls.WATCH_EVERY - 1
+
+
+@_kernel_calls.cached_njit()
+def _flag_kernel(ask, bid, p, direction, ratio, eps):
+    """``_flag_at``: the buy flag at ``p`` for direction 1, the sell flag otherwise."""
+    if p < 1 or p >= ask.shape[0] - 1:
+        return False
+    if direction == 1:
+        if bid[p - 1] <= 0 and ask[p - 1] <= 0:
+            return False
+        return ask[p] >= ratio * (bid[p - 1] + eps)
+    if ask[p + 1] <= 0 and bid[p + 1] <= 0:
+        return False
+    return bid[p] >= ratio * (ask[p + 1] + eps)
+
+
+@_kernel_calls.cached_njit()
+def _scan_stack_kernel(
+    ask, bid, p, direction, ratio, n_consecutive,
+    min_diagonal_volume, min_winning_volume, min_level_diagonal_volume, eps,
+):
+    """``_scan_stack``: ``(lo, hi, diagonal_volume, winning_volume)`` of the run at ``p``, or ``(-1, -1, 0, 0)``."""
+    n = ask.shape[0]
+    if p < 1 or p >= n - 1:
+        return -1, -1, 0.0, 0.0
+    if not _flag_kernel(ask, bid, p, direction, ratio, eps):
+        return -1, -1, 0.0, 0.0
+
+    lo = p
+    while lo - 1 >= 1 and _flag_kernel(ask, bid, lo - 1, direction, ratio, eps):
+        lo -= 1
+    hi = p
+    while hi + 1 < n - 1 and _flag_kernel(ask, bid, hi + 1, direction, ratio, eps):
+        hi += 1
+
+    if (hi - lo + 1) < n_consecutive:
+        return -1, -1, 0.0, 0.0
+
+    total = 0.0
+    winning = 0.0
+    for lvl in range(lo, hi + 1):
+        if direction == 1:
+            pair = ask[lvl] + bid[lvl - 1]
+            won = ask[lvl]
+        else:
+            pair = bid[lvl] + ask[lvl + 1]
+            won = bid[lvl]
+        if pair < min_level_diagonal_volume:
+            return -1, -1, 0.0, 0.0
+        total += pair
+        winning += won
+
+    if total < min_diagonal_volume:
+        return -1, -1, 0.0, 0.0
+    if winning < min_winning_volume:
+        return -1, -1, 0.0, 0.0
+    return lo, hi, total, winning
+
+
+@_kernel_calls.cached_njit(nogil=True)
+def _detect_kernel(
+    prices, volumes, trade_types, bar_ids, session_ids,
+    tick_size, ratio, n_consecutive, min_diagonal_volume, min_winning_volume,
+    min_level_diagonal_volume, require_breakout, eps, ladder_width, watch, slot,
+):
+    """
+    The tick loop of ``_detect``: one row per signal, in the order the reference emits them.
+
+    Returns ``(row, direction, lo, hi, lo_price, hi_price, diagonal_volume, winning_volume, overflow)``.
+    Slot 0 of the armed / pending tables is the buy side (direction 1), slot 1 the sell side.
+    """
+    n = prices.shape[0]
+    half = ladder_width // 2
+    bid = np.zeros(ladder_width, dtype=np.float64)
+    ask = np.zeros(ladder_width, dtype=np.float64)
+
+    capacity = 1024
+    out_row = np.empty(capacity, np.int64)
+    out_dir = np.empty(capacity, np.int64)
+    out_lo = np.empty(capacity, np.int64)
+    out_hi = np.empty(capacity, np.int64)
+    out_lo_px = np.empty(capacity, np.float64)
+    out_hi_px = np.empty(capacity, np.float64)
+    out_vol = np.empty(capacity, np.float64)
+    out_win = np.empty(capacity, np.float64)
+    n_out = 0
+
+    # Armed ranges of one direction never overlap, so there are at most ``ladder_width`` of them.
+    armed_lo = np.empty((2, ladder_width), np.int64)
+    armed_hi = np.empty((2, ladder_width), np.int64)
+    n_armed = np.zeros(2, np.int64)
+
+    pending_capacity = 64
+    pending_lo = np.empty((2, pending_capacity), np.int64)
+    pending_hi = np.empty((2, pending_capacity), np.int64)
+    pending_vol = np.empty((2, pending_capacity), np.float64)
+    pending_win = np.empty((2, pending_capacity), np.float64)
+    n_pending = np.zeros(2, np.int64)
+
+    origin = 0.0
+    overflow = 0
+
+    for i in range(n):
+        if i & _LOOK == 0:
+            if watch[0] != 0:
+                break  # told to stop: the caller throws the rows away
+            watch[slot] = i
+        if i == 0 or bar_ids[i] != bar_ids[i - 1] or session_ids[i] != session_ids[i - 1]:
+            bid[:] = 0.0
+            ask[:] = 0.0
+            origin = prices[i]
+            n_armed[:] = 0  # as in the reference; an empty ladder flags nothing, so they would drop anyway
+            n_pending[:] = 0
+
+        p = int(np.rint((prices[i] - origin) / tick_size)) + half
+        if p < 1 or p >= ladder_width - 1:
+            overflow += 1
+            continue
+
+        if trade_types[i] == 2:
+            ask[p] += volumes[i]
+        elif trade_types[i] == 1:
+            bid[p] += volumes[i]
+
+        # Breakout confirmation: a pending stack signals on the first print strictly beyond it.
+        if require_breakout and i + 1 < n:
+            for d in range(2):
+                direction = 1 - 2 * d
+                kept = 0
+                for k in range(n_pending[d]):
+                    lo_p = pending_lo[d, k]
+                    hi_p = pending_hi[d, k]
+                    broke = (p > hi_p) if direction == 1 else (p < lo_p)
+                    if broke:
+                        if n_out == capacity:
+                            capacity *= 2
+                            out_row = _grown(out_row, capacity)
+                            out_dir = _grown(out_dir, capacity)
+                            out_lo = _grown(out_lo, capacity)
+                            out_hi = _grown(out_hi, capacity)
+                            out_lo_px = _grown(out_lo_px, capacity)
+                            out_hi_px = _grown(out_hi_px, capacity)
+                            out_vol = _grown(out_vol, capacity)
+                            out_win = _grown(out_win, capacity)
+                        out_row[n_out] = i
+                        out_dir[n_out] = direction
+                        out_lo[n_out] = lo_p
+                        out_hi[n_out] = hi_p
+                        out_lo_px[n_out] = origin + (lo_p - half) * tick_size
+                        out_hi_px[n_out] = origin + (hi_p - half) * tick_size
+                        out_vol[n_out] = pending_vol[d, k]
+                        out_win[n_out] = pending_win[d, k]
+                        n_out += 1
+                    else:
+                        pending_lo[d, kept] = lo_p
+                        pending_hi[d, kept] = hi_p
+                        pending_vol[d, kept] = pending_vol[d, k]
+                        pending_win[d, kept] = pending_win[d, k]
+                        kept += 1
+                n_pending[d] = kept
+
+        for d in range(2):
+            direction = 1 - 2 * d
+
+            # drop any armed range whose stack has broken
+            kept = 0
+            for k in range(n_armed[d]):
+                lo_a = armed_lo[d, k]
+                hi_a = armed_hi[d, k]
+                holds = True
+                for lvl in range(lo_a, hi_a + 1):
+                    if not _flag_kernel(ask, bid, lvl, direction, ratio, eps):
+                        holds = False
+                        break
+                if holds:
+                    armed_lo[d, kept] = lo_a
+                    armed_hi[d, kept] = hi_a
+                    kept += 1
+            n_armed[d] = kept
+
+            # a tick at p can only move the flags at p and at the next level on the aggressor's side
+            for step in range(2):
+                cand = p + step * direction
+                lo, hi, vol, win = _scan_stack_kernel(
+                    ask, bid, cand, direction, ratio, n_consecutive,
+                    min_diagonal_volume, min_winning_volume, min_level_diagonal_volume, eps,
+                )
+                if lo < 0:
+                    continue
+                overlaps = False
+                for k in range(n_armed[d]):
+                    if not (hi < armed_lo[d, k] or lo > armed_hi[d, k]):
+                        overlaps = True
+                        break
+                if overlaps:
+                    continue
+                if i + 1 >= n:
+                    continue
+                armed_lo[d, n_armed[d]] = lo
+                armed_hi[d, n_armed[d]] = hi
+                n_armed[d] += 1
+                if require_breakout:
+                    if n_pending[d] == pending_capacity:
+                        pending_capacity *= 2
+                        pending_lo = _grown_rows(pending_lo, pending_capacity)
+                        pending_hi = _grown_rows(pending_hi, pending_capacity)
+                        pending_vol = _grown_rows(pending_vol, pending_capacity)
+                        pending_win = _grown_rows(pending_win, pending_capacity)
+                    pending_lo[d, n_pending[d]] = lo
+                    pending_hi[d, n_pending[d]] = hi
+                    pending_vol[d, n_pending[d]] = vol
+                    pending_win[d, n_pending[d]] = win
+                    n_pending[d] += 1
+                else:
+                    if n_out == capacity:
+                        capacity *= 2
+                        out_row = _grown(out_row, capacity)
+                        out_dir = _grown(out_dir, capacity)
+                        out_lo = _grown(out_lo, capacity)
+                        out_hi = _grown(out_hi, capacity)
+                        out_lo_px = _grown(out_lo_px, capacity)
+                        out_hi_px = _grown(out_hi_px, capacity)
+                        out_vol = _grown(out_vol, capacity)
+                        out_win = _grown(out_win, capacity)
+                    out_row[n_out] = i
+                    out_dir[n_out] = direction
+                    out_lo[n_out] = lo
+                    out_hi[n_out] = hi
+                    out_lo_px[n_out] = origin + (lo - half) * tick_size
+                    out_hi_px[n_out] = origin + (hi - half) * tick_size
+                    out_vol[n_out] = vol
+                    out_win[n_out] = win
+                    n_out += 1
+
+    return (
+        out_row[:n_out], out_dir[:n_out], out_lo[:n_out], out_hi[:n_out],
+        out_lo_px[:n_out], out_hi_px[:n_out], out_vol[:n_out], out_win[:n_out], overflow,
+    )
+
+
+@_kernel_calls.cached_njit()
+def _grown(values, capacity):
+    """``values`` copied into a longer array of the same type."""
+    bigger = np.empty(capacity, values.dtype)
+    bigger[:values.shape[0]] = values
+    return bigger
+
+
+@_kernel_calls.cached_njit()
+def _grown_rows(values, capacity):
+    """Each row of ``values`` copied into a longer row."""
+    bigger = np.empty((values.shape[0], capacity), values.dtype)
+    bigger[:, :values.shape[1]] = values
+    return bigger
+
+
+def _detect_fast(
+    prices, volumes, trade_types, bar_ids, session_ids, indices,
+    tick_size, ratio, n_consecutive, min_diagonal_volume, min_winning_volume,
+    min_level_diagonal_volume, require_breakout, eps, ladder_width, watch, slot,
+):
+    """``_detect`` through the Numba kernel: its arguments and the kernel's look-out, the same eleven
+    results as arrays."""
+    rows, direction, lo, hi, lo_px, hi_px, vol, win, overflow = _detect_kernel(
+        prices, volumes, trade_types, bar_ids, session_ids,
+        tick_size, ratio, n_consecutive, min_diagonal_volume, min_winning_volume,
+        min_level_diagonal_volume, require_breakout, eps, ladder_width, watch, slot,
+    )
+    return (
+        indices[rows], indices[rows + 1], direction, hi - lo + 1,
+        lo_px, hi_px, vol, win, bar_ids[rows], rows, int(overflow),
+    )
+
+
 def find_stacked_imbalances(
     ticks: pl.DataFrame,
     tick_size: float,
@@ -365,7 +649,7 @@ def find_stacked_imbalances(
     bar_ids = ticks[bar_id_col].to_numpy()
     session_codes = ticks["SessionType"].cast(pl.Categorical).to_physical().to_numpy()
 
-    (sig, ent, dirs, levels, lo_px, hi_px, vols, wins, bars, rows, overflow) = _detect(
+    arguments = (
         ticks["Price"].to_numpy().astype(np.float64),
         ticks["Volume"].to_numpy().astype(np.float64),
         ticks["TradeType"].to_numpy().astype(np.int64),
@@ -377,6 +661,20 @@ def find_stacked_imbalances(
         float(min_level_diagonal_volume), bool(require_breakout),
         float(eps), int(ladder_width),
     )
+    # The kernel takes the ticks it places on the ladder exactly as the reference loop does: a
+    # finite tick size, a price range that is a number of ticks an int64 holds (a NaN or infinite
+    # price fails that comparison), a ladder of at least one usable level. On anything else the
+    # loop raises or counts in its own way. Without Numba (this file loaded on its own) there is
+    # no kernel.
+    prices, tick, width = arguments[0], arguments[6], arguments[-1]
+    kernel_places_them = (
+        _kernel_calls.njit is not None and width >= 3 and np.isfinite(tick)
+        and (prices.size == 0 or (prices.max() - prices.min()) / tick < 2.0 ** 62)
+    )
+    (sig, ent, dirs, levels, lo_px, hi_px, vols, wins, bars, rows, overflow) = (
+        _kernel_calls.run_kernel(_detect_fast, *arguments, ticks=prices.size) if kernel_places_them
+        else _detect(*arguments)
+    )
 
     if overflow:
         warnings.warn(
@@ -386,7 +684,6 @@ def find_stacked_imbalances(
             stacklevel=2,
         )
 
-    datetimes = ticks["Datetime"].to_list()
     return pl.DataFrame(
         {
             "signal_index": pl.Series(sig, dtype=pl.Int64),
@@ -398,8 +695,10 @@ def find_stacked_imbalances(
             "diagonal_volume": pl.Series(vols, dtype=pl.Float64),
             "winning_volume": pl.Series(wins, dtype=pl.Float64),
             "bar_id": pl.Series(bars, dtype=pl.Int64),
+            # Through Python values, as ever (a nanosecond column loses what is below the microsecond),
+            # but for the trigger ticks only: converting every tick took longer than the scan.
             "Datetime": pl.Series(
-                [datetimes[r] for r in rows], dtype=ticks["Datetime"].dtype
+                ticks["Datetime"].gather(np.asarray(rows, dtype=np.int64)).to_list(), dtype=ticks["Datetime"].dtype
             ),
         }
     ).sort("entry_index")

@@ -5,6 +5,8 @@ import numpy as np
 import polars as pl
 import pandas as pd
 
+from orderflow.core import _kernel_calls
+
 
 def _get_datetime_fixed_pl(df: pl.DataFrame) -> pl.DataFrame:
     """Convert Date and Time columns to Datetime in Polars DataFrame."""
@@ -452,13 +454,125 @@ def compress_to_minute_bars_pl(
     return minute_bars
 
 
+# The look-out of a kernel: see ``orderflow.core._kernel_calls.run_kernel``.
+_LOOK = _kernel_calls.WATCH_EVERY - 1
+
+
+def _bar_kernel_inputs(volumes, session_types, threshold, trade_types=None) -> bool:
+    """
+    Whether the bar-id kernels reproduce the reference loops on these inputs.
+
+    They take what ``assign_delta_bar_ids`` / ``assign_volume_bar_ids`` pass: one-dimensional NumPy
+    arrays of one length, volumes as float64 or integers, labels in an array, a plain number as the
+    threshold. The loops treat everything else in their own way (a float32 volume is summed in
+    float32, a missing threshold only matters once a tick is compared with it, a list is indexed
+    as a list), so everything else is theirs. So is every input where Numba is missing.
+    """
+    if _kernel_calls.njit is None:
+        return False
+    if isinstance(threshold, float):
+        pass
+    elif not isinstance(threshold, (int, np.integer)) or abs(threshold) > 2 ** 53:
+        return False
+    arrays = (volumes,) if trade_types is None else (volumes, trade_types)
+    if not all(isinstance(a, np.ndarray) and a.ndim == 1 and len(a) == len(volumes) for a in arrays):
+        return False
+    if volumes.dtype != np.float64 and volumes.dtype.kind not in "iub":
+        return False
+    if trade_types is not None and trade_types.dtype.kind not in "iufb":
+        return False
+    if session_types is None:
+        return True
+    return (
+        isinstance(session_types, (np.ndarray, pd.api.extensions.ExtensionArray))
+        and session_types.ndim == 1 and len(session_types) == len(volumes)
+    )
+
+
+def _session_flags(session_types, n):
+    """
+    Per tick: ``(changed, leaves_rth)`` -- does its label differ from the one before, and is that a
+    step out of ``"RTH"``. ``None`` when a pandas array holds a missing label: how that compares is
+    the array's own business (NaN differs from NaN, ``pd.NA`` refuses to answer), so the loop asks it.
+    """
+    changed = np.zeros(n, dtype=np.bool_)
+    leaves_rth = np.zeros(n, dtype=np.bool_)
+    if session_types is None:
+        return changed, leaves_rth
+    if isinstance(session_types, np.ndarray):
+        session = session_types if session_types.dtype == object else session_types.astype(object)
+        changed[1:] = session[1:] != session[:-1]
+        leaves_rth[1:] = (session[:-1] == "RTH") & (session[1:] != "RTH")
+        return changed, leaves_rth
+    # A pandas array: integer codes, not a Python string per tick (about 50 bytes each, where the
+    # loop only ever held one label at a time).
+    codes, labels = pd.factorize(session_types)
+    if (codes < 0).any():
+        return None
+    is_rth = np.array([label == "RTH" for label in labels], dtype=np.bool_)
+    changed[1:] = codes[1:] != codes[:-1]
+    leaves_rth[1:] = is_rth[codes[:-1]] & ~is_rth[codes[1:]]
+    return changed, leaves_rth
+
+
+@_kernel_calls.cached_njit(nogil=True)
+def _delta_bar_kernel(is_buy, volumes, leaves_rth, delta_threshold, watch, slot):
+    """Bar id of every tick and whether that bar closed on the delta threshold."""
+    n = volumes.size
+    bar_ids = np.empty(n, np.int64)
+    complete = np.empty(n, np.bool_)
+    closed = np.zeros(2 * n + 1, np.bool_)  # a tick can open a bar and close one: ids stay below 2n
+    current_bar = 0
+    running_delta = 0.0
+    for i in range(n):
+        if i & _LOOK == 0:
+            if watch[0] != 0:
+                return bar_ids, complete  # told to stop: the caller throws them away
+            watch[slot] = i
+        if leaves_rth[i]:
+            current_bar += 1
+            running_delta = 0.0
+        if is_buy[i]:
+            running_delta += volumes[i]
+        else:
+            running_delta -= volumes[i]
+        bar_ids[i] = current_bar
+        # bars close on the size of the delta: its sign above is for the reader, no output depends on it
+        if abs(running_delta) >= delta_threshold:
+            closed[current_bar] = True
+            current_bar += 1
+            running_delta = 0.0
+    for i in range(n):
+        complete[i] = closed[bar_ids[i]]
+    return bar_ids, complete
+
+
 def _compute_delta_bar_ids(
     trade_types: np.ndarray,
     volumes: np.ndarray,
     session_types: Optional[np.ndarray],
     delta_threshold: float,
 ) -> tuple:
-    """Core loop: assign bar IDs based on running ask-minus-bid delta."""
+    """Assign bar IDs based on running ask-minus-bid delta (``_compute_delta_bar_ids_py`` is the reference loop)."""
+    flags = None
+    if _bar_kernel_inputs(volumes, session_types, delta_threshold, trade_types):
+        flags = _session_flags(session_types, len(trade_types))
+    if flags is None:
+        return _compute_delta_bar_ids_py(trade_types, volumes, session_types, delta_threshold)
+    return _kernel_calls.run_kernel(
+        _delta_bar_kernel,
+        trade_types == 2, np.ascontiguousarray(volumes, dtype=np.float64), flags[1], float(delta_threshold),
+        ticks=len(volumes),
+    )
+
+
+def _compute_delta_bar_ids_py(
+    trade_types: np.ndarray,
+    volumes: np.ndarray,
+    session_types: Optional[np.ndarray],
+    delta_threshold: float,
+) -> tuple:
+    """Reference loop of :func:`_compute_delta_bar_ids`."""
     n = len(trade_types)
     bar_ids = np.empty(n, dtype=np.int64)
 
@@ -537,12 +651,57 @@ def assign_delta_bar_ids(
     return df
 
 
+@_kernel_calls.cached_njit(nogil=True)
+def _volume_bar_kernel(volumes, new_session, volume_threshold, watch, slot):
+    """Bar id of every tick and whether that bar closed on the volume threshold."""
+    n = volumes.size
+    bar_ids = np.empty(n, np.int64)
+    complete = np.empty(n, np.bool_)
+    closed = np.zeros(2 * n + 1, np.bool_)  # a tick can open a bar and close one: ids stay below 2n
+    current_bar = 0
+    running = 0.0
+    for i in range(n):
+        if i & _LOOK == 0:
+            if watch[0] != 0:
+                return bar_ids, complete  # told to stop: the caller throws them away
+            watch[slot] = i
+        if new_session[i]:
+            current_bar += 1
+            running = 0.0
+        running += volumes[i]
+        bar_ids[i] = current_bar
+        if running >= volume_threshold:
+            closed[current_bar] = True
+            current_bar += 1
+            running = 0.0
+    for i in range(n):
+        complete[i] = closed[bar_ids[i]]
+    return bar_ids, complete
+
+
 def _compute_volume_bar_ids(
     volumes: np.ndarray,
     session_types: Optional[np.ndarray],
     volume_threshold: float,
 ) -> tuple:
-    """Core loop: assign bar IDs based on running cumulative volume.
+    """Assign bar IDs based on running cumulative volume (``_compute_volume_bar_ids_py`` is the reference loop)."""
+    flags = None
+    if _bar_kernel_inputs(volumes, session_types, volume_threshold):
+        flags = _session_flags(session_types, len(volumes))
+    if flags is None:
+        return _compute_volume_bar_ids_py(volumes, session_types, volume_threshold)
+    return _kernel_calls.run_kernel(
+        _volume_bar_kernel, np.ascontiguousarray(volumes, dtype=np.float64), flags[0], float(volume_threshold),
+        ticks=len(volumes),
+    )
+
+
+def _compute_volume_bar_ids_py(
+    volumes: np.ndarray,
+    session_types: Optional[np.ndarray],
+    volume_threshold: float,
+) -> tuple:
+    """Reference loop: assign bar IDs based on running cumulative volume.
 
     Resets on *any* session change, unlike ``_compute_delta_bar_ids`` which
     resets only on RTH-exit (``prev_session == "RTH" and curr_session !=

@@ -112,6 +112,12 @@ class RiskManager:
         # --- update running MAE / MFE ---
         pos.update_extremes(price)
 
+        # No level configured (the exit strategy owns TP and SL): every step below does nothing and
+        # answers "stay". Only for this class itself: a subclass may have overridden a step.
+        if (type(self) is RiskManager and self.sl_ticks is None and self.tp_ticks is None
+                and self.trailing_stop_ticks is None and self.break_even_ticks is None):
+            return ExitSignal(should_exit=False)
+
         # --- dynamic levels ---
         self._update_trailing_stop(price, pos)
         self._update_break_even(price, pos)

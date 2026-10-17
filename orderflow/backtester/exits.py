@@ -44,6 +44,8 @@ from orderflow.backtester.models import (
     Tick,
 )
 
+_MINUTES = np.dtype("datetime64[m]")
+
 
 # ---------------------------------------------------------------------------
 # Abstract base
@@ -848,9 +850,10 @@ class HourBasedExit(BaseExitStrategy):
             tick_minute = raw_min % 60
 
         elif isinstance(raw, np.datetime64):
-            raw_min = raw.astype('datetime64[m]').astype(np.int64)  # minuti da epoch
-            tick_hour = int(raw_min // 60 % 24)
-            tick_minute = int(raw_min % 60)
+            # minuti da epoch; a plain int, since arithmetic on NumPy scalars costs far more
+            raw_min = int(raw.astype(_MINUTES).view(np.int64))
+            tick_hour = raw_min // 60 % 24
+            tick_minute = raw_min % 60
 
         else:
             tick_hour = raw.hour

@@ -22,6 +22,11 @@ def _edge(touch: pl.Expr) -> pl.Expr:
     return touch & ~touch.shift(1).over("Date").fill_null(False)
 
 
+def _session_ticks(ticks: pl.DataFrame | pl.LazyFrame, session: str, by: str) -> pl.LazyFrame:
+    """The ``session`` ticks of ``ticks``, sorted by ``by``."""
+    return ticks.lazy().filter(pl.col("SessionType") == session).sort(by)
+
+
 def find_vwap_band_touch_signals(
     ticks: pl.DataFrame | pl.LazyFrame,
     *,
@@ -46,9 +51,7 @@ def find_vwap_band_touch_signals(
     clock = pl.col("Datetime").dt.time()
     nxt = ("Index", "Price", "vwap_sd3_bottom", "vwap_sd3_top")
     day = (
-        ticks.lazy()
-        .filter(pl.col("SessionType") == session)
-        .sort("Index")
+        _session_ticks(ticks, session, "Index")
         .with_columns(pl.col(*nxt).shift(-1).over("Date").name.prefix("next_"))
     )
     sides = [(1, pl.col("Price") <= pl.col("vwap_sd2_bottom"), "next_vwap_sd3_bottom"),
@@ -71,4 +74,90 @@ def find_vwap_band_touch_signals(
         .sort("signal_index")
         .collect()
         .select(EVENT_COLUMNS)
+    )
+
+
+SESSION_COLUMNS = ["Date", "clean", "reason", "max_gap_minutes"]
+
+
+def _since_midnight(clock: str) -> dt.timedelta:
+    t = dt.time.fromisoformat(clock)
+    return dt.timedelta(hours=t.hour, minutes=t.minute, seconds=t.second)
+
+
+def find_clean_sessions(
+    ticks: pl.DataFrame | pl.LazyFrame,
+    *,
+    session: str = "RTH",
+    session_open: str = "08:00:00",
+    session_close: str = "13:30:00",
+    max_gap_minutes: float = 10.0,
+    anchor_time: str = "13:30:00",
+) -> pl.DataFrame:
+    """One row per ``Date`` with ``session`` ticks, sorted by ``Date``: is its VWAP trustworthy?
+
+    ``ticks`` needs ``Date``, ``Datetime``, ``SessionType`` and ``Session_Volume``. Columns: ``Date``,
+    ``clean``, ``reason`` and ``max_gap_minutes`` (the largest gap between consecutive ``session`` ticks
+    of the day; a day with one tick has 0.0). ``reason`` is the first failing check, in this order:
+    ``gap`` (``max_gap_minutes`` above the threshold), ``late_start`` (the first tick is more than
+    ``max_gap_minutes`` after ``session_open``), ``early_end`` (the last tick is more than
+    ``max_gap_minutes`` before ``session_close``), ``anchor``, else ``ok``. ``session_open`` and
+    ``session_close`` are clock times on the calendar day of the day's first tick.
+
+    ``anchor``: the VWAP must restart at ``anchor_time``. A reset is a tick whose ``Session_Volume`` is
+    below the previous tick's, over all ticks. Of the resets strictly before the day's first ``session``
+    tick, the last one must fall from ``anchor_time`` up to one minute later, on the ``Date`` of the
+    previous ``session`` day (a Monday looks back to Friday). No such reset, or a first day, fails.
+    """
+    volume = pl.col("Session_Volume")
+    resets = ticks.lazy().sort("Datetime").filter(volume < volume.shift(1)).select(
+        pl.col("Datetime").alias("reset_at"), pl.col("Date").alias("reset_date")
+    )
+    days = (
+        _session_ticks(ticks, session, "Datetime")
+        .group_by("Date", maintain_order=True)
+        .agg(
+            pl.col("Datetime").min().alias("first"),
+            pl.col("Datetime").max().alias("last"),
+            (pl.col("Datetime").diff().max().dt.total_microseconds() / 60_000_000).fill_null(0.0).alias("max_gap_minutes"),
+        )
+        .sort("first")
+        .with_columns(pl.col("Date").shift(1).alias("prev_date"))
+        .join_asof(resets, left_on="first", right_on="reset_at", allow_exact_matches=False)
+        .sort("Date")
+    )
+    midnight = pl.col("first").dt.truncate("1d")
+    tolerance = dt.timedelta(minutes=max_gap_minutes)
+    anchor_from = _since_midnight(anchor_time)
+    reset_clock = pl.col("reset_at") - pl.col("reset_at").dt.truncate("1d")
+    anchored = (
+        (reset_clock >= anchor_from)
+        & (reset_clock < anchor_from + dt.timedelta(minutes=1))
+        & (pl.col("reset_date") == pl.col("prev_date"))
+    )
+    reason = (
+        pl.when(pl.col("max_gap_minutes") > max_gap_minutes).then(pl.lit("gap"))
+        .when(pl.col("first") - (midnight + _since_midnight(session_open)) > tolerance).then(pl.lit("late_start"))
+        .when((midnight + _since_midnight(session_close)) - pl.col("last") > tolerance).then(pl.lit("early_end"))
+        .when(~anchored.fill_null(False)).then(pl.lit("anchor"))
+        .otherwise(pl.lit("ok"))
+    )
+    return days.select("Date", (reason == "ok").alias("clean"), reason.alias("reason"), "max_gap_minutes").collect().select(
+        SESSION_COLUMNS
+    )
+
+
+def prior_session_range(ticks: pl.DataFrame | pl.LazyFrame, *, session: str = "RTH") -> pl.DataFrame:
+    """One row per ``Date`` with ``session`` ticks, sorted by ``Date``: the previous such ``Date``'s range.
+
+    ``ticks`` needs ``Date``, ``SessionType`` and ``Price``. ``prior_day_range`` is the previous
+    ``Date``'s ``max(Price) - min(Price)`` over its ``session`` ticks; the first ``Date`` has null.
+    """
+    return (
+        _session_ticks(ticks, session, "Date")
+        .group_by("Date")
+        .agg((pl.col("Price").max() - pl.col("Price").min()).alias("range"))
+        .sort("Date")
+        .select("Date", pl.col("range").shift(1).alias("prior_day_range"))
+        .collect()
     )

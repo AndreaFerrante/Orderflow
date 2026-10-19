@@ -104,3 +104,17 @@ def test_a_first_session_tick_that_drops_volume_is_not_its_own_anchor():
     reopen = reset("2026-03-02", "17:00").with_columns(Session_Volume=pl.lit(5000.0))  # not a reset
     f = frame(rth_day("2026-03-02"), reset("2026-03-02", "13:30"), reopen, rth_day("2026-03-03"))
     assert find_clean_sessions(f).filter(pl.col("Date") == "2026-03-03")["reason"].to_list() == ["ok"]
+
+
+def test_missing_previous_weekday_drops_the_session():
+    f = frame(rth_day("2026-03-02"), reset("2026-03-02", "13:30"), rth_day("2026-03-04"))  # Tuesday missing
+    assert find_clean_sessions(f).filter(pl.col("Date") == "2026-03-04")["reason"].to_list() == ["anchor"]
+
+
+def test_ticks_sharing_one_datetime_are_ordered_by_index():
+    tied = pl.concat([reset("2026-03-02", "13:31").with_columns(Session_Volume=pl.lit(float(v))) for v in (2, 3, 4)])
+    tape = pl.concat([rth_day("2026-03-02"), reset("2026-03-02", "13:30"), tied,
+                      rth_day("2026-03-03")]).with_row_index("Index")
+    for ticks in (tape, tape.reverse()):  # tape order, then rows in the opposite order
+        row = find_clean_sessions(ticks).filter(pl.col("Date") == "2026-03-03")
+        assert row["reason"].to_list() == ["ok"]

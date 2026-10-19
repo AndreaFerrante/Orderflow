@@ -22,7 +22,7 @@ def _edge(touch: pl.Expr) -> pl.Expr:
     return touch & ~touch.shift(1).over("Date").fill_null(False)
 
 
-def _session_ticks(ticks: pl.DataFrame | pl.LazyFrame, session: str, by: str) -> pl.LazyFrame:
+def _session_ticks(ticks: pl.DataFrame | pl.LazyFrame, session: str, by: str | list[str]) -> pl.LazyFrame:
     """The ``session`` ticks of ``ticks``, sorted by ``by``."""
     return ticks.lazy().filter(pl.col("SessionType") == session).sort(by)
 
@@ -85,6 +85,13 @@ def _since_midnight(clock: str) -> dt.timedelta:
     return dt.timedelta(hours=t.hour, minutes=t.minute, seconds=t.second)
 
 
+def _previous_weekday(date: pl.Expr) -> pl.Expr:
+    """The ``YYYY-MM-DD`` string of the weekday (Monday to Friday) before the ``YYYY-MM-DD`` string ``date``."""
+    day = date.str.to_date()
+    back = pl.when(day.dt.weekday() == 1).then(3).when(day.dt.weekday() == 7).then(2).otherwise(1)
+    return (day - pl.duration(days=back)).dt.strftime("%Y-%m-%d")
+
+
 def find_clean_sessions(
     ticks: pl.DataFrame | pl.LazyFrame,
     *,
@@ -105,16 +112,19 @@ def find_clean_sessions(
     ``session_close`` are clock times on the calendar day of the day's first tick.
 
     ``anchor``: the VWAP must restart at ``anchor_time``. A reset is a tick whose ``Session_Volume`` is
-    below the previous tick's, over all ticks. Of the resets strictly before the day's first ``session``
-    tick, the last one must fall from ``anchor_time`` up to one minute later, on the ``Date`` of the
-    previous ``session`` day (a Monday looks back to Friday). No such reset, or a first day, fails.
+    below the previous tick's, over all ticks in tape order (``Datetime``, then ``Index`` when the frame
+    has one, so ticks sharing a ``Datetime`` keep their order). Of the resets strictly before the day's first ``session``
+    tick, the last one must fall from ``anchor_time`` up to one minute later, on the previous weekday
+    (Monday to Friday; a Monday looks back to Friday), whether or not that weekday has ``session``
+    ticks. No such reset fails, and so does a day after a missing weekday.
     """
     volume = pl.col("Session_Volume")
-    resets = ticks.lazy().sort("Datetime").filter(volume < volume.shift(1)).select(
+    tape = ["Datetime", "Index"] if "Index" in ticks.lazy().collect_schema().names() else ["Datetime"]
+    resets = ticks.lazy().sort(tape).filter(volume < volume.shift(1)).select(
         pl.col("Datetime").alias("reset_at"), pl.col("Date").alias("reset_date")
     )
     days = (
-        _session_ticks(ticks, session, "Datetime")
+        _session_ticks(ticks, session, tape)
         .group_by("Date", maintain_order=True)
         .agg(
             pl.col("Datetime").min().alias("first"),
@@ -122,7 +132,7 @@ def find_clean_sessions(
             (pl.col("Datetime").diff().max().dt.total_microseconds() / 60_000_000).fill_null(0.0).alias("max_gap_minutes"),
         )
         .sort("first")
-        .with_columns(pl.col("Date").shift(1).alias("prev_date"))
+        .with_columns(_previous_weekday(pl.col("Date")).alias("prev_date"))
         .join_asof(resets, left_on="first", right_on="reset_at", allow_exact_matches=False)
         .sort("Date")
     )

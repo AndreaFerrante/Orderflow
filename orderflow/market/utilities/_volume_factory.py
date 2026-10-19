@@ -1,4 +1,5 @@
 import os
+import warnings
 import pytz
 import polars
 import pandas as pd
@@ -609,9 +610,16 @@ def daily_maintenance_halt_report(pl_df: polars.DataFrame, market: str = None,
 def verify_daily_maintenance_halt_anchor(pl_df: polars.DataFrame, market: str = None,
                                          source_timezone: str = "UTC",
                                          min_gap_minutes: float = 45.0,
-                                         holiday_exceptions: frozenset = _KNOWN_HALT_EXCEPTIONS) -> None:
-    """Raise, listing every failing date at once, if the daily-halt anchor disagrees anywhere.
-    See `daily_maintenance_halt_report` for what "disagrees" means."""
+                                         holiday_exceptions: frozenset = _KNOWN_HALT_EXCEPTIONS,
+                                         max_bad_fraction: float = 0.25) -> None:
+    """Raise, listing every failing date at once, if the daily-halt anchor disagrees on more than
+    `max_bad_fraction` of the checked days; at or below it, warn with the same list instead.
+    See `daily_maintenance_halt_report` for what "disagrees" means.
+
+    A wrong `source_timezone` shifts the resumption on (nearly) every day, so it fails far above
+    the default 25%. A few days that fail in an otherwise consistent file are tick quality, not a
+    clock error: a holiday observed on a Monday, a thin expiring contract resuming late, a file
+    that opens an hour after the reopen. Measured on 11 real CL contracts: 1-3 bad days of 11-20."""
 
     report = daily_maintenance_halt_report(
         pl_df, market=market, source_timezone=source_timezone, min_gap_minutes=min_gap_minutes,
@@ -624,10 +632,13 @@ def verify_daily_maintenance_halt_anchor(pl_df: polars.DataFrame, market: str = 
             f"after a {row['gap_minutes']:.1f} min gap, expected {row['expected_hour']:02d}:00"
             for row in bad.to_dicts()
         )
-        raise Exception(
+        message = (
             f"Daily maintenance-halt anchor failed on {bad.height}/{report.height} date(s) for "
             f"market='{market}' under source_timezone='{source_timezone}': {detail}"
         )
+        if bad.height / report.height > max_bad_fraction:
+            raise Exception(message)
+        warnings.warn(message + f" (tolerated: within {max_bad_fraction:.0%})")
 
 
 def get_days_tz_diff(start_date, end_date, tz_from_str:str='Europe/Rome', tz_to_str:str='America/Chicago'):

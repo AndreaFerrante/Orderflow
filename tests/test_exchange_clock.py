@@ -165,6 +165,24 @@ def test_daily_halt_anchor_catches_one_bad_day_among_good_ones():
         verify_daily_maintenance_halt_anchor(frame(*(good + bad)), market="CME")
 
 
+def test_daily_halt_anchor_tolerates_up_to_a_quarter_of_days_bad_and_warns():
+    """A wrong source_timezone breaks nearly every day; a few thin or holiday days in an otherwise
+    consistent file (1 of 4 = exactly 25%) are tick quality, not a clock error: warn, don't raise."""
+    good = sum((gapped_day(datetime(2025, 1, d), resume_hour=23) for d in (13, 14, 15)), [])
+    bad = gapped_day(datetime(2025, 1, 27), resume_hour=22)  # off by one hour
+    with pytest.warns(UserWarning, match="2025-01-27"):
+        verify_daily_maintenance_halt_anchor(frame(*(good + bad)), market="CME")  # must not raise
+
+
+def test_daily_halt_anchor_raises_above_a_quarter_of_days_bad():
+    good = sum((gapped_day(datetime(2025, 1, d), resume_hour=23) for d in (13, 14, 15)), [])
+    bad = gapped_day(datetime(2025, 1, 27), resume_hour=22) + gapped_day(
+        datetime(2025, 1, 28), resume_hour=22
+    )  # 2 of 5 = 40%
+    with pytest.raises(Exception, match="2025-01-27.*2025-01-28"):
+        verify_daily_maintenance_halt_anchor(frame(*(good + bad)), market="CME")
+
+
 def test_daily_halt_anchor_rejects_a_gap_too_short_to_be_the_halt():
     ticks = gapped_day(datetime(2025, 1, 13), resume_hour=23, gap_minutes=10.0)
     with pytest.raises(Exception, match="2025-01-13"):

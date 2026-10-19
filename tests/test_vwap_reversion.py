@@ -79,3 +79,18 @@ def test_signal_does_not_read_later_ticks():
         return find_vwap_band_touch_signals(tape).filter(pl.col("signal_index") <= 1)["signal_index"].to_list()
 
     assert early(changed) == early(full) == [1]
+
+
+def test_stop_is_the_3sd_band_on_the_entry_tick_for_both_sides():
+    # bands differ on every tick: the long signal is tick 1 (entry tick 2), the short signal tick 4 (entry tick 5)
+    tape = ticks([100, 98, 100, 100, 102, 100]).with_columns(
+        vwap_sd2_bottom=pl.Series([98.0, 98.0, 90.0, 98.0, 98.0, 98.0]),
+        vwap_sd2_top=pl.Series([102.0, 102.0, 110.0, 102.0, 102.0, 120.0]),
+        vwap_sd3_bottom=pl.Series([97.0, 96.0, 95.0, 94.0, 93.0, 92.0]),
+        vwap_sd3_top=pl.Series([103.0, 104.0, 105.0, 106.0, 107.0, 108.0]),
+    )
+    found = find_vwap_band_touch_signals(tape)
+    assert found["signal_index"].to_list() == [1, 4]  # each fires on its own tick's 2 SD band, not the next tick's
+    assert found["side"].to_list() == [1, -1]
+    assert found["entry_index"].to_list() == [2, 5]
+    assert found["stop_loss"].to_list() == [95.0, 108.0]  # 3 SD band on the entry tick, not the signal tick's

@@ -5,7 +5,8 @@ A price at or below the lower 2 SD band of the VWAP is sold aggression pushed to
 aggression (``TradeType 2``, ask trades) and is traded short. The signal fades the move.
 
 A signal at tick ``t`` reads ticks up to and including ``t`` and nothing later; the entry is the next
-tick of the same day.
+tick of the same day. A signal whose entry tick is the day's last tick has no row: the backtest engine
+never evaluates exits on the entry tick, so that position could not be flattened by the close.
 """
 
 from __future__ import annotations
@@ -44,20 +45,22 @@ def find_vwap_band_touch_signals(
 
     A signal is the tick where the touch turns on; the first tick of a day has no previous tick, so it
     counts as turning on. A signal before ``entry_from`` (clock time) is not emitted, and neither is the
-    continuation of a touch that began before it. A signal with no later ``session`` tick that day has
-    no row.
+    continuation of a touch that began before it. A signal has no row unless the entry tick is followed
+    by another ``session`` tick that day, so a position can always be flattened by the close.
     """
     entry_at = dt.time.fromisoformat(entry_from)
     clock = pl.col("Datetime").dt.time()
     nxt = ("Index", "Price", "vwap_sd3_bottom", "vwap_sd3_top")
     day = (
         _session_ticks(ticks, session, "Index")
-        .with_columns(pl.col(*nxt).shift(-1).over("Date").name.prefix("next_"))
+        .with_columns(pl.col(*nxt).shift(-1).over("Date").name.prefix("next_"),
+                      pl.col("Index").shift(-2).over("Date").alias("after_entry_Index"))
     )
+    can_flatten = pl.col("after_entry_Index").is_not_null()  # the entry tick is not the day's last
     sides = [(1, pl.col("Price") <= pl.col("vwap_sd2_bottom"), "next_vwap_sd3_bottom"),
              (-1, pl.col("Price") >= pl.col("vwap_sd2_top"), "next_vwap_sd3_top")]
     events = [
-        day.filter(_edge(touch) & (clock >= entry_at)).select(
+        day.filter(_edge(touch) & (clock >= entry_at) & can_flatten).select(
             "Date",
             pl.col("Index").alias("signal_index"),
             pl.col("Datetime").alias("signal_datetime"),
@@ -70,7 +73,6 @@ def find_vwap_band_touch_signals(
     ]
     return (
         pl.concat(events)
-        .filter(pl.col("entry_index").is_not_null())
         .sort("signal_index")
         .collect()
         .select(EVENT_COLUMNS)

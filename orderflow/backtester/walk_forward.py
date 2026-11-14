@@ -43,6 +43,23 @@ class WalkForwardResult:
     folds: pd.DataFrame
     oos_trades: pd.DataFrame
 
+    @property
+    def efficiency(self) -> float | None:
+        """
+        Out-of-sample P&L per day over in-sample P&L per day, over the folds that traded.
+
+        1 means the chosen candidates earn out of sample as much per day as in
+        sample, 0.5 half as much, a negative value that they lose. ``None`` when
+        no fold traded or the in-sample rate is not positive.
+        """
+        traded = self.folds[self.folds["chosen"].notna()]
+        if traded.empty:
+            return None
+        in_sample = traded["train_net_pnl"].sum() / traded["n_train_days"].sum()
+        if in_sample <= 0:
+            return None
+        return float((traded["test_net_pnl"].sum() / traded["n_test_days"].sum()) / in_sample)
+
 
 def walk_forward_folds(dates, *, train_days: int, test_days: int, anchored: bool = False) -> pd.DataFrame:
     """

@@ -158,3 +158,18 @@ def test_trades_are_read_in_time_order_whatever_the_row_order():
 def test_no_candidates_is_refused():
     with pytest.raises(ValueError, match="candidate"):
         walk_forward({}, **BY_TOTAL)
+
+
+def test_efficiency_is_the_out_of_sample_daily_pnl_over_the_in_sample_one():
+    # in sample 16 over 4 days = 4 a day; out of sample -6 over 4 days = -1.5 a day
+    assert walk_forward({"a": A, "b": B}, **BY_TOTAL).efficiency == pytest.approx(-0.375)
+
+
+def test_efficiency_is_none_when_the_in_sample_pnl_is_not_positive():
+    loser = blotter({D[0]: [-1], D[1]: [-1], D[2]: [1], D[3]: [1]})
+    assert walk_forward({"a": loser}, **BY_TOTAL).efficiency is None
+
+
+def test_efficiency_is_none_when_no_fold_traded():
+    result = walk_forward({"a": A, "b": B}, train_days=2, test_days=2, score=np.sum, min_train_trades=5)
+    assert result.efficiency is None

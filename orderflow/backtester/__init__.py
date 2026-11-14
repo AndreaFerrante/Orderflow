@@ -9,6 +9,8 @@ Architecture
 - **exits**:        Pluggable exit-strategy library (strategy pattern)
 - **metrics**:      Post-trade performance analytics (Sharpe, drawdown, …)
 - **engine**:       Core backtester loop (Numba-accelerated + pure-Python fallback)
+- **walk_forward**: Out-of-sample check of parameter selection on rolling day windows
+- **monte_carlo**:  Resampled equity paths of a blotter, whole days at a time
 - **examples**:     Ready-to-run usage examples
 
 Quick start
@@ -48,6 +50,8 @@ from orderflow.backtester.exits import (
 )
 from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
 from orderflow.backtester.engine import BacktestEngine, BacktestResult
+from orderflow.backtester.walk_forward import WalkForwardResult, walk_forward, walk_forward_folds
+from orderflow.backtester.monte_carlo import MonteCarloResult, monte_carlo
 
 __all__ = [
     # Models
@@ -85,4 +89,10 @@ __all__ = [
     # Engine
     "BacktestEngine",
     "BacktestResult",
+    # Reliability
+    "walk_forward_folds",
+    "walk_forward",
+    "WalkForwardResult",
+    "monte_carlo",
+    "MonteCarloResult",
 ]

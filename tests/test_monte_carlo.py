@@ -94,3 +94,22 @@ def test_one_row_per_resample():
 def test_a_blotter_with_no_trades_is_refused(empty):
     with pytest.raises(ValueError, match="no trades"):
         monte_carlo(empty)
+
+
+def test_the_out_of_sample_blotter_of_a_walk_forward_can_be_resampled():
+    from orderflow.backtester.walk_forward import walk_forward
+
+    days = [f"2026-03-{d:02d}" for d in range(1, 7)]
+    oos = walk_forward({"a": blotter({day: [1.0, -0.5] for day in days})},
+                       train_days=2, test_days=2, min_train_trades=1).oos_trades
+    result = monte_carlo(oos, n_resamples=20)
+    assert len(result.paths) == 20
+    assert result.observed_net_pnl == 2.0  # four test days, +0.5 each
+
+
+def test_the_reliability_tools_are_exported_by_the_backtester_package():
+    import orderflow.backtester as backtester
+
+    for name in ("walk_forward_folds", "walk_forward", "WalkForwardResult", "monte_carlo", "MonteCarloResult"):
+        assert name in backtester.__all__
+        assert hasattr(backtester, name)

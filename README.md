@@ -38,3 +38,13 @@ package into site-packages and your edits here stop reaching the runners). Tests
 - `get_volume_profile_areas` (`VA_Areas`): the first tick of the frame, and the first tick after each
   RTH→ETH reset, seed the POC; value-area expansion steps over zero-volume price levels. Labels are
   `PO` / `VA` / `na` (`PO` is `POC` truncated by the 2-character label array).
+- `walk_forward` reads finished blotters (one `trades_df` per parameter set, each from one full-history
+  run) and never re-runs the engine. Windows are counted in trading days and test windows tile. A trade
+  belongs to the day of its `entry_datetime`, so the stitched out-of-sample blotter is exact only when
+  every candidate is flat at each day boundary. Pass `dates` (the tick frame's `Date` values) or days on
+  which nothing traded are not counted.
+- `monte_carlo` resamples whole trading days of a blotter with replacement (days without trades are not
+  in the pool) and keeps each day's trades in entry order. Its totals match
+  `stats.bootstrap_total_by_group` for the same seed, to float rounding. Its drawdown counts the zero
+  start as a peak, so a loss on the first trade is a drawdown; `stats.max_drawdown_absolute` does not
+  count that one.

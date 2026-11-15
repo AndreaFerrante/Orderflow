@@ -101,6 +101,22 @@ class BaseExitStrategy(abc.ABC):
 # Fixed TP / SL
 # ---------------------------------------------------------------------------
 
+def _target_or_stop(price: float, position: PositionState, tp_distance: float, sl_distance: float,
+                    fill_on_touch: bool) -> ExitSignal:
+    """
+    The target is a limit order: it fills at its level, never better, however far price jumped.
+    The stop is a market order: it names no price, so the engine fills it at the tick price.
+    The target is checked first, as it always was.
+    """
+    gain = (price - position.entry_price) * (1 if position.side == Side.LONG else -1)
+    if gain > tp_distance or (fill_on_touch and gain == tp_distance):
+        target = position.entry_price + tp_distance * (1 if position.side == Side.LONG else -1)
+        return ExitSignal(should_exit=True, reason=ExitReason.TAKE_PROFIT, exit_price=target)
+    if -gain >= sl_distance:
+        return ExitSignal(should_exit=True, reason=ExitReason.STOP_LOSS)
+    return ExitSignal(should_exit=False)
+
+
 @dataclass
 class FixedTPSLExit(BaseExitStrategy):
     """
@@ -114,6 +130,8 @@ class FixedTPSLExit(BaseExitStrategy):
         Stop-loss distance in ticks.
     tick_size : float
         Minimum price increment.
+    fill_on_touch : bool
+        ``False``: the target fills only when a trade prints beyond it.
 
     Notes
     -----
@@ -124,6 +142,7 @@ class FixedTPSLExit(BaseExitStrategy):
     tp: float = 10.0
     sl: float = 8.0
     tick_size: float = 0.25
+    fill_on_touch: bool = True
 
     def on_tick(
         self,
@@ -132,22 +151,8 @@ class FixedTPSLExit(BaseExitStrategy):
         price_history: np.ndarray,
         indicators: Dict[str, Any],
     ) -> ExitSignal:
-        price = tick.price
-        entry = position.entry_price
-
-        if position.side == Side.LONG:
-            if price - entry >= self.tp * self.tick_size:
-                return ExitSignal(should_exit=True, reason=ExitReason.TAKE_PROFIT)
-            if entry - price >= self.sl * self.tick_size:
-                return ExitSignal(should_exit=True, reason=ExitReason.STOP_LOSS)
-
-        elif position.side == Side.SHORT:
-            if entry - price >= self.tp * self.tick_size:
-                return ExitSignal(should_exit=True, reason=ExitReason.TAKE_PROFIT)
-            if price - entry >= self.sl * self.tick_size:
-                return ExitSignal(should_exit=True, reason=ExitReason.STOP_LOSS)
-
-        return ExitSignal(should_exit=False)
+        return _target_or_stop(tick.price, position, self.tp * self.tick_size, self.sl * self.tick_size,
+                               self.fill_on_touch)
 
 
 # ---------------------------------------------------------------------------
@@ -205,22 +210,16 @@ class TrailingStopExit(BaseExitStrategy):
             if new_level > self._trailing_level:
                 self._trailing_level = new_level
             if price <= self._trailing_level:
-                return ExitSignal(
-                    should_exit=True,
-                    reason=ExitReason.TRAILING_STOP,
-                    exit_price=self._trailing_level,
-                )
+                return ExitSignal(should_exit=True, reason=ExitReason.TRAILING_STOP,
+                                  metadata={"stop_level": self._trailing_level})
 
         elif position.side == Side.SHORT:
             new_level = price + trail_dist
             if self._trailing_level == 0.0 or new_level < self._trailing_level:
                 self._trailing_level = new_level
             if price >= self._trailing_level:
-                return ExitSignal(
-                    should_exit=True,
-                    reason=ExitReason.TRAILING_STOP,
-                    exit_price=self._trailing_level,
-                )
+                return ExitSignal(should_exit=True, reason=ExitReason.TRAILING_STOP,
+                                  metadata={"stop_level": self._trailing_level})
 
         return ExitSignal(should_exit=False)
 
@@ -274,17 +273,11 @@ class BreakEvenExit(BaseExitStrategy):
 
         if self._triggered:
             if position.side == Side.LONG and price <= self._be_stop:
-                return ExitSignal(
-                    should_exit=True,
-                    reason=ExitReason.BREAK_EVEN,
-                    exit_price=self._be_stop,
-                )
+                return ExitSignal(should_exit=True, reason=ExitReason.BREAK_EVEN,
+                                  metadata={"stop_level": self._be_stop})
             if position.side == Side.SHORT and price >= self._be_stop:
-                return ExitSignal(
-                    should_exit=True,
-                    reason=ExitReason.BREAK_EVEN,
-                    exit_price=self._be_stop,
-                )
+                return ExitSignal(should_exit=True, reason=ExitReason.BREAK_EVEN,
+                                  metadata={"stop_level": self._be_stop})
 
         return ExitSignal(should_exit=False)
 
@@ -446,6 +439,7 @@ class DynamicTPSLExit(BaseExitStrategy):
     """
     signals_df: pd.DataFrame
     tick_size: float = 0.25
+    fill_on_touch: bool = True  # False: the target fills only when a trade prints beyond it
     _signal_lookup: Dict[int, tuple] = field(default_factory=dict, init=False, repr=False)
     _current_tp: float = field(default=None, init=False, repr=False)
     _current_sl: float = field(default=None, init=False, repr=False)
@@ -470,28 +464,11 @@ class DynamicTPSLExit(BaseExitStrategy):
         price_history: np.ndarray,
         indicators: Dict[str, Any],
     ) -> ExitSignal:
-        price = tick.price
-        entry = position.entry_price
-
         if self._current_tp is None or self._current_sl is None:
             return ExitSignal(should_exit=False)
 
-        tp_distance = self._current_tp * self.tick_size
-        sl_distance = self._current_sl * self.tick_size
-
-        if position.side == Side.LONG:
-            if price - entry >= tp_distance:
-                return ExitSignal(should_exit=True, reason=ExitReason.TAKE_PROFIT)
-            if entry - price >= sl_distance:
-                return ExitSignal(should_exit=True, reason=ExitReason.STOP_LOSS)
-
-        elif position.side == Side.SHORT:
-            if entry - price >= tp_distance:
-                return ExitSignal(should_exit=True, reason=ExitReason.TAKE_PROFIT)
-            if price - entry >= sl_distance:
-                return ExitSignal(should_exit=True, reason=ExitReason.STOP_LOSS)
-
-        return ExitSignal(should_exit=False)
+        return _target_or_stop(tick.price, position, self._current_tp * self.tick_size,
+                               self._current_sl * self.tick_size, self.fill_on_touch)
 
 
 # ---------------------------------------------------------------------------
@@ -583,17 +560,11 @@ class DynamicBreakEvenExit(BaseExitStrategy):
             return ExitSignal(should_exit=False)
 
         if position.side == Side.LONG and price <= self._be_stop:
-            return ExitSignal(
-                should_exit=True,
-                reason=ExitReason.BREAK_EVEN,
-                exit_price=self._be_stop,
-            )
+            return ExitSignal(should_exit=True, reason=ExitReason.BREAK_EVEN,
+                              metadata={"stop_level": self._be_stop})
         if position.side == Side.SHORT and price >= self._be_stop:
-            return ExitSignal(
-                should_exit=True,
-                reason=ExitReason.BREAK_EVEN,
-                exit_price=self._be_stop,
-            )
+            return ExitSignal(should_exit=True, reason=ExitReason.BREAK_EVEN,
+                              metadata={"stop_level": self._be_stop})
 
         return ExitSignal(should_exit=False)
 
@@ -681,7 +652,9 @@ class CVDBreakEvenExit(BaseExitStrategy):
             self._baseline_lookup[int(row["Index"])] = float(row[self.cvd_col])
 
     def on_entry(self, tick: Tick, position: PositionState) -> None:
-        self._baseline_cvd = self._baseline_lookup.get(tick.index, float("nan"))
+        # by the tick's Index, as the other per-signal exits do: tick.index is the row number, and
+        # on a frame whose Index does not start at 0 the baseline was never found
+        self._baseline_cvd = self._baseline_lookup.get(tick.timestamp, float("nan"))
         self._activated = False
         self._be_stop = 0.0
 
@@ -724,9 +697,9 @@ class CVDBreakEvenExit(BaseExitStrategy):
                 return ExitSignal(
                     should_exit=True,
                     reason=ExitReason.BREAK_EVEN,
-                    exit_price=self._be_stop,
                     metadata={
                         "break_even_activated": True,
+                        "stop_level": self._be_stop,
                         "baseline_cvd": self._baseline_cvd,
                         "trigger_cvd": float(current_cvd),
                     },
@@ -735,9 +708,9 @@ class CVDBreakEvenExit(BaseExitStrategy):
                 return ExitSignal(
                     should_exit=True,
                     reason=ExitReason.BREAK_EVEN,
-                    exit_price=self._be_stop,
                     metadata={
                         "break_even_activated": True,
+                        "stop_level": self._be_stop,
                         "baseline_cvd": self._baseline_cvd,
                         "trigger_cvd": float(current_cvd),
                     },

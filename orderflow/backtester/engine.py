@@ -44,6 +44,7 @@ from orderflow.backtester.execution import (
 )
 from orderflow.backtester.exits import BaseExitStrategy
 from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
+from orderflow.backtester.monte_carlo import MonteCarloResult, monte_carlo
 from orderflow.backtester.models import (
     BacktestConfig,
     ExitReason,
@@ -411,6 +412,14 @@ class BacktestResult:
         s = self.metrics.summary()
         print(s)
         return s
+
+    def monte_carlo(self, *, n_resamples: int = 10_000, seed: int = 42) -> MonteCarloResult:
+        """
+        Resample the trading days of this run: ``monte_carlo(self.trades_df, ...)``.
+
+        See ``orderflow.backtester.monte_carlo``. Raises ``ValueError`` when the run has no trades.
+        """
+        return monte_carlo(self.trades_df, n_resamples=n_resamples, seed=seed)
 
 
 # ======================================================================== #

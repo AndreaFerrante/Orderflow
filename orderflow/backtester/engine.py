@@ -38,10 +38,7 @@ import pandas as pd
 import polars as pl
 from tqdm import tqdm
 
-from orderflow.backtester.execution import (
-    FillSimulator,
-    SlippageModel,
-)
+from orderflow.backtester.execution import SlippageModel
 from orderflow.backtester.exits import BaseExitStrategy
 from orderflow.backtester.metrics import PerformanceMetrics, compute_metrics
 from orderflow.backtester.monte_carlo import MonteCarloResult, monte_carlo
@@ -141,19 +138,21 @@ def _push_prices(buffer, length, prices, start, stop):
 @njit(cache=True)
 def _numba_core_loop(
     prices: np.ndarray,
+    buy_prices: np.ndarray,
+    sell_prices: np.ndarray,
     timestamps: np.ndarray,
     entry_mask: np.ndarray,
+    session_close: np.ndarray,
     signal_sides: np.ndarray,
     slippage_ticks_arr: np.ndarray,
+    exit_slippage_ticks_arr: np.ndarray,
     tick_size: float,
     tp_ticks: float,
     sl_ticks: float,
     trailing_stop_ticks: float,
     break_even_ticks: float,
     break_even_offset_ticks: float,
-    tick_value: float,
-    commission: float,
-    n_contracts: int,
+    fill_on_touch: bool,
 ) -> tuple:
     """
     Numba-compiled inner loop for maximum throughput.
@@ -161,6 +160,14 @@ def _numba_core_loop(
     Handles TP, SL, trailing stop, and break-even mechanics.  Does **not**
     support custom ``BaseExitStrategy`` callables — for that the engine falls
     back to the pure-Python loop.
+
+    It books the same trades as that loop run with the same risk levels and no
+    exit strategy; ``tests/test_engine_fills.py`` compares the two on random
+    tapes, so a change of behaviour goes into both.
+
+    ``prices`` triggers the levels.  A market fill reads ``buy_prices`` or
+    ``sell_prices`` (the quotes under ``use_spread``, else ``prices`` itself)
+    and pays slippage; a target fills at its level.
 
     Returns parallel arrays that are assembled into ``TradeRecord`` objects by
     the caller.
@@ -181,8 +188,9 @@ def _numba_core_loop(
     out_mae           = np.empty(max_trades, dtype=np.float64)
     out_mfe           = np.empty(max_trades, dtype=np.float64)
     out_ticks_in      = np.empty(max_trades, dtype=np.int64)
+    out_be            = np.empty(max_trades, dtype=np.bool_)
 
-    # Exit reason codes: 0=TP, 1=SL, 2=trailing, 3=break-even, 4=EOD
+    # Exit reason codes: 0=TP, 1=SL, 2=trailing, 3=break-even, 4=EOD, 5=session close
     trade_count = 0
     signal_ptr  = 0
 
@@ -191,6 +199,7 @@ def _numba_core_loop(
     side          = 0        # +1 LONG, -1 SHORT
     entry_price   = 0.0
     entry_pure    = 0.0
+    exit_slip     = 0.0
     entry_ts      = np.int64(0)
     entry_row_idx = 0
     current_stop  = 0.0
@@ -209,16 +218,19 @@ def _numba_core_loop(
         ts    = timestamps[i]
 
         # --- Try to enter ---
-        if not in_position and entry_mask[i] and signal_ptr < len(signal_sides):
+        # (not on a session's last tick: the trade would be opened only to be closed)
+        if not in_position and entry_mask[i] and signal_ptr < len(signal_sides) and not session_close[i]:
             side_val = signal_sides[signal_ptr]
             slip = slippage_ticks_arr[signal_ptr] * tick_size
+            exit_slip = exit_slippage_ticks_arr[signal_ptr] * tick_size
 
-            entry_pure = price
             if side_val == 1:   # SHORT
-                entry_price = price - slip
+                entry_pure = sell_prices[i]
+                entry_price = entry_pure - slip
                 side = -1
             else:               # LONG
-                entry_price = price + slip
+                entry_pure = buy_prices[i]
+                entry_price = entry_pure + slip
                 side = 1
 
             entry_ts      = ts
@@ -229,17 +241,21 @@ def _numba_core_loop(
             max_fav_price = price
             max_adv_price = price
 
-            # Initial levels
+            # Initial levels. The trailing stop is live from the entry, not from the first new high.
             if side == 1:
                 current_stop   = entry_price - sl_ticks * tick_size
                 current_target = entry_price + tp_ticks * tick_size
                 if use_trailing:
                     trailing_level = entry_price - trailing_stop_ticks * tick_size
+                    if trailing_level > current_stop:
+                        current_stop = trailing_level
             else:
                 current_stop   = entry_price + sl_ticks * tick_size
                 current_target = entry_price - tp_ticks * tick_size
                 if use_trailing:
                     trailing_level = entry_price + trailing_stop_ticks * tick_size
+                    if trailing_level < current_stop:
+                        current_stop = trailing_level
 
             signal_ptr += 1
             continue
@@ -256,7 +272,11 @@ def _numba_core_loop(
 
         # --- In position: update extremes ---
         ticks_count += 1
-        if side == 1:
+        if ticks_count == 1:
+            # as the Python loop does: the extremes start on the first tick after the entry
+            max_fav_price = price
+            max_adv_price = price
+        elif side == 1:
             if price > max_fav_price:
                 max_fav_price = price
             if price < max_adv_price:
@@ -299,23 +319,39 @@ def _numba_core_loop(
                 be_triggered = True
 
         # --- Check exits ---
+        # A stop and the session close are market orders: filled where the market is, less
+        # slippage, however far beyond the stop that is. A target is a limit order: filled at its
+        # level, never better.
         exited = False
         exit_reason = 4  # default EOD
+        exit_fill = 0.0
 
         if side == 1:
             if price <= current_stop:
                 exited = True
                 exit_reason = 3 if be_triggered else (2 if use_trailing and price <= trailing_level else 1)
-            elif price >= current_target:
+                exit_fill = sell_prices[i] - exit_slip
+            elif price > current_target or (fill_on_touch and price == current_target):
                 exited = True
                 exit_reason = 0
+                exit_fill = current_target
+            elif session_close[i]:
+                exited = True
+                exit_reason = 5
+                exit_fill = sell_prices[i] - exit_slip
         else:
             if price >= current_stop:
                 exited = True
                 exit_reason = 3 if be_triggered else (2 if use_trailing and price >= trailing_level else 1)
-            elif price <= current_target:
+                exit_fill = buy_prices[i] + exit_slip
+            elif price < current_target or (fill_on_touch and price == current_target):
                 exited = True
                 exit_reason = 0
+                exit_fill = current_target
+            elif session_close[i]:
+                exited = True
+                exit_reason = 5
+                exit_fill = buy_prices[i] + exit_slip
 
         if exited:
             idx = trade_count
@@ -325,9 +361,10 @@ def _numba_core_loop(
             out_exit_ts[idx]     = ts
             out_entry_price[idx] = entry_price
             out_entry_pure[idx]  = entry_pure
-            out_exit_price[idx]  = price
+            out_exit_price[idx]  = exit_fill
             out_side[idx]        = side
             out_exit_reason[idx] = exit_reason
+            out_be[idx]          = be_triggered
 
             # MAE / MFE in ticks
             if side == 1:
@@ -344,7 +381,10 @@ def _numba_core_loop(
     # --- Close dangling position at end of data ---
     if in_position:
         idx = trade_count
-        last_price = prices[n - 1]
+        if side == 1:  # closed at the market
+            last_price = sell_prices[n - 1] - exit_slip
+        else:
+            last_price = buy_prices[n - 1] + exit_slip
         out_entry_idx[idx]   = entry_row_idx
         out_exit_idx[idx]    = n - 1
         out_entry_ts[idx]    = entry_ts
@@ -354,6 +394,7 @@ def _numba_core_loop(
         out_exit_price[idx]  = last_price
         out_side[idx]        = side
         out_exit_reason[idx] = 4  # END_OF_DATA
+        out_be[idx]          = be_triggered
 
         if side == 1:
             out_mae[idx] = (entry_price - max_adv_price) / tick_size
@@ -379,6 +420,7 @@ def _numba_core_loop(
         out_mae[:trade_count],
         out_mfe[:trade_count],
         out_ticks_in[:trade_count],
+        out_be[:trade_count],
     )
 
 
@@ -441,12 +483,21 @@ class BacktestEngine:
     n_contracts : int
         Default number of contracts per signal.
     slippage_model : SlippageModel | None
-        Slippage model to use for fill simulation.
+        Slippage, in ticks against the trade, drawn once for the entry and
+        once for the exit of every trade.  It is paid on every market fill:
+        the entry, a stop, a session close, the end of the data, a strategy
+        exit that names no price.  A target is a limit order and pays none.
     use_spread : bool
-        If ``True`` and bid/ask columns are available, fill prices cross
-        the spread before slippage is applied.
+        If ``True``, a market fill crosses the quote before slippage: a buy
+        pays the ask, a sell gets the bid (``AskPrice`` / ``BidPrice``, or
+        ``Ask`` / ``Bid``).  A tick without a quote is filled at its trade
+        price.  ``run`` raises ``ValueError`` when the columns are missing.
+        Levels are still triggered by the trade price.
     trade_in_rth : bool
-        Force-close (or prevent) entries outside RTH session.
+        If ``True``, entries are taken in RTH only and an open trade is
+        closed at the market on the session's last RTH tick (the tick before
+        a non-RTH tick or before a new ``Date``), as ``session_close``.  No
+        entry is taken on that tick.
     price_history_window : int
         Number of recent prices passed to exit strategies (for rolling
         volatility, etc.).
@@ -494,12 +545,6 @@ class BacktestEngine:
         if seed is not None:
             self.slippage_model.reseed(seed)
 
-        self._fill_sim = FillSimulator(
-            slippage_model=self.slippage_model,
-            tick_size=self.tick_size,
-            use_spread=self.use_spread,
-        )
-
     # ------------------------------------------------------------------ #
     #  Data validation & preparation                                      #
     # ------------------------------------------------------------------ #
@@ -523,6 +568,14 @@ class BacktestEngine:
                 f"Signal DataFrame is missing required columns: {missing}. "
                 f"Expected columns: {sorted(required)}"
             )
+
+    @staticmethod
+    def _quote(data: pd.DataFrame, names: Sequence[str]) -> Optional[np.ndarray]:
+        """The first of the columns ``names`` that ``data`` has, as float64; ``None`` when it has none."""
+        for name in names:
+            if name in data.columns:
+                return np.ascontiguousarray(data[name].to_numpy(dtype=np.float64, na_value=np.nan))
+        return None
 
     def _filter_rth_signals(
         self, data: pd.DataFrame, datetime_signal: np.ndarray, signal_sides: np.ndarray
@@ -581,6 +634,7 @@ class BacktestEngine:
         break_even_offset_ticks: float = 0.0,
         initial_capital: float = 0.0,
         indicator_columns: Optional[List[str]] = None,
+        fill_on_touch: bool = True,
     ) -> BacktestResult:
         """
         Execute the backtest.
@@ -590,7 +644,7 @@ class BacktestEngine:
         data : pd.DataFrame
             Tick-by-tick market data.  Required columns:
             ``Index``, ``Datetime``, ``Price``, ``Date``, ``Time``, ``SessionType``
-            Optional: ``Bid``, ``Ask``, ``Volume``
+            Optional: ``BidPrice`` and ``AskPrice`` (or ``Bid`` and ``Ask``), ``Volume``
         signals : pd.DataFrame
             Entry signals.  Required columns:
             ``Index`` (matching ``data.Index``), ``TradeType`` (1=SHORT, 2=LONG).
@@ -616,6 +670,19 @@ class BacktestEngine:
         indicator_columns : list[str] | None
             Column names from ``data`` to pass as ``indicators`` dict to
             exit strategies.
+        fill_on_touch : bool
+            ``True``: the target fills when a trade prints at its level.
+            ``False``: only when a trade prints beyond it (ignored if
+            ``risk_manager`` is supplied; set it on that object).
+
+        Notes
+        -----
+        One rule prices every exit, on the kernel and on the Python loop alike.
+        A market exit (stop, trailing stop, break-even stop, session close, end
+        of data, a strategy exit that names no price) fills at the tick that
+        triggered it, less slippage: a stop gapped through is filled where the
+        market is.  A limit exit (a target, a strategy exit that names its
+        price) fills at that price, never better.
 
         Returns
         -------
@@ -635,6 +702,7 @@ class BacktestEngine:
                 break_even_offset_ticks=break_even_offset_ticks,
                 tick_size=self.tick_size,
                 tick_value=self.tick_value,
+                fill_on_touch=fill_on_touch,
             )
 
         # --- Extract arrays ---
@@ -675,12 +743,46 @@ class BacktestEngine:
         # Boolean entry mask (vectorised O(n) lookup)
         entry_mask = np.isin(timestamps, signal_ts)
 
-        # Pre-sample slippage for all potential entries (reproducibility)
+        # Pre-sample slippage for all potential entries (reproducibility), then for their exits:
+        # drawn second, so the entry draws of a seed are the ones they always were.
         n_signals = len(signal_sides)
         slippage_ticks_arr = np.array(
             [self.slippage_model.sample() for _ in range(n_signals)],
             dtype=np.int64,
         )
+        exit_slippage_ticks_arr = np.array(
+            [self.slippage_model.sample() for _ in range(n_signals)],
+            dtype=np.int64,
+        )
+
+        # Quotes, and the price a market order gets: the quote it crosses under use_spread (the
+        # trade price on a tick without one), else the trade price.
+        bids = self._quote(data, ("BidPrice", "Bid"))
+        asks = self._quote(data, ("AskPrice", "Ask"))
+        if self.use_spread:
+            if bids is None or asks is None:
+                raise ValueError(
+                    "use_spread=True requires quote columns in the data DataFrame: "
+                    "'BidPrice' and 'AskPrice' (or 'Bid' and 'Ask')."
+                )
+            quoted = (bids > 0) & (asks > 0)
+            buy_prices = np.where(quoted, asks, prices)
+            sell_prices = np.where(quoted, bids, prices)
+        else:
+            buy_prices = sell_prices = prices
+        if bids is None:
+            bids = np.zeros(len(prices))
+        if asks is None:
+            asks = np.zeros(len(prices))
+
+        # The last RTH tick of each session: the next tick is not RTH, or belongs to another Date
+        # (a tape that holds RTH only). Reading the next tick is not lookahead: the close is on the
+        # exchange calendar. The last tick of the data is left to END_OF_DATA.
+        session_close = np.zeros(len(prices), dtype=np.bool_)
+        if self.trade_in_rth and len(prices) > 1:
+            rth = data["SessionType"].eq("RTH").fillna(False).to_numpy(dtype=bool)
+            new_day = data["Date"].ne(data["Date"].shift(-1)).fillna(True).to_numpy(dtype=bool)
+            session_close[:-1] = rth[:-1] & (~rth[1:] | new_day[:-1])
 
         # --- Choose execution path ---
         config = BacktestConfig(
@@ -697,6 +799,7 @@ class BacktestEngine:
             trades = self._run_numba(
                 prices, timestamps, datetimes, dates, entry_mask,
                 signal_sides, slippage_ticks_arr, risk_manager, config,
+                buy_prices, sell_prices, session_close, exit_slippage_ticks_arr,
             )
         else:
             # Flexible Python path with custom exit strategy
@@ -704,10 +807,11 @@ class BacktestEngine:
                 data, prices, timestamps, datetimes, dates, entry_mask,
                 signal_sides, slippage_ticks_arr, risk_manager, config,
                 exit_strategy, indicator_columns,
+                buy_prices, sell_prices, bids, asks, session_close, exit_slippage_ticks_arr,
             )
 
         # --- Metrics ---
-        metrics = compute_metrics(trades, initial_capital=initial_capital)
+        metrics = compute_metrics(trades, initial_capital=initial_capital, dates=data["Date"].dropna().unique())
 
         # --- Trades DataFrame ---
         trades_df = self._trades_to_dataframe(trades)
@@ -734,6 +838,10 @@ class BacktestEngine:
         slippage_ticks_arr: np.ndarray,
         risk_manager: RiskManager,
         config: BacktestConfig,
+        buy_prices: np.ndarray,
+        sell_prices: np.ndarray,
+        session_close: np.ndarray,
+        exit_slippage_ticks_arr: np.ndarray,
     ) -> List[TradeRecord]:
         """Dispatch to Numba-compiled loop and assemble TradeRecords."""
         tp = risk_manager.tp_ticks if risk_manager.tp_ticks is not None else 1e18
@@ -745,11 +853,11 @@ class BacktestEngine:
         (
             entry_idxs, exit_idxs, entry_ts, exit_ts,
             entry_prices, entry_pures, exit_prices,
-            sides, exit_reasons, maes, mfes, ticks_in,
+            sides, exit_reasons, maes, mfes, ticks_in, be_flags,
         ) = _numba_core_loop(
-            prices, timestamps, entry_mask, signal_sides, slippage_ticks_arr,
-            config.tick_size, tp, sl, trail, be, be_off,
-            config.tick_value, config.commission, config.n_contracts,
+            prices, buy_prices, sell_prices, timestamps, entry_mask, session_close,
+            signal_sides, slippage_ticks_arr, exit_slippage_ticks_arr,
+            config.tick_size, tp, sl, trail, be, be_off, risk_manager.fill_on_touch,
         )
 
         # Map exit-reason codes → ExitReason enum
@@ -759,6 +867,7 @@ class BacktestEngine:
             2: ExitReason.TRAILING_STOP,
             3: ExitReason.BREAK_EVEN,
             4: ExitReason.END_OF_DATA,
+            5: ExitReason.SESSION_CLOSE,
         }
 
         records: List[TradeRecord] = []
@@ -789,6 +898,7 @@ class BacktestEngine:
                 mae_ticks=maes[j],
                 mfe_ticks=mfes[j],
                 ticks_in_trade=int(ticks_in[j]),
+                break_even_activated=bool(be_flags[j]),
             ))
 
         return records
@@ -811,6 +921,12 @@ class BacktestEngine:
         config: BacktestConfig,
         exit_strategy: Optional[BaseExitStrategy],
         indicator_columns: Optional[List[str]],
+        buy_prices: np.ndarray,
+        sell_prices: np.ndarray,
+        bids: np.ndarray,
+        asks: np.ndarray,
+        session_close: np.ndarray,
+        exit_slippage_ticks_arr: np.ndarray,
     ) -> List[TradeRecord]:
         """
         Pure-Python tick loop with full strategy/risk manager support.
@@ -820,6 +936,7 @@ class BacktestEngine:
         trade_counter = 0
         signal_ptr = 0
         pos = PositionState()
+        exit_slip = 0.0  # the open trade's exit slippage, in price
 
         # Price history ring buffer. The exit strategy is handed the buffer itself, so it stays the
         # one array it always was; ``hist_next`` is the first tick not pushed into it yet.
@@ -834,12 +951,6 @@ class BacktestEngine:
             for col in indicator_columns:
                 if col in data.columns:
                     ind_arrays[col] = _plain_strings(data[col].values)
-
-        # Optional bid/ask
-        has_bid = "Bid" in data.columns
-        has_ask = "Ask" in data.columns
-        bids = data["Bid"].values if has_bid else np.zeros(n)
-        asks = data["Ask"].values if has_ask else np.zeros(n)
 
         # Session type
         has_session = "SessionType" in data.columns
@@ -875,18 +986,21 @@ class BacktestEngine:
                 hist_len = _push_prices(price_history, hist_len, prices, hist_next, i + 1)
                 hist_next = i + 1
 
-                if entry_mask[i] and signal_ptr < len(signal_sides):
+                # (no entry on a session's last tick: the trade would be opened only to be closed)
+                if entry_mask[i] and signal_ptr < len(signal_sides) and not session_close[i]:
                     side_code = signal_sides[signal_ptr]
                     side = Side.LONG if side_code == 2 else Side.SHORT
 
                     slip_ticks = int(slippage_ticks_arr[signal_ptr])
                     slip_amount = slip_ticks * config.tick_size
-                    pure_price = price
+                    exit_slip = int(exit_slippage_ticks_arr[signal_ptr]) * config.tick_size
 
                     if side == Side.LONG:
-                        fill_price = price + slip_amount
+                        pure_price = buy_prices[i]
+                        fill_price = pure_price + slip_amount
                     else:
-                        fill_price = price - slip_amount
+                        pure_price = sell_prices[i]
+                        fill_price = pure_price - slip_amount
 
                     # Initialise position state
                     pos.side = side
@@ -958,9 +1072,19 @@ class BacktestEngine:
                 if strat_signal.should_exit:
                     exit_signal = strat_signal
 
+            if exit_signal is None and session_close[i]:
+                exit_signal = ExitSignal(should_exit=True, reason=ExitReason.SESSION_CLOSE)
+
             if exit_signal is not None and exit_signal.should_exit:
                 # --- Close position ---
-                exit_price = exit_signal.exit_price if exit_signal.exit_price is not None else price
+                # A signal that names its price is a limit order, filled at that price. One that
+                # names none is a market order: filled where the market is, less slippage.
+                if exit_signal.exit_price is not None:
+                    exit_price = exit_signal.exit_price
+                elif pos.side == Side.LONG:
+                    exit_price = sell_prices[i] - exit_slip
+                else:
+                    exit_price = buy_prices[i] + exit_slip
                 trade_counter += 1
 
                 pnl_ticks = (
@@ -1016,7 +1140,10 @@ class BacktestEngine:
         # --- Close dangling position at end of data ---
         if not pos.is_flat:
             trade_counter += 1
-            exit_price = prices[n - 1]
+            if pos.side == Side.LONG:  # closed at the market
+                exit_price = sell_prices[n - 1] - exit_slip
+            else:
+                exit_price = buy_prices[n - 1] + exit_slip
 
             if pos.side == Side.LONG:
                 pnl_ticks = (exit_price - pos.entry_price) / config.tick_size

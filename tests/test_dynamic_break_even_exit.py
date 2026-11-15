@@ -65,7 +65,8 @@ def test_arms_and_fires_when_price_returns_to_entry():
 
     assert got.should_exit
     assert got.reason is ExitReason.BREAK_EVEN
-    assert got.exit_price == pytest.approx(5000.0)
+    assert got.exit_price is None  # a stop is a market order: the engine fills it at the tick price
+    assert got.metadata["stop_level"] == pytest.approx(5000.0)
 
 
 def test_short_arms_downward_and_fires_on_the_way_back_up():
@@ -76,7 +77,8 @@ def test_short_arms_downward_and_fires_on_the_way_back_up():
 
     assert got.should_exit
     assert got.reason is ExitReason.BREAK_EVEN
-    assert got.exit_price == pytest.approx(5000.0)
+    assert got.exit_price is None  # a stop is a market order: the engine fills it at the tick price
+    assert got.metadata["stop_level"] == pytest.approx(5000.0)
 
 
 def test_a_short_is_not_armed_by_price_rising():
@@ -138,7 +140,7 @@ def test_offset_moves_the_stop_beyond_entry():
 
     got = feed(ex, position(), [5005.0, 5000.5])
 
-    assert got.exit_price == pytest.approx(5000.5)
+    assert got.metadata["stop_level"] == pytest.approx(5000.5)
 
 
 def test_offset_is_subtracted_for_a_short():
@@ -148,4 +150,4 @@ def test_offset_is_subtracted_for_a_short():
 
     got = feed(ex, position(side=Side.SHORT), [4995.0, 4999.5])
 
-    assert got.exit_price == pytest.approx(4999.5)
+    assert got.metadata["stop_level"] == pytest.approx(4999.5)

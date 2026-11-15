@@ -15,6 +15,7 @@ The engine checks *risk first, then strategy* on each tick.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional
 import pandas as pd
@@ -53,6 +54,10 @@ class RiskManager:
         The instrument's minimum price increment.
     tick_value : float
         Dollar value of one tick.
+    fill_on_touch : bool
+        ``True``: the target fills when a trade prints at its level. ``False``:
+        only when a trade prints beyond it, the stricter test of a resting
+        limit order that sits at the back of the queue.
 
     Notes
     -----
@@ -60,6 +65,9 @@ class RiskManager:
     * The manager mutates ``PositionState`` in-place for speed.
     * When multiple conditions trigger on the same tick, priority is:
       ``stop_loss > break_even > trailing_stop > take_profit``.
+    * A stop is a market order: its signal names no price, so the engine fills
+      it at the tick that triggered it, however far beyond the stop that is.
+      A target is a limit order: it fills at its own level, never better.
     """
     tp_ticks: Optional[float] = None
     sl_ticks: Optional[float] = None
@@ -68,6 +76,7 @@ class RiskManager:
     break_even_offset_ticks: float = 0.0
     tick_size: float = 0.25
     tick_value: float = 12.5
+    fill_on_touch: bool = True
 
     # ------------------------------------------------------------------ #
     #  Public API                                                         #
@@ -77,11 +86,15 @@ class RiskManager:
         """
         Called once on entry to set initial stop/target levels.
         """
+        # No stop loss is a stop infinitely far away, not a stop at 0: at 0 a short's break-even
+        # or trailing level, which must be *below* the stop to replace it, never took hold.
         if self.sl_ticks is not None:
             if pos.side == Side.LONG:
                 pos.current_stop = pos.entry_price - self.sl_ticks * self.tick_size
             else:
                 pos.current_stop = pos.entry_price + self.sl_ticks * self.tick_size
+        else:
+            pos.current_stop = -math.inf if pos.side == Side.LONG else math.inf
 
         if self.tp_ticks is not None:
             if pos.side == Side.LONG:
@@ -90,10 +103,13 @@ class RiskManager:
                 pos.current_target = pos.entry_price - self.tp_ticks * self.tick_size
 
         if self.trailing_stop_ticks is not None:
+            # The trailing stop is live from the entry, not from the first new high.
             if pos.side == Side.LONG:
                 pos.trailing_stop_level = pos.entry_price - self.trailing_stop_ticks * self.tick_size
+                pos.current_stop = max(pos.current_stop, pos.trailing_stop_level)
             else:
                 pos.trailing_stop_level = pos.entry_price + self.trailing_stop_ticks * self.tick_size
+                pos.current_stop = min(pos.current_stop, pos.trailing_stop_level)
 
         pos.break_even_triggered = False
 
@@ -200,23 +216,18 @@ class RiskManager:
             return ExitSignal(should_exit=False)
 
         if pos.side == Side.LONG and price <= pos.current_stop:
-            reason = ExitReason.BREAK_EVEN if pos.break_even_triggered else ExitReason.STOP_LOSS
-            return ExitSignal(
-                should_exit=True,
-                reason=reason,
-                exit_price=pos.current_stop,
-                metadata={"stop_level": pos.current_stop},
-            )
-        if pos.side == Side.SHORT and price >= pos.current_stop:
-            reason = ExitReason.BREAK_EVEN if pos.break_even_triggered else ExitReason.STOP_LOSS
-            return ExitSignal(
-                should_exit=True,
-                reason=reason,
-                exit_price=pos.current_stop,
-                metadata={"stop_level": pos.current_stop},
-            )
+            trailed = self.trailing_stop_ticks is not None and price <= pos.trailing_stop_level
+        elif pos.side == Side.SHORT and price >= pos.current_stop:
+            trailed = self.trailing_stop_ticks is not None and price >= pos.trailing_stop_level
+        else:
+            return ExitSignal(should_exit=False)
 
-        return ExitSignal(should_exit=False)
+        # The same label as the kernel: break-even once armed, else trailing if that level was hit.
+        if pos.break_even_triggered:
+            reason = ExitReason.BREAK_EVEN
+        else:
+            reason = ExitReason.TRAILING_STOP if trailed else ExitReason.STOP_LOSS
+        return ExitSignal(should_exit=True, reason=reason, metadata={"stop_level": pos.current_stop})
 
     def _check_trailing_stop(self, price: float, pos: PositionState) -> ExitSignal:
         if self.trailing_stop_ticks is None:
@@ -226,14 +237,12 @@ class RiskManager:
             return ExitSignal(
                 should_exit=True,
                 reason=ExitReason.TRAILING_STOP,
-                exit_price=pos.trailing_stop_level,
                 metadata={"trailing_level": pos.trailing_stop_level},
             )
         if pos.side == Side.SHORT and price >= pos.trailing_stop_level:
             return ExitSignal(
                 should_exit=True,
                 reason=ExitReason.TRAILING_STOP,
-                exit_price=pos.trailing_stop_level,
                 metadata={"trailing_level": pos.trailing_stop_level},
             )
 
@@ -243,14 +252,8 @@ class RiskManager:
         if self.tp_ticks is None:
             return ExitSignal(should_exit=False)
 
-        if pos.side == Side.LONG and price >= pos.current_target:
-            return ExitSignal(
-                should_exit=True,
-                reason=ExitReason.TAKE_PROFIT,
-                exit_price=pos.current_target,
-                metadata={"target_level": pos.current_target},
-            )
-        if pos.side == Side.SHORT and price <= pos.current_target:
+        beyond = price - pos.current_target if pos.side == Side.LONG else pos.current_target - price
+        if beyond > 0 or (self.fill_on_touch and beyond == 0):
             return ExitSignal(
                 should_exit=True,
                 reason=ExitReason.TAKE_PROFIT,

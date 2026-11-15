@@ -482,13 +482,14 @@ def max_drawdown_absolute(pnl: Union[pd.Series, np.ndarray, Sequence[float]]) ->
     -------
     float
         Non-negative magnitude of the deepest drawdown.  0.0 for an empty
-        input or a curve that never retraces.
+        input or a curve that never retraces.  The curve starts at 0 and that
+        start is a peak, so a loss on the first trade is a drawdown.
     """
     arr = np.asarray(pnl, dtype=np.float64).ravel()
     if arr.size == 0:
         return 0.0
     equity = np.cumsum(arr)
-    running_peak = np.maximum.accumulate(equity)
+    running_peak = np.maximum(np.maximum.accumulate(equity), 0.0)
     return float(np.max(running_peak - equity))
 
 

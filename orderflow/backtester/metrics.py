@@ -11,7 +11,7 @@ reporting and common quant-finance textbooks.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -52,11 +52,13 @@ class PerformanceMetrics:
     max_win : float
     max_loss : float
     sharpe_ratio : float
-        Annualised Sharpe using trade-level returns.  If < 30 trades the
-        estimate is unreliable — the value is still computed but the user
-        should interpret with caution.
+        Annualised Sharpe of daily net P&L: mean over sample stdev of the
+        daily totals, times ``sqrt(annualisation_factor)``.  A trade is booked
+        on the day of its entry.  0.0 with fewer than two days.  With few days
+        the estimate is unreliable.
     max_drawdown : float
-        Maximum peak-to-trough decline of the equity curve (in dollars).
+        Maximum peak-to-trough decline of the equity curve (in dollars).  The
+        starting capital is the first peak, so a loss on the first trade counts.
     max_drawdown_pct : float
         Same as ``max_drawdown`` but as fraction of peak equity.
     avg_mae_ticks : float
@@ -164,6 +166,7 @@ def compute_metrics(
     trades: List[TradeRecord],
     initial_capital: float = 0.0,
     annualisation_factor: float = 252.0,
+    dates: Optional[Iterable[Any]] = None,
 ) -> PerformanceMetrics:
     """
     Compute ``PerformanceMetrics`` from a list of closed ``TradeRecord`` objects.
@@ -176,6 +179,11 @@ def compute_metrics(
         Starting capital (used only for percentage-based drawdown).
     annualisation_factor : float
         Trading days per year (252 for equities / futures, 365 for crypto).
+    dates : iterable | None
+        The trading days of the backtest (the tick frame's ``Date`` values).
+        A day in it without a trade is a day of zero P&L in the Sharpe ratio.
+        Without it only the days that traded are counted, which overstates the
+        Sharpe of a strategy that sits out days.
 
     Returns
     -------
@@ -210,14 +218,23 @@ def compute_metrics(
     win_rate = winning_trades / n if n > 0 else 0.0
 
     # --- Sharpe ---
-    if n > 1 and np.std(net_pnls) > 0:
-        sharpe = float(np.mean(net_pnls) / np.std(net_pnls, ddof=1) * np.sqrt(annualisation_factor))
+    # On daily P&L. Per-trade P&L times sqrt(252) is right only at one trade a day: ten trades a
+    # day read as a third of their true Sharpe.
+    day = pd.to_datetime([t.entry_datetime for t in trades]).strftime("%Y-%m-%d")
+    daily = pd.Series(net_pnls).groupby(np.asarray(day, dtype=object)).sum()
+    if dates is not None:
+        calendar = {pd.Timestamp(d).strftime("%Y-%m-%d") for d in set(dates)}
+        # the union: a trade on a day the calendar does not name must not drop out of the P&L
+        daily = daily.reindex(sorted(calendar | set(daily.index)), fill_value=0.0)
+    if len(daily) > 1 and daily.std() > 0:
+        sharpe = float(daily.mean() / daily.std() * np.sqrt(annualisation_factor))
     else:
         sharpe = 0.0
 
     # --- Equity curve & drawdown ---
     equity = np.cumsum(net_pnls) + initial_capital
-    running_max = np.maximum.accumulate(equity)
+    # the starting capital is the first peak: a loss on the first trade is a drawdown
+    running_max = np.maximum(np.maximum.accumulate(equity), initial_capital)
     drawdowns = running_max - equity
     max_dd = float(drawdowns.max()) if len(drawdowns) > 0 else 0.0
     peak_at_max_dd = float(running_max[np.argmax(drawdowns)]) if len(drawdowns) > 0 else 0.0

@@ -250,17 +250,20 @@ class _Never(BaseExitStrategy):
 # One risk level at a time while a custom exit is present (so the Python loop runs): what the engine
 # did before the risk manager learned to step aside when it has no level at all. Up five ticks from
 # 5000, down nine, up ten. Entry on row 5 at 5000.
+# Two rows changed when the two loops were made to book the same trades: a long stopped by its
+# trailing stop is labelled TRAILING_STOP as a short always was, and a short's break-even without a
+# stop loss closes the trade as a long's always did (it used to arm and never act).
 _PATH = 5000.0 + np.cumsum([0] * 6 + [1] * 5 + [-1] * 9 + [1] * 10 + [0, 0]) * 0.25
 RISK_LEVELS = [
     (2, {"tp_ticks": 3}, ExitReason.TAKE_PROFIT, 108, 5000.75, False),
     (2, {"sl_ticks": 2}, ExitReason.STOP_LOSS, 117, 4999.5, False),
-    (2, {"trailing_stop_ticks": 2}, ExitReason.STOP_LOSS, 112, 5000.75, False),
+    (2, {"trailing_stop_ticks": 2}, ExitReason.TRAILING_STOP, 112, 5000.75, False),
     (2, {"break_even_ticks": 3}, ExitReason.BREAK_EVEN, 115, 5000.0, True),
     (2, {"break_even_ticks": 3, "break_even_offset_ticks": 1}, ExitReason.BREAK_EVEN, 114, 5000.25, True),
     (1, {"tp_ticks": 3}, ExitReason.TAKE_PROFIT, 118, 4999.25, False),
     (1, {"sl_ticks": 2}, ExitReason.STOP_LOSS, 107, 5000.5, False),
     (1, {"trailing_stop_ticks": 2}, ExitReason.TRAILING_STOP, 107, 5000.5, False),
-    (1, {"break_even_ticks": 3}, ExitReason.END_OF_DATA, 131, 5001.5, True),
+    (1, {"break_even_ticks": 3}, ExitReason.BREAK_EVEN, 123, 5000.0, True),
 ]
 
 

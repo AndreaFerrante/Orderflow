@@ -10,8 +10,8 @@ that day's drift. Within a day the trades keep their entry order. Days without
 trades are not in the pool.
 
 The drawdown starts from zero: the equity curve begins at 0 and that start is
-a peak, so a loss on the very first trade is a drawdown.
-``stats.max_drawdown_absolute`` does not count that loss and stays as it is.
+a peak, so a loss on the very first trade is a drawdown, as in
+``stats.max_drawdown_absolute``.
 The days are drawn with the same generator call as
 ``stats.bootstrap_total_by_group``, so the totals of the two match to float rounding.
 

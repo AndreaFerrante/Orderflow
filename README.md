@@ -104,6 +104,22 @@ Monte Carlo on an in-sample blotter flatters an overfit.
 - `BacktestEngine.run` pairs signal sides with entry ticks by position and raises `ValueError` on
   duplicate signal `Index`, a signal `Index` missing from `data`, signals out of tick order, or duplicate
   `data` `Index` — each used to shift every later trade onto the wrong side without an error.
+- One rule prices every exit. A market exit (stop, trailing stop, break-even stop, session close, end of
+  data, a strategy exit that names no price) fills at the tick that triggered it, less slippage: a stop
+  gapped through is filled where the market is, not at its level. A limit exit (a target, a strategy exit
+  that names its price) fills at that price, never better. `fill_on_touch=False` makes a target wait for a
+  trade beyond its level.
+- The Numba kernel (no exit strategy) and the Python loop (any exit strategy, or no Numba) book the same
+  trades for the same risk levels: prices, exit reasons, MAE and MFE. `tests/test_engine_fills.py` compares
+  them on random tapes, so a change of behaviour goes into both.
+- Slippage is drawn once for the entry and once for the exit of each trade and is paid on every market
+  fill. `use_spread=True` makes a market fill cross the quote (`AskPrice` / `BidPrice`, or `Ask` / `Bid`)
+  and raises `ValueError` when the columns are missing; levels are still triggered by the trade price.
+- `trade_in_rth=True` takes entries in RTH only, closes an open trade at the market on the session's last
+  RTH tick (`session_close`) and takes no entry on that tick. Without it a trade is held over the break.
+- `metrics.sharpe_ratio` is the annualised Sharpe of daily net P&L (a trade is booked on its entry day; a
+  day of the tape without a trade is a zero day). `metrics.max_drawdown` and
+  `stats.max_drawdown_absolute` count the start as a peak, so a loss on the first trade is a drawdown.
 - The per-tick session functions of `volume_profile` / `vwap`, the bar-id assigners of `compressor` and
   `find_stacked_imbalances` run Numba kernels and keep their original Python loop beside them (`_<name>_py`,
   `_compute_*_bar_ids_py`, `_detect`) as the reference. Kernel and loop must stay bit-identical:
@@ -127,5 +143,4 @@ Monte Carlo on an in-sample blotter flatters an overfit.
 - `monte_carlo` resamples whole trading days of a blotter with replacement (days without trades are not
   in the pool) and keeps each day's trades in entry order. Its totals match
   `stats.bootstrap_total_by_group` for the same seed, to float rounding. Its drawdown counts the zero
-  start as a peak, so a loss on the first trade is a drawdown; `stats.max_drawdown_absolute` does not
-  count that one.
+  start as a peak, so a loss on the first trade is a drawdown, as `stats.max_drawdown_absolute` does.

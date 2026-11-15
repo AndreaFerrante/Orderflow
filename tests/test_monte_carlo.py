@@ -113,3 +113,55 @@ def test_the_reliability_tools_are_exported_by_the_backtester_package():
     for name in ("walk_forward_folds", "walk_forward", "WalkForwardResult", "monte_carlo", "MonteCarloResult"):
         assert name in backtester.__all__
         assert hasattr(backtester, name)
+
+
+def test_equity_is_the_day_end_curve_of_every_path_from_a_zero_start():
+    # Day sums are 2 and -5: every step of every path is one of them.
+    result = monte_carlo(blotter({"2026-03-02": [1, 1], "2026-03-03": [-5]}), n_resamples=300)
+    assert result.equity.shape == (300, 3)
+    assert (result.equity[:, 0] == 0.0).all()
+    assert set(np.unique(np.diff(result.equity, axis=1))) == {2.0, -5.0}
+    assert np.array_equal(result.equity[:, -1], result.paths["net_pnl"].to_numpy())
+
+
+def test_observed_equity_is_the_day_end_curve_of_the_blotter_as_it_was_traded():
+    result = monte_carlo(blotter({"2026-03-02": [10], "2026-03-03": [-4, -2], "2026-03-04": [5]}), n_resamples=10)
+    assert result.observed_equity.tolist() == [0.0, 10.0, 4.0, 9.0]
+
+
+def test_plot_draws_the_paths_and_the_drawdowns_and_leaves_pyplot_alone():
+    import io
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    result = monte_carlo(random_blotter(), n_resamples=300, seed=5)
+    fig = result.plot()
+    paths_ax, drawdown_ax = fig.axes
+    observed = next(line for line in paths_ax.lines if line.get_label() == "observed")
+    assert np.array_equal(observed.get_ydata(), result.observed_equity)
+    assert sum(len(bar) for bar in drawdown_ax.containers) > 0
+    png = io.BytesIO()
+    fig.savefig(png, format="png")
+    assert png.getbuffer().nbytes > 0
+    assert plt.get_fignums() == []  # a figure pyplot keeps is a leak in a long job
+
+
+def test_one_day_of_trades_can_still_be_drawn():
+    assert len(monte_carlo(blotter({"2026-03-02": [5, -3]}), n_resamples=10).plot().axes) == 2
+
+
+def test_a_backtest_result_resamples_its_own_trades():
+    from orderflow.backtester import BacktestResult
+
+    trades = random_blotter()
+    got = BacktestResult(trades_df=trades).monte_carlo(n_resamples=200, seed=9)
+    pd.testing.assert_frame_equal(got.paths, monte_carlo(trades, n_resamples=200, seed=9).paths)
+
+
+def test_a_backtest_result_with_no_trades_refuses_the_monte_carlo():
+    from orderflow.backtester import BacktestResult
+
+    with pytest.raises(ValueError, match="no trades"):
+        BacktestResult().monte_carlo()
